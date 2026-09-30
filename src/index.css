@@ -1,0 +1,129 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-heading: 'Tajawal', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-display: 'Noto Kufi Arabic', 'Tajawal', sans-serif;
+    --font-body: 'Tajawal', 'Plus Jakarta Sans', -apple-system, sans-serif;
+    --color-ivory-bg: #F7F3EB;
+    --color-ivory-surface: #FFFCF6;
+    --color-text-main: #282824;
+    --color-text-[#282824]: #282824;
+    --color-text-muted: #68675F;
+    --color-accent: #B69A68;
+    --color-border: #E3DCCD;
+  }
+
+  html, body {
+    overflow-x: hidden;
+    max-width: 100vw;
+    font-family: var(--font-body);
+    background-color: var(--color-ivory-bg);
+    color: var(--color-text-main);
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-heading);
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+}
+
+/* Glassmorphism surfaces */
+.glass-ivory {
+  background: rgba(255, 252, 246, 0.85);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(227, 220, 205, 0.75);
+}
+
+.glass-ivory-card {
+  background: rgba(255, 252, 246, 0.92);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(227, 220, 205, 0.8);
+  box-shadow: 0 4px 20px -2px rgba(40, 40, 36, 0.04);
+}
+
+.glass-dark {
+  background: rgba(40, 40, 36, 0.92);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+/* Charcoal Clear Scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #EFE9DF;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #282824;
+  border-radius: 9999px;
+  border: 2px solid #EFE9DF;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #1a1a18;
+}
+
+/* Dedicated horizontal scrollbar container */
+.custom-horizontal-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #282824 #E3DCCD;
+}
+
+.custom-horizontal-scrollbar::-webkit-scrollbar {
+  height: 8px;
+}
+
+.custom-horizontal-scrollbar::-webkit-scrollbar-track {
+  background: #E3DCCD;
+  border-radius: 9999px;
+}
+
+.custom-horizontal-scrollbar::-webkit-scrollbar-thumb {
+  background: #282824;
+  border-radius: 9999px;
+  border: 1.5px solid #E3DCCD;
+}
+
+/* Dark Bar Track for Admin Header */
+.custom-horizontal-scrollbar-dark {
+  scrollbar-width: thin;
+  scrollbar-color: #B69A68 #3e3e38;
+}
+
+.custom-horizontal-scrollbar-dark::-webkit-scrollbar {
+  height: 8px;
+}
+
+.custom-horizontal-scrollbar-dark::-webkit-scrollbar-track {
+  background: #3e3e38;
+  border-radius: 9999px;
+}
+
+.custom-horizontal-scrollbar-dark::-webkit-scrollbar-thumb {
+  background: #B69A68;
+  border-radius: 9999px;
+  border: 1.5px solid #3e3e38;
+}
+
+/* Print Styles */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: white !important;
+    color: black !important;
+  }
+}

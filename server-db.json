@@ -1,0 +1,48 @@
+{
+  "settings": {
+    "companyName": "إيفوار العقارية"
+  },
+  "properties": [],
+  "units": [],
+  "bookings": [
+    {
+      "id": "bk_srv_1790789305150_410",
+      "bookingNumber": "IVR-187544",
+      "unitId": "unit_test_101",
+      "guestName": "العميل الأول",
+      "startDate": "2026-05-01",
+      "endDate": "2026-05-10",
+      "rentalType": "daily",
+      "totalAmount": 1500,
+      "status": "confirmed",
+      "createdAt": "2026-09-30T17:28:25.150Z"
+    },
+    {
+      "id": "bk_srv_1790791589756_506",
+      "bookingNumber": "IVR-258739",
+      "unitId": "unit_test_1790791589753",
+      "guestName": "العميل الأول",
+      "startDate": "2026-05-01",
+      "endDate": "2026-05-10",
+      "rentalType": "daily",
+      "totalAmount": 1500,
+      "status": "confirmed",
+      "createdAt": "2026-09-30T18:06:29.756Z"
+    },
+    {
+      "id": "bk_srv_1790793106937_382",
+      "bookingNumber": "IVR-510311",
+      "unitId": "unit_test_1790793106935",
+      "guestName": "العميل الأول",
+      "startDate": "2026-05-01",
+      "endDate": "2026-05-10",
+      "rentalType": "daily",
+      "totalAmount": 1500,
+      "status": "confirmed",
+      "createdAt": "2026-09-30T18:31:46.937Z"
+    }
+  ],
+  "leases": [],
+  "expenses": [],
+  "auditLogs": []
+}
