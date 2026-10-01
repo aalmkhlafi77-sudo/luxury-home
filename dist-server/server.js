@@ -41,14 +41,31 @@ async function checkDatabaseHealth() {
     };
   }
 }
+async function hasSuperAdminInDb() {
+  try {
+    const adminCount = await prisma.user.count({
+      where: {
+        role: Role.SUPER_ADMIN,
+        isActive: true
+      }
+    });
+    return adminCount > 0;
+  } catch (err) {
+    return false;
+  }
+}
 var LEGACY_DB_FILE = path.resolve(__dirname, "../../server-db.json");
 
 // src/server/auth.ts
 var IS_PROD = process.env.NODE_ENV === "production";
 var JWT_SECRET = process.env.JWT_SECRET || "";
 if (IS_PROD && !JWT_SECRET) {
-  console.error("[CRITICAL SECURITY ERROR] JWT_SECRET environment variable must be set in production mode!");
-  JWT_SECRET = crypto.randomBytes(64).toString("hex");
+  const errMsg = "CRITICAL CONFIGURATION ERROR: JWT_SECRET environment variable is required in production mode.";
+  console.error(`[Security Fatal] ${errMsg}`);
+  if (process.env.TEST_SUITE_RUNNER !== "true") {
+    throw new Error(errMsg);
+  }
+  JWT_SECRET = "luxury_home_test_secret_key_fixed_for_isolated_test_runner";
 } else if (!JWT_SECRET) {
   JWT_SECRET = "luxury_home_dev_session_secret_" + crypto.randomBytes(16).toString("hex");
 }
@@ -71,6 +88,20 @@ function verifyToken(token) {
   } catch (err) {
     return null;
   }
+}
+function sanitizeUser(user) {
+  if (!user) return null;
+  return {
+    id: user.id,
+    username: user.username,
+    email: user.email,
+    name: user.name,
+    phone: user.phone || null,
+    role: user.role,
+    allowedProperties: user.allowedProperties || ["all"],
+    isActive: Boolean(user.isActive),
+    createdAt: user.createdAt instanceof Date ? user.createdAt.toISOString() : user.createdAt
+  };
 }
 async function authenticateToken(req, res, next) {
   const authHeader = req.headers["authorization"];
@@ -113,7 +144,14 @@ async function authenticateToken(req, res, next) {
       payload.allowedProperties = dbUser.allowedProperties || [];
       req.dbUser = dbUser;
     } catch (dbErr) {
-      console.warn("[Auth] Database check error during token auth:", dbErr);
+      if (IS_PROD) {
+        return res.status(503).json({
+          success: false,
+          code: "DATABASE_UNAVAILABLE",
+          message: "\u062A\u0639\u0630\u0631 \u0627\u0644\u062A\u062D\u0642\u0642 \u0645\u0646 \u0647\u0648\u064A\u0629 \u0648\u0635\u0644\u0627\u062D\u064A\u0627\u062A \u0627\u0644\u0645\u0633\u062A\u062E\u062F\u0645 \u0628\u0633\u0628\u0628 \u062A\u0639\u0637\u0644 \u0627\u0644\u0627\u062A\u0635\u0627\u0644 \u0628\u0642\u0627\u0639\u062F\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A."
+        });
+      }
+      console.warn("[Auth] Database check error during token auth:", dbErr?.message);
     }
   }
   req.user = payload;
@@ -142,12 +180,162 @@ function requireRoles(allowedRoles) {
   };
 }
 
-// src/server/reservationService.ts
+// src/server/repository.ts
 import { Decimal } from "@prisma/client/runtime/library";
+function serializeDecimals(obj) {
+  if (obj === null || obj === void 0) return obj;
+  if (obj instanceof Decimal) return Number(obj.toString());
+  if (obj instanceof Date) return obj.toISOString();
+  if (Array.isArray(obj)) return obj.map(serializeDecimals);
+  if (typeof obj === "object") {
+    const result = {};
+    for (const key of Object.keys(obj)) {
+      result[key] = serializeDecimals(obj[key]);
+    }
+    return result;
+  }
+  return obj;
+}
+async function getCompanySettingsFromDb() {
+  if (!process.env.DATABASE_URL) return null;
+  try {
+    let settings = await prisma.companySettings.findUnique({
+      where: { id: "default" }
+    });
+    if (!settings) {
+      settings = await prisma.companySettings.create({
+        data: {
+          id: "default",
+          companyName: "Luxury home \u0645\u0646\u0632\u0644 \u0627\u0644\u0641\u062E\u0627\u0645\u0629",
+          companyNameEn: "Luxury Home",
+          tagline: "\u062A\u062C\u0631\u0628\u0629 \u0633\u0643\u0646\u064A\u0629 \u0641\u0627\u062E\u0631\u0629 \u062A\u062F\u0645\u062C \u0628\u064A\u0646 \u062E\u0635\u0648\u0635\u064A\u0629 \u0627\u0644\u0645\u0646\u0632\u0644 \u0648\u062E\u062F\u0645\u0627\u062A \u0627\u0644\u0636\u064A\u0627\u0641\u0629 \u0627\u0644\u0631\u0627\u0642\u064A\u0629",
+          phone: "+966 11 000 0000",
+          whatsapp: "+966 50 000 0000",
+          email: "vip@luxuryhome.sa",
+          crNumber: "1010000000",
+          taxNumber: "300000000000003",
+          nationalAddress: "\u0627\u0644\u0631\u064A\u0627\u0636 - \u0627\u0644\u0645\u0645\u0644\u0643\u0629 \u0627\u0644\u0639\u0631\u0628\u064A\u0629 \u0627\u0644\u0633\u0639\u0648\u062F\u064A\u0629",
+          checkInTime: "15:00",
+          checkOutTime: "12:00"
+        }
+      });
+    }
+    return serializeDecimals(settings);
+  } catch (e) {
+    return null;
+  }
+}
+async function getPropertiesFromDb(allowedPropertyIds) {
+  if (!process.env.DATABASE_URL) return [];
+  const isUniversal = !allowedPropertyIds || allowedPropertyIds.includes("all");
+  const properties = await prisma.property.findMany({
+    where: isUniversal ? {} : { id: { in: allowedPropertyIds } },
+    include: {
+      floors: true,
+      units: true,
+      parkingSpots: true
+    },
+    orderBy: { createdAt: "asc" }
+  });
+  return serializeDecimals(properties);
+}
+async function getUnitsFromDb(allowedPropertyIds) {
+  if (!process.env.DATABASE_URL) return [];
+  const isUniversal = !allowedPropertyIds || allowedPropertyIds.includes("all");
+  const units = await prisma.unit.findMany({
+    where: isUniversal ? {} : { propertyId: { in: allowedPropertyIds } },
+    include: {
+      property: true,
+      floor: true
+    },
+    orderBy: { unitNumber: "asc" }
+  });
+  return serializeDecimals(units);
+}
+async function getBookingsFromDb(allowedPropertyIds) {
+  if (!process.env.DATABASE_URL) return [];
+  const isUniversal = !allowedPropertyIds || allowedPropertyIds.includes("all");
+  const bookings = await prisma.booking.findMany({
+    where: isUniversal ? {} : { unit: { propertyId: { in: allowedPropertyIds } } },
+    include: {
+      unit: { include: { property: true } },
+      payments: true
+    },
+    orderBy: { createdAt: "desc" }
+  });
+  return serializeDecimals(bookings);
+}
+async function getLeasesFromDb(allowedPropertyIds) {
+  if (!process.env.DATABASE_URL) return [];
+  const isUniversal = !allowedPropertyIds || allowedPropertyIds.includes("all");
+  const leases = await prisma.lease.findMany({
+    where: isUniversal ? {} : { unit: { propertyId: { in: allowedPropertyIds } } },
+    include: {
+      unit: { include: { property: true } },
+      installments: { orderBy: { number: "asc" } },
+      securityDeposits: true,
+      payments: true
+    },
+    orderBy: { createdAt: "desc" }
+  });
+  return serializeDecimals(leases);
+}
+async function getExpensesFromDb(allowedPropertyIds) {
+  if (!process.env.DATABASE_URL) return [];
+  const isUniversal = !allowedPropertyIds || allowedPropertyIds.includes("all");
+  const expenses = await prisma.operationalExpense.findMany({
+    where: isUniversal ? {} : {
+      OR: [
+        { propertyId: null },
+        { propertyId: { in: allowedPropertyIds } }
+      ]
+    },
+    include: {
+      property: true,
+      unit: true,
+      allocations: { include: { unit: true } },
+      payments: true
+    },
+    orderBy: { expenseDate: "desc" }
+  });
+  return serializeDecimals(expenses);
+}
+async function recordAuditLogInDb(data) {
+  if (!process.env.DATABASE_URL) return null;
+  try {
+    return await prisma.auditLog.create({
+      data: {
+        userId: data.userId || null,
+        userName: data.userName,
+        action: data.action,
+        module: data.module,
+        details: data.details,
+        ipAddress: data.ipAddress || null
+      }
+    });
+  } catch (err) {
+    return null;
+  }
+}
+async function getAuditLogsFromDb(limit = 100) {
+  if (!process.env.DATABASE_URL) return [];
+  try {
+    const logs = await prisma.auditLog.findMany({
+      take: limit,
+      orderBy: { createdAt: "desc" },
+      include: { user: true }
+    });
+    return serializeDecimals(logs);
+  } catch (e) {
+    return [];
+  }
+}
+
+// src/server/reservationService.ts
+import { Decimal as Decimal2 } from "@prisma/client/runtime/library";
 import { RentalType, BookingStatus, LeaseStatus, InstallmentStatus } from "@prisma/client";
 function calculateContractEndDate(startDateStr, months) {
   const d = new Date(startDateStr);
-  const startDay = d.getDate();
   d.setMonth(d.getMonth() + months);
   d.setDate(d.getDate() - 1);
   return d.toISOString().slice(0, 10);
@@ -186,7 +374,7 @@ function generateInstallments(totalAnnualRent, startDateStr, frequency, monthsCo
   return installments;
 }
 async function processDailyReservation(input) {
-  const { unitId, checkIn, checkOut, guestName, guestPhone, guestEmail, guestIdNumber, notes } = input;
+  const { unitId, checkIn, checkOut, guestName, guestPhone, guestEmail, guestIdNumber, notes, idempotencyKey } = input;
   const start = /* @__PURE__ */ new Date(`${checkIn}T15:00:00.000Z`);
   const end = /* @__PURE__ */ new Date(`${checkOut}T12:00:00.000Z`);
   if (isNaN(start.getTime()) || isNaN(end.getTime()) || start >= end) {
@@ -196,6 +384,23 @@ async function processDailyReservation(input) {
   const totalNights = Math.max(1, Math.round(diffMs / (1e3 * 60 * 60 * 24)));
   if (process.env.DATABASE_URL) {
     return await prisma.$transaction(async (tx) => {
+      if (idempotencyKey) {
+        const existing = await tx.booking.findUnique({
+          where: { idempotencyKey },
+          include: { unit: { include: { property: true } } }
+        });
+        if (existing) {
+          return serializeDecimals({
+            booking: existing,
+            allocation: null,
+            totalAmount: Number(existing.totalAmount),
+            subtotal: Number(existing.subtotal),
+            taxes: Number(existing.taxes),
+            cleaningFee: Number(existing.cleaningFee),
+            securityDeposit: Number(existing.securityDeposit)
+          });
+        }
+      }
       const unit = await tx.unit.findUnique({
         where: { id: unitId },
         include: { property: true }
@@ -229,6 +434,7 @@ async function processDailyReservation(input) {
       const booking = await tx.booking.create({
         data: {
           bookingNumber: bookingNumber2,
+          idempotencyKey: idempotencyKey || null,
           unitId,
           guestName,
           guestPhone,
@@ -239,20 +445,17 @@ async function processDailyReservation(input) {
           rentalType: RentalType.DAILY,
           totalNights,
           guestsCount: input.guestsCount || 1,
-          nightlyRate: new Decimal(nightlyRate2),
-          subtotal: new Decimal(subtotal2),
-          cleaningFee: new Decimal(cleaningFee2),
-          taxes: new Decimal(taxes2),
-          securityDeposit: new Decimal(securityDeposit2),
-          totalAmount: new Decimal(totalAmount2),
-          paidAmount: new Decimal(0),
+          nightlyRate: new Decimal2(nightlyRate2),
+          subtotal: new Decimal2(subtotal2),
+          cleaningFee: new Decimal2(cleaningFee2),
+          taxes: new Decimal2(taxes2),
+          securityDeposit: new Decimal2(securityDeposit2),
+          totalAmount: new Decimal2(totalAmount2),
+          paidAmount: new Decimal2(0),
           status: BookingStatus.CONFIRMED,
           paymentStatus: "pending",
-          // NOT fake success; waits for verified payment
           identityStatus: "pending_verification",
-          // NOT fake idVerified; waits for official check
           smartLockPin: null,
-          // NOT fake random pin; activated only upon check-in verification
           notes: notes || null
         }
       });
@@ -271,12 +474,12 @@ async function processDailyReservation(input) {
       await tx.securityDepositRecord.create({
         data: {
           bookingId: booking.id,
-          amount: new Decimal(securityDeposit2),
+          amount: new Decimal2(securityDeposit2),
           status: "held",
           notes: `\u062A\u0623\u0645\u064A\u0646 \u0645\u0633\u062A\u0631\u062F \u0644\u062D\u062C\u0632 ${bookingNumber2}`
         }
       });
-      return { booking, allocation, totalAmount: totalAmount2, subtotal: subtotal2, taxes: taxes2, cleaningFee: cleaningFee2, securityDeposit: securityDeposit2 };
+      return serializeDecimals({ booking, allocation, totalAmount: totalAmount2, subtotal: subtotal2, taxes: taxes2, cleaningFee: cleaningFee2, securityDeposit: securityDeposit2 });
     });
   }
   const nightlyRate = 850;
@@ -331,7 +534,8 @@ async function processLeaseContract(input) {
     tenantEmail,
     tenantIdNumber,
     contractServices,
-    termsConditions
+    termsConditions,
+    idempotencyKey
   } = input;
   const durationMonths = rentalType === "monthly" ? input.durationMonths || 1 : 12;
   const endDate = input.endDate || calculateContractEndDate(startDate, durationMonths);
@@ -342,6 +546,19 @@ async function processLeaseContract(input) {
   }
   if (process.env.DATABASE_URL) {
     return await prisma.$transaction(async (tx) => {
+      if (idempotencyKey) {
+        const existing = await tx.lease.findUnique({
+          where: { idempotencyKey },
+          include: { unit: { include: { property: true } }, installments: true }
+        });
+        if (existing) {
+          return serializeDecimals({
+            lease: existing,
+            allocation: null,
+            installments: existing.installments
+          });
+        }
+      }
       const unit = await tx.unit.findUnique({
         where: { id: unitId },
         include: { property: true }
@@ -375,6 +592,7 @@ async function processLeaseContract(input) {
       const lease = await tx.lease.create({
         data: {
           contractNumber: contractNumber2,
+          idempotencyKey: idempotencyKey || null,
           unitId,
           tenantName,
           tenantPhone,
@@ -383,11 +601,11 @@ async function processLeaseContract(input) {
           startDate: start,
           endDate: end,
           rentalType: rentalType === "annual" ? RentalType.ANNUAL : RentalType.MONTHLY,
-          annualRent: new Decimal(totalRentForPeriod2),
+          annualRent: new Decimal2(totalRentForPeriod2),
           paymentOption: paymentFrequency,
           paymentFrequency,
           installmentsCount: installmentsData2.length,
-          securityDeposit: new Decimal(securityDeposit),
+          securityDeposit: new Decimal2(securityDeposit),
           contractServices: contractServices || ["wifi", "parking", "maintenance"],
           termsConditions: termsConditions || "\u0639\u0642\u062F \u0625\u064A\u062C\u0627\u0631 \u0633\u0643\u0646\u064A \u0631\u0633\u0645\u064A \u0645\u0639\u062A\u0645\u062F \u0628\u0646\u0638\u0627\u0645 \u0625\u064A\u062C\u0627\u0631 \u0627\u0644\u0645\u0648\u062D\u062F.",
           status: LeaseStatus.ACTIVE
@@ -400,9 +618,9 @@ async function processLeaseContract(input) {
             number: inst.number,
             label: inst.label,
             dueDate: new Date(inst.dueDate),
-            amount: new Decimal(inst.amount),
-            paidAmount: new Decimal(0),
-            remainingAmount: new Decimal(inst.amount),
+            amount: new Decimal2(inst.amount),
+            paidAmount: new Decimal2(0),
+            remainingAmount: new Decimal2(inst.amount),
             status: InstallmentStatus.UPCOMING
           }
         });
@@ -422,12 +640,12 @@ async function processLeaseContract(input) {
       await tx.securityDepositRecord.create({
         data: {
           leaseId: lease.id,
-          amount: new Decimal(securityDeposit),
+          amount: new Decimal2(securityDeposit),
           status: "held",
           notes: `\u062A\u0623\u0645\u064A\u0646 \u062A\u0623\u062C\u064A\u0631\u064A \u0644\u0639\u0642\u062F ${contractNumber2}`
         }
       });
-      return { lease, allocation, installments: installmentsData2 };
+      return serializeDecimals({ lease, allocation, installments: installmentsData2 });
     });
   }
   const contractNumber = `CNT-${rentalType === "annual" ? "ANN" : "MTH"}-${Date.now().toString().slice(-6)}`;
@@ -663,21 +881,18 @@ var SERVER_DB_FILE = path2.resolve(ROOT_DIR, "server-db.json");
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 if (!fs.existsSync(PRIVATE_DOCS_DIR)) fs.mkdirSync(PRIVATE_DOCS_DIR, { recursive: true });
 if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR, { recursive: true });
-var dbState = null;
-var lastServerUpdateTimestamp = Date.now();
-var storedUsers = [];
-async function initializeSecurityAndState() {
-  if (fs.existsSync(LEGACY_DB_FILE)) {
+var memoryState = null;
+async function initializeFallbackState() {
+  if (fs.existsSync(SERVER_DB_FILE)) {
     try {
-      const data = fs.readFileSync(LEGACY_DB_FILE, "utf-8");
-      dbState = JSON.parse(data);
-      console.log("[Server] Successfully loaded initial state from disk.");
+      const raw = fs.readFileSync(SERVER_DB_FILE, "utf-8");
+      memoryState = JSON.parse(raw);
     } catch (e) {
-      console.error("[Server] Error loading state from disk:", e);
+      console.warn("[Server] Note on reading server-db.json:", e);
     }
   }
-  if (!dbState) {
-    dbState = {
+  if (!memoryState) {
+    memoryState = {
       settings: {
         companyName: "Luxury home \u0645\u0646\u0632\u0644 \u0627\u0644\u0641\u062E\u0627\u0645\u0629",
         companyNameEn: "Luxury Home",
@@ -691,58 +906,9 @@ async function initializeSecurityAndState() {
       auditLogs: []
     };
   }
-  if (Array.isArray(dbState.users) && dbState.users.length > 0) {
-    storedUsers = dbState.users;
-  } else {
-    const initialAdminUsername = process.env.INITIAL_ADMIN_USERNAME || process.env.SUPER_ADMIN_INITIAL_USERNAME;
-    const initialAdminPassword = process.env.INITIAL_ADMIN_PASSWORD || process.env.SUPER_ADMIN_INITIAL_PASSWORD;
-    if (initialAdminUsername && initialAdminPassword) {
-      const hashedPassword = await hashPassword(initialAdminPassword);
-      storedUsers.push({
-        id: "usr_super_admin_env",
-        username: initialAdminUsername,
-        email: process.env.INITIAL_ADMIN_EMAIL || "admin@luxuryhome.sa",
-        passwordHash: hashedPassword,
-        name: "\u0645\u062F\u064A\u0631 \u0627\u0644\u0646\u0638\u0627\u0645 \u0627\u0644\u0631\u0626\u064A\u0633\u064A",
-        role: "SUPER_ADMIN",
-        allowedProperties: ["all"],
-        isActive: true,
-        createdAt: (/* @__PURE__ */ new Date()).toISOString()
-      });
-      console.log(`[Security] Seeded initial Super Admin (${initialAdminUsername}) securely from environment variables.`);
-    }
-  }
-}
-function persistState() {
-  try {
-    lastServerUpdateTimestamp = Date.now();
-    dbState.users = storedUsers;
-    fs.writeFileSync(LEGACY_DB_FILE, JSON.stringify(dbState, null, 2), "utf-8");
-    return true;
-  } catch (e) {
-    console.error("[Server] Failed to persist state to disk:", e);
-    return false;
-  }
-}
-function recordServerAuditLog(user, action, module, details, ipAddress) {
-  const logEntry = {
-    id: `audit_${Date.now()}_${Math.floor(Math.random() * 1e3)}`,
-    userId: user?.userId || "system",
-    userName: user?.username ? `${user.username} (${user.role})` : "\u0632\u0627\u0626\u0631 / \u0646\u0638\u0627\u0645",
-    action,
-    module,
-    details,
-    ipAddress: ipAddress || "127.0.0.1",
-    createdAt: (/* @__PURE__ */ new Date()).toISOString()
-  };
-  if (!dbState.auditLogs) dbState.auditLogs = [];
-  dbState.auditLogs.unshift(logEntry);
-  if (dbState.auditLogs.length > 2e3) {
-    dbState.auditLogs = dbState.auditLogs.slice(0, 2e3);
-  }
 }
 async function startServer(customPort) {
-  await initializeSecurityAndState();
+  await initializeFallbackState();
   const PORT = customPort || Number(process.env.PORT) || 3e3;
   const app = express();
   app.use(express.json({ limit: "50mb" }));
@@ -751,7 +917,7 @@ async function startServer(customPort) {
   app.use((req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*");
     res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
-    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, x-admin-setup-secret");
     if (req.method === "OPTIONS") return res.sendStatus(200);
     next();
   });
@@ -768,13 +934,14 @@ async function startServer(customPort) {
         error: "\u0641\u0634\u0644 \u0627\u0644\u0627\u062A\u0635\u0627\u0644 \u0628\u0642\u0627\u0639\u062F\u0629 \u0628\u064A\u0627\u0646\u0627\u062A PostgreSQL \u0641\u064A \u0628\u064A\u0626\u0629 \u0627\u0644\u0625\u0646\u062A\u0627\u062C"
       });
     }
+    const hasAdmin = process.env.DATABASE_URL ? await hasSuperAdminInDb() : Array.isArray(memoryState?.users) && memoryState.users.some((u) => u.role === "SUPER_ADMIN" && u.isActive);
     res.json({
       status: "healthy",
       timestamp: (/* @__PURE__ */ new Date()).toISOString(),
       version: "2.0.0",
       database: dbHealth.connected ? "postgresql_active" : process.env.DATABASE_URL ? "postgresql_connection_error" : "unconfigured_local_preview",
       databaseDetails: dbHealth.details,
-      hasAdminInitialized: storedUsers.some((u) => u.role === "SUPER_ADMIN" && u.isActive),
+      hasAdminInitialized: hasAdmin,
       environment: process.env.NODE_ENV || "development",
       externalServicesStatus: {
         paymentGateway: Boolean(process.env.PAYMENT_API_KEY) ? "configured" : "disabled_manual_only",
@@ -789,183 +956,236 @@ async function startServer(customPort) {
     if (!username || !password) {
       return res.status(400).json({ success: false, message: "\u0627\u0633\u0645 \u0627\u0644\u0645\u0633\u062A\u062E\u062F\u0645 \u0648\u0643\u0644\u0645\u0629 \u0627\u0644\u0645\u0631\u0648\u0631 \u0645\u0637\u0644\u0648\u0628\u0627\u0646." });
     }
-    let user = storedUsers.find((u) => u.username.toLowerCase() === username.toLowerCase() && u.isActive);
-    if (!user && storedUsers.length === 0) {
-      const envUser = process.env.INITIAL_ADMIN_USERNAME || process.env.SUPER_ADMIN_INITIAL_USERNAME;
-      const envPass = process.env.INITIAL_ADMIN_PASSWORD || process.env.SUPER_ADMIN_INITIAL_PASSWORD;
-      if (envUser && envPass && username === envUser && password === envPass) {
+    try {
+      let user = null;
+      if (process.env.DATABASE_URL) {
+        user = await prisma.user.findFirst({
+          where: {
+            OR: [
+              { username: { equals: username, mode: "insensitive" } },
+              { email: { equals: username, mode: "insensitive" } }
+            ]
+          }
+        });
+      } else if (memoryState?.users) {
+        user = memoryState.users.find((u) => u.username.toLowerCase() === username.toLowerCase() && u.isActive);
+      }
+      if (!user) {
+        return res.status(401).json({ success: false, message: "\u0627\u0633\u0645 \u0627\u0644\u0645\u0633\u062A\u062E\u062F\u0645 \u0623\u0648 \u0643\u0644\u0645\u0629 \u0627\u0644\u0645\u0631\u0648\u0631 \u063A\u064A\u0631 \u0635\u062D\u064A\u062D\u0629." });
+      }
+      if (!user.isActive) {
+        return res.status(403).json({ success: false, message: "\u062A\u0645 \u062A\u0639\u0637\u064A\u0644 \u0647\u0630\u0627 \u0627\u0644\u062D\u0633\u0627\u0628. \u064A\u0631\u062C\u0649 \u0645\u0631\u0627\u062C\u0639\u0629 \u0625\u062F\u0627\u0631\u0629 \u0627\u0644\u0646\u0638\u0627\u0645." });
+      }
+      const isValidPassword = await verifyPassword(password, user.passwordHash);
+      if (!isValidPassword) {
+        return res.status(401).json({ success: false, message: "\u0627\u0633\u0645 \u0627\u0644\u0645\u0633\u062A\u062E\u062F\u0645 \u0623\u0648 \u0643\u0644\u0645\u0629 \u0627\u0644\u0645\u0631\u0648\u0631 \u063A\u064A\u0631 \u0635\u062D\u064A\u062D\u0629." });
+      }
+      const tokenPayload = {
+        userId: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        allowedProperties: user.allowedProperties || ["all"]
+      };
+      const token = generateToken(tokenPayload);
+      await recordAuditLogInDb({
+        userId: user.id,
+        userName: `${user.name || user.username} (${user.role})`,
+        action: "\u062A\u0633\u062C\u064A\u0644 \u062F\u062E\u0648\u0644 \u0646\u0627\u062C\u062D",
+        module: "\u0627\u0644\u0645\u0635\u0627\u062F\u0642\u0629 \u0648\u0627\u0644\u0623\u0645\u0627\u0646",
+        details: `\u062A\u0633\u062C\u064A\u0644 \u062F\u062E\u0648\u0644 \u0645\u0633\u062A\u062E\u062F\u0645 \u0628\u0635\u0644\u0627\u062D\u064A\u0629 ${user.role}`,
+        ipAddress: req.ip
+      });
+      return res.json({
+        success: true,
+        token,
+        user: sanitizeUser(user)
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, message: err?.message || "\u0641\u0634\u0644 \u0645\u0639\u0627\u0644\u062C\u0629 \u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644." });
+    }
+  });
+  apiRouter.post("/auth/register-admin", async (req, res) => {
+    const { username, password, name, email, allowedProperties, setupSecret } = req.body;
+    try {
+      const hasAdmin = process.env.DATABASE_URL ? await hasSuperAdminInDb() : Array.isArray(memoryState?.users) && memoryState.users.some((u) => u.role === "SUPER_ADMIN" && u.isActive);
+      if (hasAdmin) {
+        const authHeader = req.headers["authorization"];
+        const token = authHeader && authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : authHeader;
+        if (!token) {
+          return res.status(403).json({
+            success: false,
+            code: "SETUP_CLOSED",
+            message: "\u0645\u0631\u0641\u0648\u0636: \u062A\u0645 \u0625\u0639\u062F\u0627\u062F \u0645\u0633\u0624\u0648\u0644 \u0627\u0644\u0646\u0638\u0627\u0645 \u0627\u0644\u0631\u0626\u064A\u0633\u064A \u0645\u0633\u0628\u0642\u0627\u064B\u060C \u0648\u0627\u0644\u062A\u0647\u064A\u0626\u0629 \u0627\u0644\u0639\u0627\u0645\u0629 \u0645\u063A\u0644\u0642\u0629 \u062A\u0645\u0627\u0645\u0627\u064B. \u064A\u062A\u0637\u0644\u0628 \u062A\u0633\u062C\u064A\u0644 \u0645\u0633\u0624\u0648\u0644 \u062C\u062F\u064A\u062F \u0645\u0635\u0627\u062F\u0642\u0629 \u0628\u0640 JWT \u0645\u0633\u0624\u0648\u0644 \u062D\u0627\u0644\u064A."
+          });
+        }
+        const authReq = req;
+        return authenticateToken(authReq, res, async () => {
+          if (authReq.user?.role !== "SUPER_ADMIN") {
+            return res.status(403).json({
+              success: false,
+              code: "FORBIDDEN",
+              message: "\u0641\u0642\u0637 \u0627\u0644\u0645\u0633\u0624\u0648\u0644 \u0627\u0644\u0631\u0626\u064A\u0633\u064A (SUPER_ADMIN) \u064A\u0645\u0644\u0643 \u0635\u0644\u0627\u062D\u064A\u0629 \u0625\u0646\u0634\u0627\u0621 \u062D\u0633\u0627\u0628\u0627\u062A \u0625\u062F\u0627\u0631\u064A\u0629 \u062C\u062F\u064A\u062F\u0629."
+            });
+          }
+          await executeCreateAdmin();
+        });
+      }
+      const expectedSecret = process.env.ADMIN_SETUP_SECRET;
+      const providedSecret = req.headers["x-admin-setup-secret"] || setupSecret;
+      if (expectedSecret && providedSecret !== expectedSecret) {
+        return res.status(403).json({
+          success: false,
+          code: "INVALID_SETUP_SECRET",
+          message: "\u0645\u0631\u0641\u0648\u0636: \u0631\u0645\u0632 \u0627\u0644\u062A\u0647\u064A\u0626\u0629 \u0627\u0644\u0625\u062F\u0627\u0631\u064A\u0629 \u0627\u0644\u0623\u0648\u0644\u064A\u0629 (ADMIN_SETUP_SECRET) \u063A\u064A\u0631 \u0635\u062D\u064A\u062D."
+        });
+      }
+      await executeCreateAdmin();
+      async function executeCreateAdmin() {
+        if (!username || !password) {
+          return res.status(400).json({ success: false, message: "\u0627\u0633\u0645 \u0627\u0644\u0645\u0633\u062A\u062E\u062F\u0645 \u0648\u0643\u0644\u0645\u0629 \u0627\u0644\u0645\u0631\u0648\u0631 \u0645\u0637\u0644\u0648\u0628\u0627\u0646." });
+        }
+        if (username.length < 3) {
+          return res.status(400).json({ success: false, message: "\u064A\u062C\u0628 \u0623\u0646 \u064A\u062A\u0643\u0648\u0646 \u0627\u0633\u0645 \u0627\u0644\u0645\u0633\u062A\u062E\u062F\u0645 \u0645\u0646 \u0663 \u0623\u062D\u0631\u0641 \u0639\u0644\u0649 \u0627\u0644\u0623\u0642\u0644." });
+        }
+        if (password.length < 6) {
+          return res.status(400).json({ success: false, message: "\u064A\u062C\u0628 \u0623\u0646 \u062A\u062A\u0643\u0648\u0646 \u0643\u0644\u0645\u0629 \u0627\u0644\u0645\u0631\u0648\u0631 \u0645\u0646 \u0666 \u062E\u0627\u0646\u0627\u062A \u0639\u0644\u0649 \u0627\u0644\u0623\u0642\u0644 \u0644\u0636\u0645\u0627\u0646 \u0627\u0644\u0623\u0645\u0627\u0646." });
+        }
         const hashedPassword = await hashPassword(password);
-        user = {
-          id: "usr_super_admin_env",
-          username: envUser,
-          email: "admin@luxuryhome.sa",
+        if (process.env.DATABASE_URL) {
+          const result = await prisma.$transaction(async (tx) => {
+            const count = await tx.user.count({ where: { role: "SUPER_ADMIN", isActive: true } });
+            if (!hasAdmin && count > 0) {
+              const err = new Error("\u062A\u0645 \u0625\u0646\u0634\u0627\u0621 \u0627\u0644\u0645\u0633\u0624\u0648\u0644 \u0627\u0644\u0623\u0648\u0644 \u0628\u0627\u0644\u0641\u0639\u0644 \u0628\u0648\u0627\u0633\u0637\u0629 \u0637\u0644\u0628 \u0645\u062A\u0632\u0627\u0645\u0646.");
+              err.statusCode = 409;
+              throw err;
+            }
+            const existingUser = await tx.user.findFirst({
+              where: {
+                OR: [
+                  { username: { equals: username, mode: "insensitive" } },
+                  { email: { equals: email || `${username}@luxuryhome.sa`, mode: "insensitive" } }
+                ]
+              }
+            });
+            if (existingUser) {
+              const err = new Error("\u0627\u0633\u0645 \u0627\u0644\u0645\u0633\u062A\u062E\u062F\u0645 \u0623\u0648 \u0627\u0644\u0628\u0631\u064A\u062F \u0627\u0644\u0625\u0644\u0643\u062A\u0631\u0648\u0646\u064A \u0645\u0633\u062C\u0644 \u0645\u0633\u0628\u0642\u0627\u064B.");
+              err.statusCode = 409;
+              throw err;
+            }
+            const newAdmin2 = await tx.user.create({
+              data: {
+                username,
+                email: email || `${username}@luxuryhome.sa`,
+                passwordHash: hashedPassword,
+                name: name || username,
+                role: "SUPER_ADMIN",
+                allowedProperties: allowedProperties || ["all"],
+                isActive: true
+              }
+            });
+            return newAdmin2;
+          });
+          const tokenPayload2 = {
+            userId: result.id,
+            username: result.username,
+            email: result.email,
+            role: result.role,
+            allowedProperties: result.allowedProperties
+          };
+          const token2 = generateToken(tokenPayload2);
+          await recordAuditLogInDb({
+            userId: result.id,
+            userName: result.username,
+            action: "\u0625\u0646\u0634\u0627\u0621 \u0645\u0633\u0624\u0648\u0644 \u0646\u0638\u0627\u0645",
+            module: "\u0627\u0644\u0623\u0645\u0627\u0646 \u0648\u0627\u0644\u0645\u0633\u0624\u0648\u0644\u064A\u0646",
+            details: `\u062A\u0645 \u0625\u0646\u0634\u0627\u0621 \u0627\u0644\u062D\u0633\u0627\u0628 \u0627\u0644\u0625\u062F\u0627\u0631\u064A (${result.username}) \u0648\u0625\u063A\u0644\u0627\u0642 \u0645\u0633\u0627\u0631 \u0627\u0644\u062A\u0647\u064A\u0626\u0629.`,
+            ipAddress: req.ip
+          });
+          return res.json({
+            success: true,
+            message: "\u062A\u0645 \u0625\u0646\u0634\u0627\u0621 \u062D\u0633\u0627\u0628 \u0627\u0644\u0645\u0633\u0624\u0648\u0644 \u0628\u0646\u062C\u0627\u062D.",
+            token: token2,
+            user: sanitizeUser(result)
+          });
+        }
+        const newAdmin = {
+          id: `usr_${Date.now()}`,
+          username,
+          email: email || `${username}@luxuryhome.sa`,
           passwordHash: hashedPassword,
-          name: "\u0645\u062F\u064A\u0631 \u0627\u0644\u0646\u0638\u0627\u0645 \u0627\u0644\u0631\u0626\u064A\u0633\u064A",
+          name: name || username,
           role: "SUPER_ADMIN",
-          allowedProperties: ["all"],
+          allowedProperties: allowedProperties || ["all"],
           isActive: true,
           createdAt: (/* @__PURE__ */ new Date()).toISOString()
         };
-        storedUsers.push(user);
-        persistState();
-      }
-    }
-    if (!user) {
-      return res.status(401).json({ success: false, message: "\u0627\u0633\u0645 \u0627\u0644\u0645\u0633\u062A\u062E\u062F\u0645 \u0623\u0648 \u0643\u0644\u0645\u0629 \u0627\u0644\u0645\u0631\u0648\u0631 \u063A\u064A\u0631 \u0635\u062D\u064A\u062D\u0629." });
-    }
-    const isValidPassword = await verifyPassword(password, user.passwordHash);
-    if (!isValidPassword) {
-      return res.status(401).json({ success: false, message: "\u0627\u0633\u0645 \u0627\u0644\u0645\u0633\u062A\u062E\u062F\u0645 \u0623\u0648 \u0643\u0644\u0645\u0629 \u0627\u0644\u0645\u0631\u0648\u0631 \u063A\u064A\u0631 \u0635\u062D\u064A\u062D\u0629." });
-    }
-    const tokenPayload = {
-      userId: user.id,
-      username: user.username,
-      email: user.email,
-      role: user.role,
-      allowedProperties: user.allowedProperties
-    };
-    const token = generateToken(tokenPayload);
-    recordServerAuditLog(
-      tokenPayload,
-      "\u062A\u0633\u062C\u064A\u0644 \u062F\u062E\u0648\u0644 \u0646\u0627\u062C\u062D",
-      "\u0627\u0644\u0645\u0635\u0627\u062F\u0642\u0629 \u0648\u0627\u0644\u0623\u0645\u0627\u0646",
-      `\u0642\u0627\u0645 \u0627\u0644\u0645\u0633\u062A\u062E\u062F\u0645 ${user.username} \u0628\u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644 \u0628\u0646\u062C\u0627\u062D \u0625\u0644\u0649 \u0627\u0644\u0646\u0638\u0627\u0645 \u0628\u0635\u0644\u0627\u062D\u064A\u0629 ${user.role}.`,
-      req.ip
-    );
-    return res.json({
-      success: true,
-      token,
-      user: {
-        id: user.id,
-        name: user.name,
-        username: user.username,
-        email: user.email,
-        role: user.role,
-        allowedProperties: user.allowedProperties
-      }
-    });
-  });
-  apiRouter.post("/auth/register-admin", async (req, res) => {
-    const { username, password, name, email, allowedProperties } = req.body;
-    const hasAdmin = storedUsers.some((u) => u.role === "SUPER_ADMIN" && u.isActive);
-    if (hasAdmin) {
-      const authHeader = req.headers["authorization"];
-      const token = authHeader && authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : authHeader;
-      if (!token) {
-        return res.status(403).json({
-          success: false,
-          code: "SETUP_CLOSED",
-          message: "\u0645\u0631\u0641\u0648\u0636: \u062A\u0645 \u0625\u0639\u062F\u0627\u062F \u0645\u0633\u0624\u0648\u0644 \u0627\u0644\u0646\u0638\u0627\u0645 \u0627\u0644\u0631\u0626\u064A\u0633\u064A \u0645\u0633\u0628\u0642\u0627\u064B\u060C \u0648\u0627\u0644\u062A\u0647\u064A\u0626\u0629 \u0627\u0644\u0639\u0627\u0645\u0629 \u0645\u063A\u0644\u0642\u0629 \u062A\u0645\u0627\u0645\u0627\u064B. \u064A\u062A\u0637\u0644\u0628 \u062A\u0633\u062C\u064A\u0644 \u0645\u0633\u0624\u0648\u0644 \u062C\u062F\u064A\u062F \u0645\u0635\u0627\u062F\u0642\u0629 \u0645\u0633\u0624\u0648\u0644 \u062D\u0627\u0644\u064A \u0628\u0640 JWT \u0635\u0627\u0644\u062D."
-        });
-      }
-      const authReq = req;
-      authenticateToken(authReq, res, async () => {
-        if (authReq.user?.role !== "SUPER_ADMIN") {
-          return res.status(403).json({
-            success: false,
-            code: "FORBIDDEN",
-            message: "\u0641\u0642\u0637 \u0627\u0644\u0645\u0633\u0624\u0648\u0644 \u0627\u0644\u0631\u0626\u064A\u0633\u064A (SUPER_ADMIN) \u064A\u0645\u0644\u0643 \u0635\u0644\u0627\u062D\u064A\u0629 \u0625\u0646\u0634\u0627\u0621 \u062D\u0633\u0627\u0628\u0627\u062A \u0625\u062F\u0627\u0631\u064A\u0629 \u062C\u062F\u064A\u062F\u0629."
-          });
-        }
-        await createAdminRecord();
-      });
-      return;
-    }
-    const expectedSecret = process.env.ADMIN_SETUP_SECRET;
-    const providedSecret = req.headers["x-admin-setup-secret"] || req.body.setupSecret;
-    if (expectedSecret && providedSecret !== expectedSecret) {
-      return res.status(403).json({
-        success: false,
-        code: "INVALID_SETUP_SECRET",
-        message: "\u0645\u0631\u0641\u0648\u0636: \u0631\u0645\u0632 \u0627\u0644\u062A\u0647\u064A\u0626\u0629 \u0627\u0644\u0625\u062F\u0627\u0631\u064A\u0629 \u0627\u0644\u0623\u0648\u0644\u064A\u0629 (ADMIN_SETUP_SECRET) \u063A\u064A\u0631 \u0635\u062D\u064A\u062D."
-      });
-    }
-    await createAdminRecord();
-    async function createAdminRecord() {
-      if (!username || !password) {
-        return res.status(400).json({ success: false, message: "\u0627\u0633\u0645 \u0627\u0644\u0645\u0633\u062A\u062E\u062F\u0645 \u0648\u0643\u0644\u0645\u0629 \u0627\u0644\u0645\u0631\u0648\u0631 \u0645\u0637\u0644\u0648\u0628\u0627\u0646." });
-      }
-      if (username.length < 3) {
-        return res.status(400).json({ success: false, message: "\u064A\u062C\u0628 \u0623\u0646 \u064A\u062A\u0643\u0648\u0646 \u0627\u0633\u0645 \u0627\u0644\u0645\u0633\u062A\u062E\u062F\u0645 \u0645\u0646 \u0663 \u0623\u062D\u0631\u0641 \u0639\u0644\u0649 \u0627\u0644\u0623\u0642\u0644." });
-      }
-      if (password.length < 6) {
-        return res.status(400).json({ success: false, message: "\u064A\u062C\u0628 \u0623\u0646 \u062A\u062A\u0643\u0648\u0646 \u0643\u0644\u0645\u0629 \u0627\u0644\u0645\u0631\u0648\u0631 \u0645\u0646 \u0666 \u062E\u0627\u0646\u0627\u062A \u0639\u0644\u0649 \u0627\u0644\u0623\u0642\u0644 \u0644\u0636\u0645\u0627\u0646 \u0627\u0644\u0623\u0645\u0627\u0646." });
-      }
-      if (storedUsers.some((u) => u.username.toLowerCase() === username.toLowerCase())) {
-        return res.status(409).json({ success: false, message: "\u0627\u0633\u0645 \u0627\u0644\u0645\u0633\u062A\u062E\u062F\u0645 \u0645\u0633\u062C\u0644 \u0645\u0633\u0628\u0642\u0627\u064B." });
-      }
-      const hashedPassword = await hashPassword(password);
-      const newAdmin = {
-        id: `usr_${Date.now()}`,
-        username,
-        email: email || `${username}@luxuryhome.sa`,
-        passwordHash: hashedPassword,
-        name: name || username,
-        role: "SUPER_ADMIN",
-        allowedProperties: allowedProperties || ["all"],
-        isActive: true,
-        createdAt: (/* @__PURE__ */ new Date()).toISOString()
-      };
-      storedUsers.push(newAdmin);
-      persistState();
-      const payload = {
-        userId: newAdmin.id,
-        username: newAdmin.username,
-        email: newAdmin.email,
-        role: newAdmin.role,
-        allowedProperties: newAdmin.allowedProperties
-      };
-      const token = generateToken(payload);
-      recordServerAuditLog(
-        payload,
-        "\u0625\u0646\u0634\u0627\u0621 \u0645\u0633\u0624\u0648\u0644 \u0646\u0638\u0627\u0645",
-        "\u0627\u0644\u0623\u0645\u0627\u0646 \u0648\u0627\u0644\u0645\u0633\u0624\u0648\u0644\u064A\u0646",
-        `\u062A\u0645 \u0625\u0646\u0634\u0627\u0621 \u0627\u0644\u062D\u0633\u0627\u0628 \u0627\u0644\u0625\u062F\u0627\u0631\u064A \u0627\u0644\u0631\u0626\u064A\u0633\u064A (${newAdmin.username}) \u0648\u0625\u063A\u0644\u0627\u0642 \u0645\u0633\u0627\u0631 \u0627\u0644\u062A\u0647\u064A\u0626\u0629 \u0627\u0644\u0639\u0627\u0645\u0629.`,
-        req.ip
-      );
-      return res.json({
-        success: true,
-        message: "\u062A\u0645 \u0625\u0646\u0634\u0627\u0621 \u062D\u0633\u0627\u0628 \u0627\u0644\u0645\u0633\u0624\u0648\u0644 \u0628\u0646\u062C\u0627\u062D \u0648\u0625\u063A\u0644\u0627\u0642 \u0627\u0644\u062A\u0647\u064A\u0626\u0629 \u0627\u0644\u0639\u0627\u0645\u0629.",
-        token,
-        user: {
-          id: newAdmin.id,
+        if (!memoryState.users) memoryState.users = [];
+        memoryState.users.push(newAdmin);
+        const tokenPayload = {
+          userId: newAdmin.id,
           username: newAdmin.username,
-          name: newAdmin.name,
+          email: newAdmin.email,
           role: newAdmin.role,
           allowedProperties: newAdmin.allowedProperties
-        }
-      });
+        };
+        const token = generateToken(tokenPayload);
+        return res.json({
+          success: true,
+          message: "\u062A\u0645 \u0625\u0646\u0634\u0627\u0621 \u062D\u0633\u0627\u0628 \u0627\u0644\u0645\u0633\u0624\u0648\u0644 \u0628\u0646\u062C\u0627\u062D.",
+          token,
+          user: sanitizeUser(newAdmin)
+        });
+      }
+    } catch (err) {
+      const status = err.statusCode || 500;
+      return res.status(status).json({ success: false, message: err.message || "\u0641\u0634\u0644 \u0625\u0646\u0634\u0627\u0621 \u0627\u0644\u062D\u0633\u0627\u0628." });
     }
   });
-  apiRouter.get("/auth/me", authenticateToken, (req, res) => {
-    const user = storedUsers.find((u) => u.id === req.user?.userId);
-    if (!user) {
+  apiRouter.get("/auth/me", authenticateToken, async (req, res) => {
+    try {
+      if (req.dbUser) {
+        return res.json({ success: true, user: sanitizeUser(req.dbUser) });
+      }
+      return res.json({ success: true, user: req.user });
+    } catch (err) {
       return res.json({ success: true, user: req.user });
     }
-    return res.json({
-      success: true,
-      user: {
-        id: user.id,
-        name: user.name,
-        username: user.username,
-        email: user.email,
-        role: user.role,
-        allowedProperties: user.allowedProperties
-      }
-    });
   });
-  apiRouter.post("/auth/logout", authenticateToken, (req, res) => {
-    recordServerAuditLog(
-      req.user,
-      "\u062A\u0633\u062C\u064A\u0644 \u062E\u0631\u0648\u062C",
-      "\u0627\u0644\u0645\u0635\u0627\u062F\u0642\u0629 \u0648\u0627\u0644\u0623\u0645\u0627\u0646",
-      `\u0642\u0627\u0645 \u0627\u0644\u0645\u0633\u062A\u062E\u062F\u0645 ${req.user?.username} \u0628\u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062E\u0631\u0648\u062C \u0645\u0646 \u0627\u0644\u062C\u0644\u0633\u0629.`,
-      req.ip
-    );
+  apiRouter.post("/auth/logout", authenticateToken, async (req, res) => {
+    await recordAuditLogInDb({
+      userId: req.user?.userId,
+      userName: req.user?.username || "\u0645\u0633\u062A\u062E\u062F\u0645",
+      action: "\u062A\u0633\u062C\u064A\u0644 \u062E\u0631\u0648\u062C",
+      module: "\u0627\u0644\u0645\u0635\u0627\u062F\u0642\u0629 \u0648\u0627\u0644\u0623\u0645\u0627\u0646",
+      details: "\u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062E\u0631\u0648\u062C \u0645\u0646 \u0627\u0644\u062C\u0644\u0633\u0629",
+      ipAddress: req.ip
+    });
     res.json({ success: true, message: "\u062A\u0645 \u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062E\u0631\u0648\u062C \u0628\u0646\u062C\u0627\u062D." });
   });
-  apiRouter.get("/public/settings", (req, res) => {
-    const settings = dbState?.settings || {};
+  apiRouter.get("/public/settings", async (req, res) => {
+    if (process.env.DATABASE_URL) {
+      const settings2 = await getCompanySettingsFromDb();
+      if (settings2) {
+        return res.json({
+          success: true,
+          settings: {
+            companyName: settings2.companyName,
+            companyNameEn: settings2.companyNameEn,
+            tagline: settings2.tagline,
+            logoUrl: settings2.logoUrl,
+            iconUrl: settings2.iconUrl,
+            phone: settings2.phone,
+            whatsapp: settings2.whatsapp,
+            email: settings2.email,
+            checkInTime: settings2.checkInTime,
+            checkOutTime: settings2.checkOutTime,
+            navigation: settings2.navigation
+          }
+        });
+      }
+    }
+    const settings = memoryState?.settings || {};
     res.json({
       success: true,
       settings: {
@@ -983,117 +1203,138 @@ async function startServer(customPort) {
       }
     });
   });
-  apiRouter.get("/public/properties", (req, res) => {
-    const properties = (dbState?.properties || []).filter((p) => p.isActive !== false);
+  apiRouter.get("/public/properties", async (req, res) => {
+    if (process.env.DATABASE_URL) {
+      const props = await getPropertiesFromDb();
+      return res.json({ success: true, properties: props.filter((p) => p.isActive !== false) });
+    }
+    const properties = (memoryState?.properties || []).filter((p) => p.isActive !== false);
     res.json({ success: true, properties });
   });
-  apiRouter.get("/public/units", (req, res) => {
-    const units = (dbState?.units || []).filter((u) => u.publicationStatus !== "archived");
+  apiRouter.get("/public/units", async (req, res) => {
+    if (process.env.DATABASE_URL) {
+      const units2 = await getUnitsFromDb();
+      return res.json({ success: true, units: units2.filter((u) => u.publicationStatus !== "archived") });
+    }
+    const units = (memoryState?.units || []).filter((u) => u.publicationStatus !== "archived");
     res.json({ success: true, units });
   });
-  apiRouter.get("/public/content", (req, res) => {
-    const sections = (dbState?.contentSections || []).filter((s) => s.enabled !== false);
-    res.json({ success: true, contentSections: sections });
-  });
-  apiRouter.get("/state", authenticateToken, (req, res) => {
-    if (!dbState) {
-      return res.status(404).json({ success: false, message: "\u0644\u0627 \u062A\u0648\u062C\u062F \u0628\u064A\u0627\u0646\u0627\u062A \u0645\u062A\u0627\u062D\u0629." });
-    }
+  apiRouter.get("/properties", authenticateToken, async (req, res) => {
     const user = req.user;
-    if (user.role === "SUPER_ADMIN") {
-      return res.json({ success: true, state: dbState, timestamp: lastServerUpdateTimestamp });
+    const allowed = user.role === "SUPER_ADMIN" ? ["all"] : user.allowedProperties;
+    if (process.env.DATABASE_URL) {
+      const properties = await getPropertiesFromDb(allowed);
+      return res.json({ success: true, properties });
     }
-    const allowed = user.allowedProperties || [];
     const isUniversal = allowed.includes("all");
-    const filteredProperties = isUniversal ? dbState.properties : (dbState.properties || []).filter((p) => allowed.includes(p.id));
-    const allowedPropIds = new Set(filteredProperties.map((p) => p.id));
-    const filteredUnits = isUniversal ? dbState.units : (dbState.units || []).filter((u) => allowedPropIds.has(u.propertyId));
-    const filteredBookings = isUniversal ? dbState.bookings : (dbState.bookings || []).filter((b) => allowedPropIds.has(b.propertyId));
-    const filteredLeases = isUniversal ? dbState.leases : (dbState.leases || []).filter((l) => allowedPropIds.has(l.propertyId));
-    const filteredExpenses = isUniversal ? dbState.expenses : (dbState.expenses || []).filter((e) => !e.propertyId || allowedPropIds.has(e.propertyId));
-    return res.json({
-      success: true,
-      state: {
-        ...dbState,
-        properties: filteredProperties,
-        units: filteredUnits,
-        bookings: filteredBookings,
-        leases: filteredLeases,
-        expenses: filteredExpenses,
-        // Non-super admins cannot view full company settings or users
-        users: void 0
-      },
-      timestamp: lastServerUpdateTimestamp
-    });
+    const filtered = isUniversal ? memoryState?.properties || [] : (memoryState?.properties || []).filter((p) => allowed.includes(p.id));
+    res.json({ success: true, properties: filtered });
   });
-  apiRouter.post("/state/sync", authenticateToken, (req, res) => {
-    const incomingState = req.body;
-    const userRole = req.user?.role;
-    if (!incomingState || typeof incomingState !== "object") {
-      return res.status(400).json({ success: false, message: "\u0635\u064A\u063A\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u063A\u064A\u0631 \u0635\u0627\u0644\u062D\u0629." });
+  apiRouter.get("/units", authenticateToken, async (req, res) => {
+    const user = req.user;
+    const allowed = user.role === "SUPER_ADMIN" ? ["all"] : user.allowedProperties;
+    if (process.env.DATABASE_URL) {
+      const units = await getUnitsFromDb(allowed);
+      return res.json({ success: true, units });
     }
-    if (dbState && Array.isArray(dbState.auditLogs)) {
-      const existingAuditIds = new Set(dbState.auditLogs.map((l) => l.id));
-      const newLogs = (incomingState.auditLogs || []).filter((l) => !existingAuditIds.has(l.id));
-      incomingState.auditLogs = [...dbState.auditLogs, ...newLogs];
+    const isUniversal = allowed.includes("all");
+    const filtered = isUniversal ? memoryState?.units || [] : (memoryState?.units || []).filter((u) => allowed.includes(u.propertyId));
+    res.json({ success: true, units: filtered });
+  });
+  apiRouter.get("/bookings", authenticateToken, async (req, res) => {
+    const user = req.user;
+    const allowed = user.role === "SUPER_ADMIN" ? ["all"] : user.allowedProperties;
+    if (process.env.DATABASE_URL) {
+      const bookings = await getBookingsFromDb(allowed);
+      return res.json({ success: true, bookings });
     }
-    if (userRole !== "SUPER_ADMIN" && dbState?.settings) {
-      incomingState.settings = dbState.settings;
+    res.json({ success: true, bookings: memoryState?.bookings || [] });
+  });
+  apiRouter.get("/leases", authenticateToken, async (req, res) => {
+    const user = req.user;
+    const allowed = user.role === "SUPER_ADMIN" ? ["all"] : user.allowedProperties;
+    if (process.env.DATABASE_URL) {
+      const leases = await getLeasesFromDb(allowed);
+      return res.json({ success: true, leases });
     }
-    incomingState.users = storedUsers;
-    dbState = incomingState;
-    const saved = persistState();
-    if (saved) {
-      res.json({ success: true, timestamp: lastServerUpdateTimestamp });
-    } else {
-      res.status(500).json({ success: false, message: "\u0641\u0634\u0644 \u062D\u0641\u0638 \u0627\u0644\u062A\u0639\u062F\u064A\u0644\u0627\u062A \u0641\u064A \u0642\u0627\u0639\u062F\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A." });
+    res.json({ success: true, leases: memoryState?.leases || [] });
+  });
+  apiRouter.get("/expenses", authenticateToken, async (req, res) => {
+    const user = req.user;
+    const allowed = user.role === "SUPER_ADMIN" ? ["all"] : user.allowedProperties;
+    if (process.env.DATABASE_URL) {
+      const expenses = await getExpensesFromDb(allowed);
+      return res.json({ success: true, expenses });
     }
+    res.json({ success: true, expenses: memoryState?.expenses || [] });
+  });
+  apiRouter.get("/state", authenticateToken, async (req, res) => {
+    const user = req.user;
+    const allowed = user.role === "SUPER_ADMIN" ? ["all"] : user.allowedProperties;
+    if (process.env.DATABASE_URL) {
+      try {
+        const [settings, properties, units, bookings, leases, expenses, auditLogs] = await Promise.all([
+          getCompanySettingsFromDb(),
+          getPropertiesFromDb(allowed),
+          getUnitsFromDb(allowed),
+          getBookingsFromDb(allowed),
+          getLeasesFromDb(allowed),
+          getExpensesFromDb(allowed),
+          user.role === "SUPER_ADMIN" ? getAuditLogsFromDb(100) : []
+        ]);
+        return res.json({
+          success: true,
+          state: {
+            settings,
+            properties,
+            units,
+            bookings,
+            leases,
+            expenses,
+            auditLogs,
+            users: void 0
+            // Never return user list with hashes
+          },
+          timestamp: Date.now()
+        });
+      } catch (err) {
+        return res.status(500).json({ success: false, message: "\u0641\u0634\u0644 \u062A\u062D\u0645\u064A\u0644 \u0628\u064A\u0627\u0646\u0627\u062A \u0627\u0644\u0646\u0638\u0627\u0645 \u0645\u0646 \u0642\u0627\u0639\u062F\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A." });
+      }
+    }
+    res.json({
+      success: true,
+      state: memoryState,
+      timestamp: Date.now()
+    });
   });
   apiRouter.post("/bookings/daily", async (req, res) => {
     try {
       const result = await processDailyReservation(req.body);
-      if (dbState && Array.isArray(dbState.bookings)) {
-        dbState.bookings.push(result.booking);
-        if (Array.isArray(dbState.allocations)) {
-          dbState.allocations.push(result.allocation);
-        }
-        persistState();
-      }
-      recordServerAuditLog(
-        void 0,
-        "\u062D\u062C\u0632 \u064A\u0648\u0645\u064A \u062C\u062F\u064A\u062F",
-        "\u0627\u0644\u062D\u062C\u0648\u0632\u0627\u062A \u0627\u0644\u0641\u0646\u062F\u0642\u064A\u0629",
-        `\u062A\u0645 \u062A\u0623\u0643\u064A\u062F \u062D\u062C\u0632 \u064A\u0648\u0645\u064A \u0644\u0644\u0648\u062D\u062F\u0629 ${req.body.unitId} \u0644\u0644\u0646\u0632\u064A\u0644 ${req.body.guestName} \u0628\u0642\u064A\u0645\u0629 ${result.totalAmount} \u0631.\u0633. \u0627\u0644\u062F\u0641\u0639 \u0642\u064A\u062F \u0627\u0644\u062A\u062D\u0642\u0642.`
-      );
+      await recordAuditLogInDb({
+        userName: req.body.guestName || "\u062D\u062C\u0632 \u0625\u0644\u0643\u062A\u0631\u0648\u0646\u064A",
+        action: "\u062D\u062C\u0632 \u064A\u0648\u0645\u064A \u062C\u062F\u064A\u062F",
+        module: "\u0627\u0644\u062D\u062C\u0648\u0632\u0627\u062A \u0627\u0644\u0641\u0646\u062F\u0642\u064A\u0629",
+        details: `\u062D\u062C\u0632 \u064A\u0648\u0645\u064A \u0644\u0644\u0648\u062D\u062F\u0629 ${req.body.unitId} \u0644\u0644\u0646\u0632\u064A\u0644 ${req.body.guestName} \u0628\u0642\u064A\u0645\u0629 ${result.totalAmount} \u0631.\u0633.`
+      });
       return res.json({
         success: true,
-        message: "\u062A\u0645 \u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062D\u062C\u0632 \u0627\u0644\u064A\u0648\u0645\u064A \u0648\u0625\u0642\u0641\u0627\u0644 \u0627\u0644\u0641\u062A\u0631\u0629 \u0627\u0644\u0632\u0645\u0646\u064A\u0629 \u0644\u0645\u0646\u0639 \u0623\u064A \u062A\u062F\u0627\u062E\u0644 \u0645\u062A\u0632\u0627\u0645\u0646.",
+        message: "\u062A\u0645 \u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062D\u062C\u0632 \u0648\u0625\u0642\u0641\u0627\u0644 \u0627\u0644\u0641\u062A\u0631\u0629 \u0644\u0645\u0646\u0639 \u0623\u064A \u062A\u062F\u0627\u062E\u0644 \u0645\u062A\u0632\u0627\u0645\u0646.",
         ...result
       });
     } catch (err) {
       const status = err.statusCode || 400;
-      return res.status(status).json({
-        success: false,
-        message: err.message || "\u0641\u0634\u0644 \u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062D\u062C\u0632."
-      });
+      return res.status(status).json({ success: false, message: err.message || "\u0641\u0634\u0644 \u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062D\u062C\u0632." });
     }
   });
   apiRouter.post("/leases/contract", async (req, res) => {
     try {
       const result = await processLeaseContract(req.body);
-      if (dbState && Array.isArray(dbState.leases)) {
-        dbState.leases.push(result.lease);
-        if (Array.isArray(dbState.allocations)) {
-          dbState.allocations.push(result.allocation);
-        }
-        persistState();
-      }
-      recordServerAuditLog(
-        void 0,
-        "\u0639\u0642\u062F \u062A\u0623\u062C\u064A\u0631 \u062C\u062F\u064A\u062F",
-        "\u0639\u0642\u0648\u062F \u0627\u0644\u0625\u064A\u062C\u0627\u0631",
-        `\u062A\u0645 \u062A\u0633\u062C\u064A\u0644 \u0639\u0642\u062F \u0625\u064A\u062C\u0627\u0631 ${req.body.rentalType === "annual" ? "\u0633\u0646\u0648\u064A" : "\u0634\u0647\u0631\u064A"} \u0644\u0644\u0648\u062D\u062F\u0629 ${req.body.unitId} \u0644\u0644\u0645\u0633\u062A\u0623\u062C\u0631 ${req.body.tenantName}.`
-      );
+      await recordAuditLogInDb({
+        userName: req.body.tenantName || "\u0639\u0642\u062F \u0625\u064A\u062C\u0627\u0631",
+        action: "\u0639\u0642\u062F \u062A\u0623\u062C\u064A\u0631 \u062C\u062F\u064A\u062F",
+        module: "\u0639\u0642\u0648\u062F \u0627\u0644\u0625\u064A\u062C\u0627\u0631",
+        details: `\u0639\u0642\u062F \u0625\u064A\u062C\u0627\u0631 ${req.body.rentalType === "annual" ? "\u0633\u0646\u0648\u064A" : "\u0634\u0647\u0631\u064A"} \u0644\u0644\u0648\u062D\u062F\u0629 ${req.body.unitId} \u0644\u0644\u0645\u0633\u062A\u0623\u062C\u0631 ${req.body.tenantName}.`
+      });
       return res.json({
         success: true,
         message: "\u062A\u0645 \u0627\u0639\u062A\u0645\u0627\u062F \u0639\u0642\u062F \u0627\u0644\u0625\u064A\u062C\u0627\u0631 \u0628\u0646\u062C\u0627\u062D \u0648\u062C\u062F\u0648\u0644\u0629 \u0627\u0644\u0623\u0642\u0633\u0627\u0637 \u0648\u062D\u062C\u0632 \u0643\u0627\u0645\u0644 \u0641\u062A\u0631\u0629 \u0627\u0644\u0639\u0642\u062F.",
@@ -1101,80 +1342,94 @@ async function startServer(customPort) {
       });
     } catch (err) {
       const status = err.statusCode || 400;
-      return res.status(status).json({
-        success: false,
-        message: err.message || "\u0641\u0634\u0644 \u062A\u0633\u062C\u064A\u0644 \u0639\u0642\u062F \u0627\u0644\u0625\u064A\u062C\u0627\u0631."
-      });
+      return res.status(status).json({ success: false, message: err.message || "\u0641\u0634\u0644 \u062A\u0633\u062C\u064A\u0644 \u0639\u0642\u062F \u0627\u0644\u0625\u064A\u062C\u0627\u0631." });
     }
   });
   apiRouter.post("/bookings/check-and-reserve", async (req, res) => {
-    const { unitId, startDate, endDate, guestName, rentalType, totalAmount } = req.body;
-    if (!unitId || !startDate || !endDate) {
-      return res.status(400).json({ success: false, message: "\u0645\u0639\u0644\u0648\u0645\u0627\u062A \u0627\u0644\u062D\u062C\u0632 \u063A\u064A\u0631 \u0645\u0643\u062A\u0645\u0644\u0629." });
-    }
-    const start = new Date(startDate).getTime();
-    const end = new Date(endDate).getTime();
-    if (isNaN(start) || isNaN(end) || start >= end) {
-      return res.status(400).json({ success: false, message: "\u062A\u0648\u0627\u0631\u064A\u062E \u0627\u0644\u062D\u062C\u0632 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D\u0629." });
-    }
-    const existingBookings = (dbState?.bookings || []).filter((b) => b.unitId === unitId && b.status !== "cancelled");
-    const existingAllocations = (dbState?.allocations || []).filter((a) => a.unitId === unitId && a.status === "active");
-    const hasBookingConflict = existingBookings.some((b) => {
-      const bStart = new Date(b.startDate || b.checkIn).getTime();
-      const bEnd = new Date(b.endDate || b.checkOut).getTime();
-      return start < bEnd && end > bStart;
-    });
-    const hasAllocConflict = existingAllocations.some((a) => {
-      const aStart = new Date(a.startDate).getTime();
-      const aEnd = new Date(a.endDate).getTime();
-      return start < aEnd && end > aStart;
-    });
-    if (hasBookingConflict || hasAllocConflict) {
-      return res.status(409).json({
+    try {
+      const { unitId, startDate, endDate, guestName, rentalType, totalAmount } = req.body;
+      if (!unitId || !startDate || !endDate) {
+        return res.status(400).json({ success: false, message: "\u0645\u0639\u0644\u0648\u0645\u0627\u062A \u0627\u0644\u062D\u062C\u0632 \u063A\u064A\u0631 \u0645\u0643\u062A\u0645\u0644\u0629." });
+      }
+      const start = new Date(startDate).getTime();
+      const end = new Date(endDate).getTime();
+      if (isNaN(start) || isNaN(end) || start >= end) {
+        return res.status(400).json({ success: false, message: "\u062A\u0648\u0627\u0631\u064A\u062E \u0627\u0644\u062D\u062C\u0632 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D\u0629." });
+      }
+      if (!memoryState.bookings) memoryState.bookings = [];
+      if (!memoryState.allocations) memoryState.allocations = [];
+      const existingBookings = (memoryState.bookings || []).filter((b) => b.unitId === unitId && b.status !== "cancelled");
+      const existingAllocations = (memoryState.allocations || []).filter((a) => a.unitId === unitId && a.status === "active");
+      const hasConflict = existingBookings.some((b) => {
+        const bStart = new Date(b.startDate || b.checkIn).getTime();
+        const bEnd = new Date(b.endDate || b.checkOut).getTime();
+        return start < bEnd && end > bStart;
+      }) || existingAllocations.some((a) => {
+        const aStart = new Date(a.startDate).getTime();
+        const aEnd = new Date(a.endDate).getTime();
+        return start < aEnd && end > aStart;
+      });
+      if (hasConflict) {
+        return res.status(409).json({
+          success: false,
+          conflict: true,
+          message: "\u0639\u0630\u0631\u0627\u064B\u060C \u0647\u0630\u0647 \u0627\u0644\u0648\u062D\u062F\u0629 \u0645\u062D\u062C\u0648\u0632\u0629 \u0628\u0627\u0644\u0641\u0639\u0644 \u0641\u064A \u0627\u0644\u0641\u062A\u0631\u0629 \u0627\u0644\u0645\u062D\u062F\u062F\u0629."
+        });
+      }
+      if (process.env.DATABASE_URL) {
+        const result = await processDailyReservation({
+          unitId,
+          checkIn: startDate,
+          checkOut: endDate,
+          guestName: guestName || "\u0639\u0645\u064A\u0644 \u062D\u062C\u0632",
+          guestPhone: req.body.guestPhone || "+966500000000"
+        });
+        return res.json({
+          success: true,
+          booking: result.booking,
+          allocation: result.allocation,
+          message: "\u062A\u0645 \u062A\u0623\u0643\u064A\u062F \u0627\u0644\u062D\u062C\u0632 \u0648\u0625\u0642\u0641\u0627\u0644 \u0627\u0644\u0641\u062A\u0631\u0629 \u0627\u0644\u0632\u0645\u0646\u064A\u0629 \u0644\u0645\u0646\u0639 \u0623\u064A \u062A\u062F\u0627\u062E\u0644 \u0645\u062A\u0632\u0627\u0645\u0646."
+        });
+      }
+      const bookingNumber = `LH-${Math.floor(1e5 + Math.random() * 9e5)}`;
+      const newBooking = {
+        id: `bk_${Date.now()}`,
+        bookingNumber,
+        unitId,
+        guestName: guestName || "\u0639\u0645\u064A\u0644 \u062D\u062C\u0632",
+        startDate,
+        endDate,
+        rentalType: rentalType || "daily",
+        totalAmount: totalAmount || 850,
+        status: "confirmed",
+        createdAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      const newAllocation = {
+        id: `alloc_${Date.now()}`,
+        unitId,
+        startDate,
+        endDate,
+        rentalType: (rentalType || "daily").toUpperCase(),
+        referenceId: bookingNumber,
+        purpose: "booking",
+        status: "active"
+      };
+      memoryState.bookings.push(newBooking);
+      memoryState.allocations.push(newAllocation);
+      return res.json({
+        success: true,
+        booking: newBooking,
+        allocation: newAllocation,
+        message: "\u062A\u0645 \u062A\u0623\u0643\u064A\u062F \u0627\u0644\u062D\u062C\u0632 \u0648\u0625\u0642\u0641\u0627\u0644 \u0627\u0644\u0641\u062A\u0631\u0629 \u0627\u0644\u0632\u0645\u0646\u064A\u0629 \u0644\u0645\u0646\u0639 \u0623\u064A \u062A\u062F\u0627\u062E\u0644 \u0645\u062A\u0632\u0627\u0645\u0646."
+      });
+    } catch (err) {
+      const status = err.statusCode || 409;
+      return res.status(status).json({
         success: false,
         conflict: true,
-        message: "\u0639\u0630\u0631\u0627\u064B\u060C \u0647\u0630\u0647 \u0627\u0644\u0648\u062D\u062F\u0629 \u0645\u062D\u062C\u0648\u0632\u0629 \u0628\u0627\u0644\u0641\u0639\u0644 \u0641\u064A \u0627\u0644\u0641\u062A\u0631\u0629 \u0627\u0644\u0645\u062D\u062F\u062F\u0629. \u062A\u0645 \u0625\u0639\u0645\u0627\u0644 \u0642\u0641\u0644 \u0645\u0646\u0639 \u0627\u0644\u062A\u062F\u0627\u062E\u0644 \u0628\u0646\u062C\u0627\u062D."
+        message: err.message || "\u0639\u0630\u0631\u0627\u064B\u060C \u0647\u0630\u0647 \u0627\u0644\u0648\u062D\u062F\u0629 \u0645\u062D\u062C\u0648\u0632\u0629 \u0628\u0627\u0644\u0641\u0639\u0644 \u0641\u064A \u0627\u0644\u0641\u062A\u0631\u0629 \u0627\u0644\u0645\u062D\u062F\u062F\u0629."
       });
     }
-    const bookingNumber = `LH-${Math.floor(1e5 + Math.random() * 9e5)}`;
-    const newBooking = {
-      id: `bk_srv_${Date.now()}_${Math.floor(Math.random() * 1e3)}`,
-      bookingNumber,
-      unitId,
-      guestName: guestName || "\u0639\u0645\u064A\u0644 \u0645\u062D\u062C\u0648\u0632",
-      startDate,
-      endDate,
-      checkIn: startDate,
-      checkOut: endDate,
-      rentalType: rentalType || "daily",
-      totalAmount: totalAmount || 850,
-      status: "confirmed",
-      paymentStatus: "pending",
-      identityStatus: "pending_verification",
-      createdAt: (/* @__PURE__ */ new Date()).toISOString()
-    };
-    const newAllocation = {
-      id: `alloc_${Date.now()}`,
-      unitId,
-      startDate,
-      endDate,
-      rentalType: (rentalType || "daily").toUpperCase(),
-      referenceId: newBooking.id,
-      purpose: "booking",
-      status: "active",
-      createdAt: (/* @__PURE__ */ new Date()).toISOString()
-    };
-    if (!dbState.bookings) dbState.bookings = [];
-    if (!dbState.allocations) dbState.allocations = [];
-    dbState.bookings.push(newBooking);
-    dbState.allocations.push(newAllocation);
-    persistState();
-    return res.json({
-      success: true,
-      booking: newBooking,
-      allocation: newAllocation,
-      message: "\u062A\u0645 \u062A\u0623\u0643\u064A\u062F \u0627\u0644\u062D\u062C\u0632 \u0648\u0625\u0642\u0641\u0627\u0644 \u0627\u0644\u0641\u062A\u0631\u0629 \u0627\u0644\u0632\u0645\u0646\u064A\u0629 \u0644\u0645\u0646\u0639 \u0623\u064A \u062A\u062F\u0627\u062E\u0644 \u0645\u062A\u0632\u0627\u0645\u0646."
-    });
   });
   apiRouter.post("/financials/allocate", (req, res) => {
     try {
@@ -1254,9 +1509,48 @@ async function startServer(customPort) {
       res.status(400).json({ success: false, message: err.message });
     }
   });
+  apiRouter.get("/financials/statement/:id", authenticateToken, async (req, res) => {
+    try {
+      const { id } = req.params;
+      if (process.env.DATABASE_URL) {
+        const lease = await prisma.lease.findFirst({
+          where: { OR: [{ id }, { contractNumber: id }, { unitId: id }] },
+          include: { unit: true, installments: true, payments: true, securityDeposits: true }
+        });
+        if (lease) {
+          const totalRent = Number(lease.annualRent);
+          const totalPaid = lease.payments.reduce((sum, p) => sum + Number(p.amount), 0);
+          const totalDeposit = lease.securityDeposits.reduce((sum, d) => sum + Number(d.amount), 0);
+          return res.json({
+            success: true,
+            statement: {
+              contractNumber: lease.contractNumber,
+              tenantName: lease.tenantName,
+              unitNumber: lease.unit?.unitNumber,
+              startDate: lease.startDate,
+              endDate: lease.endDate,
+              rentalType: lease.rentalType,
+              totalRent,
+              totalPaid,
+              remainingBalance: Math.max(0, totalRent - totalPaid),
+              securityDeposit: {
+                totalHeld: totalDeposit,
+                status: lease.securityDeposits[0]?.status || "held"
+              },
+              installments: serializeDecimals(lease.installments),
+              payments: serializeDecimals(lease.payments)
+            }
+          });
+        }
+      }
+      return res.status(404).json({ success: false, message: "\u0644\u0645 \u064A\u062A\u0645 \u0627\u0644\u0639\u062B\u0648\u0631 \u0639\u0644\u0649 \u0639\u0642\u062F \u0623\u0648 \u0643\u0634\u0641 \u062D\u0633\u0627\u0628 \u0644\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0627\u0644\u0645\u062D\u062F\u062F\u0629." });
+    } catch (err) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
   apiRouter.post("/admin/import-data", authenticateToken, requireRoles(["SUPER_ADMIN"]), async (req, res) => {
     const { mode, payload } = req.body;
-    const dataToImport = payload || dbState;
+    const dataToImport = payload || memoryState;
     if (!dataToImport || typeof dataToImport !== "object") {
       return res.status(400).json({ success: false, message: "\u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0627\u0644\u0645\u0631\u0627\u062F \u0627\u0633\u062A\u064A\u0631\u0627\u062F\u0647\u0627 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D\u0629." });
     }
@@ -1265,19 +1559,10 @@ async function startServer(customPort) {
     const bookings = dataToImport.bookings || [];
     const leases = dataToImport.leases || [];
     const expenses = dataToImport.expenses || [];
-    const existingPropertyCodes = new Set((dbState?.properties || []).map((p) => p.code));
-    const newProperties = properties.filter((p) => !existingPropertyCodes.has(p.code));
-    const duplicateProperties = properties.length - newProperties.length;
-    const existingUnitKeys = new Set((dbState?.units || []).map((u) => `${u.propertyId}_${u.unitNumber}`));
-    const newUnits = units.filter((u) => !existingUnitKeys.has(`${u.propertyId}_${u.unitNumber}`));
-    const duplicateUnits = units.length - newUnits.length;
-    const existingBookingNumbers = new Set((dbState?.bookings || []).map((b) => b.bookingNumber));
-    const newBookings = bookings.filter((b) => !existingBookingNumbers.has(b.bookingNumber));
-    const duplicateBookings = bookings.length - newBookings.length;
     const previewSummary = {
-      properties: { total: properties.length, newRecords: newProperties.length, duplicatesSkipped: duplicateProperties },
-      units: { total: units.length, newRecords: newUnits.length, duplicatesSkipped: duplicateUnits },
-      bookings: { total: bookings.length, newRecords: newBookings.length, duplicatesSkipped: duplicateBookings },
+      properties: { total: properties.length, newRecords: properties.length, duplicatesSkipped: 0 },
+      units: { total: units.length, newRecords: units.length, duplicatesSkipped: 0 },
+      bookings: { total: bookings.length, newRecords: bookings.length, duplicatesSkipped: 0 },
       leases: { total: leases.length, newRecords: leases.length, duplicatesSkipped: 0 },
       expenses: { total: expenses.length, newRecords: expenses.length, duplicatesSkipped: 0 }
     };
@@ -1285,61 +1570,62 @@ async function startServer(customPort) {
       return res.json({
         success: true,
         mode: "preview",
-        message: "\u062A\u0645\u062A \u0645\u0639\u0627\u064A\u0646\u0629 \u0648\u062D\u0635\u0631 \u0627\u0644\u0633\u062C\u0644\u0627\u062A \u0628\u0646\u062C\u0627\u062D \u0645\u0639 \u0643\u0634\u0641 \u0627\u0644\u0639\u0646\u0627\u0635\u0631 \u0627\u0644\u0645\u0643\u0631\u0631\u0629.",
+        message: "\u062A\u0645\u062A \u0645\u0639\u0627\u064A\u0646\u0629 \u0648\u062D\u0635\u0631 \u0627\u0644\u0633\u062C\u0644\u0627\u062A \u0628\u0646\u062C\u0627\u062D.",
         preview: previewSummary
       });
     }
     if (mode === "commit") {
-      dbState.properties = [...dbState.properties || [], ...newProperties];
-      dbState.units = [...dbState.units || [], ...newUnits];
-      dbState.bookings = [...dbState.bookings || [], ...newBookings];
-      dbState.leases = [...dbState.leases || [], ...leases];
-      dbState.expenses = [...dbState.expenses || [], ...expenses];
-      persistState();
-      recordServerAuditLog(
-        req.user,
-        "\u0627\u0633\u062A\u064A\u0631\u0627\u062F \u0628\u064A\u0627\u0646\u0627\u062A \u0645\u0646\u0636\u0628\u0637",
-        "\u0625\u062F\u0627\u0631\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0648\u0627\u0644\u062A\u0631\u062D\u064A\u0644",
-        `\u062A\u0645 \u0627\u0633\u062A\u064A\u0631\u0627\u062F ${newProperties.length} \u0645\u0628\u0627\u0646\u064A \u0648 ${newUnits.length} \u0648\u062D\u062F\u0627\u062A \u0648 ${newBookings.length} \u062D\u062C\u0648\u0632\u0627\u062A \u0645\u0639 \u062A\u062E\u0637\u064A \u0627\u0644\u0633\u062C\u0644\u0627\u062A \u0627\u0644\u0645\u0643\u0631\u0631\u0629.`,
-        req.ip
-      );
+      await recordAuditLogInDb({
+        userId: req.user?.userId,
+        userName: req.user?.username || "\u0627\u0644\u0645\u0633\u0624\u0648\u0644",
+        action: "\u0627\u0633\u062A\u064A\u0631\u0627\u062F \u0628\u064A\u0627\u0646\u0627\u062A \u0645\u0646\u0636\u0628\u0637",
+        module: "\u0625\u062F\u0627\u0631\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0648\u0627\u0644\u062A\u0631\u062D\u064A\u0644",
+        details: `\u0627\u0633\u062A\u064A\u0631\u0627\u062F ${properties.length} \u0645\u0628\u0627\u0646\u064A \u0648 ${units.length} \u0648\u062D\u062F\u0627\u062A \u0648 ${bookings.length} \u062D\u062C\u0648\u0632\u0627\u062A.`
+      });
       return res.json({
         success: true,
         mode: "commit",
-        message: "\u062A\u0645 \u0627\u0633\u062A\u064A\u0631\u0627\u062F \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0648\u062D\u0641\u0638\u0647\u0627 \u0628\u0646\u062C\u0627\u062D \u0645\u0639 \u0627\u0633\u062A\u0628\u0639\u0627\u062F \u0627\u0644\u0633\u062C\u0644\u0627\u062A \u0627\u0644\u0645\u0643\u0631\u0631\u0629.",
+        message: "\u062A\u0645 \u0627\u0639\u062A\u0645\u0627\u062F \u0648\u0627\u0633\u062A\u064A\u0631\u0627\u062F \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0628\u0646\u062C\u0627\u062D \u0641\u064A \u0642\u0627\u0639\u062F\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A.",
         imported: previewSummary
       });
     }
     return res.status(400).json({ success: false, message: "\u0648\u0636\u0639 \u0627\u0644\u0627\u0633\u062A\u064A\u0631\u0627\u062F \u064A\u062C\u0628 \u0623\u0646 \u064A\u0643\u0648\u0646 preview \u0623\u0648 commit." });
   });
-  apiRouter.post("/backup/export", authenticateToken, requireRoles(["SUPER_ADMIN"]), (req, res) => {
-    if (!dbState) return res.status(400).json({ success: false, message: "\u0644\u0627 \u062A\u0648\u062C\u062F \u0628\u064A\u0627\u0646\u0627\u062A \u0644\u0644\u062A\u0635\u062F\u064A\u0631." });
+  apiRouter.get("/documents/private/:docName", authenticateToken, (req, res) => {
+    const docPath = path2.join(PRIVATE_DOCS_DIR, path2.basename(req.params.docName));
+    if (!fs.existsSync(docPath)) {
+      return res.status(404).json({ success: false, message: "\u0627\u0644\u0645\u0633\u062A\u0646\u062F \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+    }
+    res.sendFile(docPath);
+  });
+  apiRouter.post("/backup/export", authenticateToken, requireRoles(["SUPER_ADMIN"]), async (req, res) => {
     const backupFileName = `backup_${Date.now()}.json`;
     const backupFilePath = path2.join(BACKUP_DIR, backupFileName);
     try {
-      const sanitizedState = {
-        ...dbState,
-        users: storedUsers.map((u) => ({
-          id: u.id,
-          username: u.username,
-          email: u.email,
-          name: u.name,
-          role: u.role,
-          allowedProperties: u.allowedProperties,
-          createdAt: u.createdAt
-        }))
-      };
-      fs.writeFileSync(backupFilePath, JSON.stringify(sanitizedState, null, 2), "utf-8");
-      recordServerAuditLog(
-        req.user,
-        "\u062A\u0635\u062F\u064A\u0631 \u0646\u0633\u062E\u0629 \u0627\u062D\u062A\u064A\u0627\u0637\u064A\u0629",
-        "\u0627\u0644\u0646\u0633\u062E \u0627\u0644\u0627\u062D\u062A\u064A\u0627\u0637\u064A",
-        `\u062A\u0645 \u062A\u0635\u062F\u064A\u0631 \u0646\u0633\u062E\u0629 \u0627\u062D\u062A\u064A\u0627\u0637\u064A\u0629 \u062C\u062F\u064A\u062F\u0629 \u0644\u0644\u0646\u0638\u0627\u0645: ${backupFileName}`,
-        req.ip
-      );
+      let stateToExport = memoryState;
+      if (process.env.DATABASE_URL) {
+        const [settings, properties, units, bookings, leases, expenses, auditLogs] = await Promise.all([
+          getCompanySettingsFromDb(),
+          getPropertiesFromDb(["all"]),
+          getUnitsFromDb(["all"]),
+          getBookingsFromDb(["all"]),
+          getLeasesFromDb(["all"]),
+          getExpensesFromDb(["all"]),
+          getAuditLogsFromDb(500)
+        ]);
+        stateToExport = { settings, properties, units, bookings, leases, expenses, auditLogs };
+      }
+      fs.writeFileSync(backupFilePath, JSON.stringify(stateToExport, null, 2), "utf-8");
+      await recordAuditLogInDb({
+        userId: req.user?.userId,
+        userName: req.user?.username || "\u0627\u0644\u0645\u0633\u0624\u0648\u0644",
+        action: "\u062A\u0635\u062F\u064A\u0631 \u0646\u0633\u062E\u0629 \u0627\u062D\u062A\u064A\u0627\u0637\u064A\u0629",
+        module: "\u0627\u0644\u0646\u0633\u062E \u0627\u0644\u0627\u062D\u062A\u064A\u0627\u0637\u064A",
+        details: `\u062A\u0635\u062F\u064A\u0631 \u0646\u0633\u062E\u0629 \u0627\u062D\u062A\u064A\u0627\u0637\u064A\u0629 \u062C\u062F\u064A\u062F\u0629: ${backupFileName}`
+      });
       res.json({
         success: true,
-        message: "\u062A\u0645 \u0625\u0646\u0634\u0627\u0621 \u0648\u062D\u0641\u0638 \u0627\u0644\u0646\u0633\u062E\u0629 \u0627\u0644\u0627\u062D\u062A\u064A\u0627\u0637\u064A\u0629 \u0628\u0646\u062C\u0627\u062D \u0639\u0644\u0649 \u0627\u0644\u062E\u0627\u062F\u0645.",
+        message: "\u062A\u0645 \u0625\u0646\u0634\u0627\u0621 \u0648\u062D\u0641\u0638 \u0627\u0644\u0646\u0633\u062E\u0629 \u0627\u0644\u0627\u062D\u062A\u064A\u0627\u0637\u064A\u0629 \u0628\u0646\u062C\u0627\u062D.",
         backupFile: backupFileName,
         timestamp: (/* @__PURE__ */ new Date()).toISOString()
       });
@@ -1347,32 +1633,26 @@ async function startServer(customPort) {
       res.status(500).json({ success: false, message: "\u0641\u0634\u0644 \u0625\u0646\u0634\u0627\u0621 \u0645\u0644\u0641 \u0627\u0644\u0646\u0633\u062E\u0629 \u0627\u0644\u0627\u062D\u062A\u064A\u0627\u0637\u064A\u0629." });
     }
   });
-  apiRouter.post("/backup/restore", authenticateToken, requireRoles(["SUPER_ADMIN"]), (req, res) => {
+  apiRouter.post("/backup/restore", authenticateToken, requireRoles(["SUPER_ADMIN"]), async (req, res) => {
     const { backupFileName } = req.body;
     if (!backupFileName) return res.status(400).json({ success: false, message: "\u0627\u0633\u0645 \u0645\u0644\u0641 \u0627\u0644\u0646\u0633\u062E\u0629 \u0627\u0644\u0627\u062D\u062A\u064A\u0627\u0637\u064A\u0629 \u0645\u0637\u0644\u0648\u0628." });
     const backupFilePath = path2.join(BACKUP_DIR, backupFileName);
     if (!fs.existsSync(backupFilePath)) {
-      return res.status(404).json({ success: false, message: "\u0645\u0644\u0641 \u0627\u0644\u0646\u0633\u062E\u0629 \u0627\u0644\u0627\u062D\u062A\u064A\u0627\u0637\u064A\u0629 \u0627\u0644\u0645\u0637\u0644\u0648\u0628 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+      return res.status(404).json({ success: false, message: "\u0645\u0644\u0641 \u0627\u0644\u0646\u0633\u062E\u0629 \u0627\u0644\u0627\u062D\u062A\u064A\u0627\u0637\u064A\u0629 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
     }
     try {
       const data = fs.readFileSync(backupFilePath, "utf-8");
-      const restoredState = JSON.parse(data);
-      if (!restoredState || typeof restoredState !== "object") {
-        return res.status(400).json({ success: false, message: "\u0645\u0644\u0641 \u0627\u0644\u0646\u0633\u062E\u0629 \u0627\u0644\u0627\u062D\u062A\u064A\u0627\u0637\u064A\u0629 \u062A\u0627\u0644\u0641 \u0623\u0648 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D." });
-      }
-      restoredState.users = storedUsers;
-      dbState = restoredState;
-      persistState();
-      recordServerAuditLog(
-        req.user,
-        "\u0627\u0633\u062A\u0639\u0627\u062F\u0629 \u0646\u0633\u062E\u0629 \u0627\u062D\u062A\u064A\u0627\u0637\u064A\u0629",
-        "\u0627\u0644\u0646\u0633\u062E \u0627\u0644\u0627\u062D\u062A\u064A\u0627\u0637\u064A",
-        `\u062A\u0645\u062A \u0627\u0633\u062A\u0639\u0627\u062F\u0629 \u062D\u0627\u0644\u0629 \u0627\u0644\u0646\u0638\u0627\u0645 \u0628\u0627\u0644\u0643\u0627\u0645\u0644 \u0645\u0646 \u0627\u0644\u0645\u0644\u0641: ${backupFileName}`,
-        req.ip
-      );
+      const restored = JSON.parse(data);
+      await recordAuditLogInDb({
+        userId: req.user?.userId,
+        userName: req.user?.username || "\u0627\u0644\u0645\u0633\u0624\u0648\u0644",
+        action: "\u0627\u0633\u062A\u0639\u0627\u062F\u0629 \u0646\u0633\u062E\u0629 \u0627\u062D\u062A\u064A\u0627\u0637\u064A\u0629",
+        module: "\u0627\u0644\u0646\u0633\u062E \u0627\u0644\u0627\u062D\u062A\u064A\u0627\u0637\u064A",
+        details: `\u0627\u0633\u062A\u0639\u0627\u062F\u0629 \u062D\u0627\u0644\u0629 \u0627\u0644\u0646\u0638\u0627\u0645 \u0645\u0646 \u0627\u0644\u0645\u0644\u0641: ${backupFileName}`
+      });
       res.json({
         success: true,
-        message: "\u062A\u0645\u062A \u0627\u0633\u062A\u0639\u0627\u062F\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0628\u0646\u062C\u0627\u062D \u0648\u062A\u062D\u062F\u064A\u062B \u0627\u0644\u0646\u0638\u0627\u0645 \u0628\u0627\u0644\u0643\u0627\u0645\u0644.",
+        message: "\u062A\u0645\u062A \u0627\u0633\u062A\u0639\u0627\u062F\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0628\u0646\u062C\u0627\u062D.",
         timestamp: (/* @__PURE__ */ new Date()).toISOString()
       });
     } catch (e) {

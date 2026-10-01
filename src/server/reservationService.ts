@@ -1,6 +1,7 @@
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from './db.js';
 import { RentalType, BookingStatus, LeaseStatus, InstallmentStatus } from '@prisma/client';
+import { serializeDecimals } from './repository.js';
 
 export interface DailyBookingInput {
   unitId: string;
@@ -31,17 +32,16 @@ export interface LeaseContractInput {
   idempotencyKey?: string;
 }
 
-// Helper to compute calendar end date safely
+// Helper to compute calendar end date safely (1 day before start day next year/month)
 export function calculateContractEndDate(startDateStr: string, months: number): string {
   const d = new Date(startDateStr);
-  const startDay = d.getDate();
   d.setMonth(d.getMonth() + months);
   // Subtract 1 day for inclusive end of lease period
   d.setDate(d.getDate() - 1);
   return d.toISOString().slice(0, 10);
 }
 
-// Generate installment dates and amounts
+// Generate installment dates and amounts with exact halala rounding
 export function generateInstallments(
   totalAnnualRent: number,
   startDateStr: string,
@@ -99,12 +99,11 @@ export async function checkUnitConflict(
   const startWithBuffer = new Date(startDateTime);
   const endWithBuffer = new Date(endDateTime.getTime() + 3 * 60 * 60 * 1000);
 
-  // Check if database is active
   if (process.env.DATABASE_URL) {
     const allocations = await prisma.unitAllocation.findMany({
       where: {
         unitId,
-        status: 'active',
+        status: 'active', // ONLY active allocations cause conflict; cancelled/released do not!
         ...(excludeAllocationId ? { id: { not: excludeAllocationId } } : {}),
         AND: [
           { startDate: { lt: endWithBuffer } },
@@ -124,7 +123,7 @@ export async function checkUnitConflict(
 
 // Server-side daily reservation transaction
 export async function processDailyReservation(input: DailyBookingInput) {
-  const { unitId, checkIn, checkOut, guestName, guestPhone, guestEmail, guestIdNumber, notes } = input;
+  const { unitId, checkIn, checkOut, guestName, guestPhone, guestEmail, guestIdNumber, notes, idempotencyKey } = input;
 
   const start = new Date(`${checkIn}T15:00:00.000Z`);
   const end = new Date(`${checkOut}T12:00:00.000Z`);
@@ -136,9 +135,27 @@ export async function processDailyReservation(input: DailyBookingInput) {
   const diffMs = end.getTime() - start.getTime();
   const totalNights = Math.max(1, Math.round(diffMs / (1000 * 60 * 60 * 24)));
 
-  // If live database is available
   if (process.env.DATABASE_URL) {
     return await prisma.$transaction(async (tx) => {
+      // 0. Idempotency Check: if key already exists, return existing booking
+      if (idempotencyKey) {
+        const existing = await tx.booking.findUnique({
+          where: { idempotencyKey },
+          include: { unit: { include: { property: true } } }
+        });
+        if (existing) {
+          return serializeDecimals({
+            booking: existing,
+            allocation: null,
+            totalAmount: Number(existing.totalAmount),
+            subtotal: Number(existing.subtotal),
+            taxes: Number(existing.taxes),
+            cleaningFee: Number(existing.cleaningFee),
+            securityDeposit: Number(existing.securityDeposit)
+          });
+        }
+      }
+
       // 1. Fetch unit directly from database
       const unit = await tx.unit.findUnique({
         where: { id: unitId },
@@ -169,7 +186,7 @@ export async function processDailyReservation(input: DailyBookingInput) {
         throw err;
       }
 
-      // 3. Compute official pricing on server (never accept client pricing)
+      // 3. Compute official pricing on server
       const nightlyRate = Number(unit.dailyRate) || 850;
       const subtotal = nightlyRate * totalNights;
       const cleaningFee = 150;
@@ -183,6 +200,7 @@ export async function processDailyReservation(input: DailyBookingInput) {
       const booking = await tx.booking.create({
         data: {
           bookingNumber,
+          idempotencyKey: idempotencyKey || null,
           unitId,
           guestName,
           guestPhone,
@@ -201,9 +219,9 @@ export async function processDailyReservation(input: DailyBookingInput) {
           totalAmount: new Decimal(totalAmount),
           paidAmount: new Decimal(0),
           status: BookingStatus.CONFIRMED,
-          paymentStatus: 'pending', // NOT fake success; waits for verified payment
-          identityStatus: 'pending_verification', // NOT fake idVerified; waits for official check
-          smartLockPin: null, // NOT fake random pin; activated only upon check-in verification
+          paymentStatus: 'pending',
+          identityStatus: 'pending_verification',
+          smartLockPin: null,
           notes: notes || null
         }
       });
@@ -232,11 +250,11 @@ export async function processDailyReservation(input: DailyBookingInput) {
         }
       });
 
-      return { booking, allocation, totalAmount, subtotal, taxes, cleaningFee, securityDeposit };
+      return serializeDecimals({ booking, allocation, totalAmount, subtotal, taxes, cleaningFee, securityDeposit });
     });
   }
 
-  // Fallback calculations for preview if DATABASE_URL is not yet connected
+  // Standalone fallback
   const nightlyRate = 850;
   const subtotal = nightlyRate * totalNights;
   const cleaningFee = 150;
@@ -292,7 +310,8 @@ export async function processLeaseContract(input: LeaseContractInput) {
     tenantEmail,
     tenantIdNumber,
     contractServices,
-    termsConditions
+    termsConditions,
+    idempotencyKey
   } = input;
 
   const durationMonths = rentalType === 'monthly' ? (input.durationMonths || 1) : 12;
@@ -307,6 +326,21 @@ export async function processLeaseContract(input: LeaseContractInput) {
 
   if (process.env.DATABASE_URL) {
     return await prisma.$transaction(async (tx) => {
+      // 0. Idempotency Check
+      if (idempotencyKey) {
+        const existing = await tx.lease.findUnique({
+          where: { idempotencyKey },
+          include: { unit: { include: { property: true } }, installments: true }
+        });
+        if (existing) {
+          return serializeDecimals({
+            lease: existing,
+            allocation: null,
+            installments: existing.installments
+          });
+        }
+      }
+
       // 1. Fetch unit
       const unit = await tx.unit.findUnique({
         where: { id: unitId },
@@ -356,6 +390,7 @@ export async function processLeaseContract(input: LeaseContractInput) {
       const lease = await tx.lease.create({
         data: {
           contractNumber,
+          idempotencyKey: idempotencyKey || null,
           unitId,
           tenantName,
           tenantPhone,
@@ -392,7 +427,6 @@ export async function processLeaseContract(input: LeaseContractInput) {
       }
 
       // 6. Create UnitAllocation for entire duration of the lease
-      // IMPORTANT: The unit remains blocked for the full lease duration and is NOT freed after the 1st installment
       const allocation = await tx.unitAllocation.create({
         data: {
           unitId,
@@ -416,11 +450,11 @@ export async function processLeaseContract(input: LeaseContractInput) {
         }
       });
 
-      return { lease, allocation, installments: installmentsData };
+      return serializeDecimals({ lease, allocation, installments: installmentsData });
     });
   }
 
-  // Fallback object for preview
+  // Standalone preview fallback
   const contractNumber = `CNT-${rentalType === 'annual' ? 'ANN' : 'MTH'}-${Date.now().toString().slice(-6)}`;
   const totalRentForPeriod = rentalType === 'annual' ? 85000 : 8500 * durationMonths;
   const installmentsData = generateInstallments(totalRentForPeriod, startDate, paymentFrequency, durationMonths);

@@ -167,6 +167,7 @@ CREATE TABLE "UnitAllocation" (
 CREATE TABLE "Booking" (
     "id" TEXT NOT NULL,
     "bookingNumber" TEXT NOT NULL,
+    "idempotencyKey" TEXT,
     "unitId" TEXT NOT NULL,
     "guestName" TEXT NOT NULL,
     "guestPhone" TEXT NOT NULL,
@@ -199,6 +200,7 @@ CREATE TABLE "Booking" (
 CREATE TABLE "Lease" (
     "id" TEXT NOT NULL,
     "contractNumber" TEXT NOT NULL,
+    "idempotencyKey" TEXT,
     "unitId" TEXT NOT NULL,
     "tenantName" TEXT NOT NULL,
     "tenantPhone" TEXT NOT NULL,
@@ -409,7 +411,13 @@ CREATE INDEX "UnitAllocation_unitId_startDate_endDate_status_idx" ON "UnitAlloca
 CREATE UNIQUE INDEX "Booking_bookingNumber_key" ON "Booking"("bookingNumber");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "Booking_idempotencyKey_key" ON "Booking"("idempotencyKey");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "Lease_contractNumber_key" ON "Lease"("contractNumber");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Lease_idempotencyKey_key" ON "Lease"("idempotencyKey");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "OperationalExpense_expenseNumber_key" ON "OperationalExpense"("expenseNumber");
@@ -467,6 +475,7 @@ ALTER TABLE "ExpensePaymentEntry" ADD CONSTRAINT "ExpensePaymentEntry_expenseId_
 
 -- AddForeignKey
 ALTER TABLE "AuditLog" ADD CONSTRAINT "AuditLog_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
 
 -- Enable btree_gist extension for PostgreSQL exclusion constraint
 CREATE EXTENSION IF NOT EXISTS btree_gist;

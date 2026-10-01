@@ -1,6 +1,6 @@
-// Prisma Schema for Real Estate & Hotel Management System
-// Platform: PostgreSQL 16
-// Designed for production multi-property management, booking allocation, accounting, and expense distribution
+// Prisma Schema for Luxury Home Platform (منزل الفخامة)
+// Database: PostgreSQL 16
+// High-precision financial accounting, strict booking allocation, and full multi-property management
 
 datasource db {
   provider = "postgresql"
@@ -97,11 +97,32 @@ model User {
   name              String
   phone             String?
   role              Role        @default(TENANT)
-  allowedProperties String[]    // Property IDs allowed for staff
+  allowedProperties String[]    @default(["all"])
   isActive          Boolean     @default(true)
   createdAt         DateTime    @default(now())
   updatedAt         DateTime    @updatedAt
+
   auditLogs         AuditLog[]
+}
+
+model CompanySettings {
+  id              String   @id @default("default")
+  companyName     String   @default("Luxury home منزل الفخامة")
+  companyNameEn   String   @default("Luxury Home")
+  tagline         String   @default("تجربة سكنية فاخرة تدمج بين خصوصية المنزل وخدمات الضيافة الراقية")
+  logoUrl         String?
+  iconUrl         String?
+  phone           String   @default("+966 11 000 0000")
+  whatsapp        String   @default("+966 50 000 0000")
+  email           String   @default("vip@luxuryhome.sa")
+  crNumber        String   @default("1010000000")
+  taxNumber       String   @default("300000000000003")
+  nationalAddress String   @default("الرياض - المملكة العربية السعودية")
+  checkInTime     String   @default("15:00")
+  checkOutTime    String   @default("12:00")
+  navigation      Json?
+  themeConfig     Json?
+  updatedAt       DateTime @updatedAt
 }
 
 model Property {
@@ -109,12 +130,12 @@ model Property {
   name            String
   code            String      @unique
   address         String
-  city            String
+  city            String      @default("الرياض")
   district        String
   floorsCount     Int         @default(1)
   unitsCount      Int         @default(0)
   totalAreaSqm    Float       @default(0)
-  rooftopPayment  Float       @default(0) // Annual rooftop rent/fee
+  rooftopPayment  Decimal     @default(0) @db.Decimal(12, 2)
   description     String?
   images          String[]
   isActive        Boolean     @default(true)
@@ -123,6 +144,7 @@ model Property {
 
   floors          Floor[]
   units           Unit[]
+  parkingSpots    ParkingSpot[]
   expenses        OperationalExpense[]
 }
 
@@ -136,27 +158,51 @@ model Floor {
 }
 
 model Unit {
-  id              String         @id @default(uuid())
-  propertyId      String
-  property        Property       @relation(fields: [propertyId], references: [id], onDelete: Cascade)
-  floorId         String?
-  floor           Floor?         @relation(fields: [floorId], references: [id], onDelete: SetNull)
-  unitNumber      String
-  type            String         // Studio, 1BD, 2BD, Penthouse
-  areaSqm         Float          @default(0)
-  dailyRate       Float          @default(0)
-  monthlyRate     Float          @default(0)
-  annualRate      Float          @default(0)
-  occupancyStatus String         @default("vacant") // vacant, occupied, maintenance, blocked
-  isClean         Boolean        @default(true)
-  images          String[]
+  id                String         @id @default(uuid())
+  propertyId        String
+  property          Property       @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  floorId           String?
+  floor             Floor?         @relation(fields: [floorId], references: [id], onDelete: SetNull)
+  unitNumber        String
+  type              String         // Studio, 1BD, 2BD, Penthouse
+  areaSqm           Float          @default(0)
+  dailyRate         Decimal        @default(0) @db.Decimal(12, 2)
+  monthlyRate       Decimal        @default(0) @db.Decimal(12, 2)
+  annualRate        Decimal        @default(0) @db.Decimal(12, 2)
+  occupancyStatus   String         @default("vacant") // vacant, occupied, maintenance, blocked
+  isClean           Boolean        @default(true)
+  publicationStatus String         @default("published")
+  images            String[]
+  spaces            Json?
+  fittings          Json?
+  smartLockPin      String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
   
-  allocations     UnitAllocation[]
-  bookings        Booking[]
-  leases          Lease[]
-  expenses        OperationalExpense[]
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
+  allocations       UnitAllocation[]
+  bookings          Booking[]
+  leases            Lease[]
+  expenses          OperationalExpense[]
+  expenseShares     ExpenseAllocation[]
+}
+
+model Amenity {
+  id          String   @id
+  name        String
+  nameEn      String
+  icon        String
+  category    String   @default("general")
+}
+
+model ParkingSpot {
+  id              String   @id @default(uuid())
+  propertyId      String
+  property        Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  spotNumber      String
+  floor           String
+  hasEVCharger    Boolean  @default(false)
+  status          String   @default("vacant")
+  assignedUnitId  String?
 }
 
 model UnitAllocation {
@@ -167,93 +213,127 @@ model UnitAllocation {
   endDate     DateTime
   rentalType  RentalType
   referenceId String?     // Booking or Lease ID
-  purpose     String      // booking, maintenance, block
+  purpose     String      // booking, lease, maintenance, block
+  status      String      @default("active") // active, released, cancelled
+  notes       String?
   createdAt   DateTime    @default(now())
 
-  @@index([unitId, startDate, endDate])
+  @@index([unitId, startDate, endDate, status])
 }
 
 model Booking {
-  id            String        @id @default(uuid())
-  bookingNumber String        @unique
-  unitId        String
-  unit          Unit          @relation(fields: [unitId], references: [id], onDelete: Cascade)
-  guestName     String
-  guestPhone    String
-  guestIdNumber String?
-  startDate     DateTime
-  endDate       DateTime
-  rentalType    RentalType    @default(DAILY)
-  totalAmount   Float
-  paidAmount    Float         @default(0)
-  status        BookingStatus @default(CONFIRMED)
-  notes         String?
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  id                String        @id @default(uuid())
+  bookingNumber     String        @unique
+  idempotencyKey    String?       @unique
+  unitId            String
+  unit              Unit          @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  guestName         String
+  guestPhone        String
+  guestEmail        String?
+  guestIdNumber     String?
+  startDate         DateTime
+  endDate           DateTime
+  rentalType        RentalType    @default(DAILY)
+  totalNights       Int           @default(1)
+  guestsCount       Int           @default(1)
+  nightlyRate       Decimal       @default(0) @db.Decimal(12, 2)
+  subtotal          Decimal       @default(0) @db.Decimal(12, 2)
+  cleaningFee       Decimal       @default(0) @db.Decimal(12, 2)
+  taxes             Decimal       @default(0) @db.Decimal(12, 2)
+  securityDeposit   Decimal       @default(0) @db.Decimal(12, 2)
+  totalAmount       Decimal       @db.Decimal(12, 2)
+  paidAmount        Decimal       @default(0) @db.Decimal(12, 2)
+  status            BookingStatus @default(CONFIRMED)
+  paymentStatus     String        @default("pending") // pending, paid_cash, paid_online, partial
+  identityStatus    String        @default("pending_verification") // pending_verification, verified, rejected
+  smartLockPin      String?
+  notes             String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
 
-  payments      PaymentRecord[]
+  payments          PaymentRecord[]
 }
 
 model Lease {
-  id              String      @id @default(uuid())
-  contractNumber  String      @unique
-  unitId          String
-  unit            Unit        @relation(fields: [unitId], references: [id], onDelete: Cascade)
-  tenantName      String
-  tenantPhone     String
-  tenantIdNumber  String
-  startDate       DateTime
-  endDate         DateTime
-  annualRent      Float
-  paymentOption   String      // 1 payment, 2, 4, 12
-  securityDeposit Float       @default(0)
-  status          LeaseStatus @default(ACTIVE)
-  pdfUrl          String?
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
+  id                String      @id @default(uuid())
+  contractNumber    String      @unique
+  idempotencyKey    String?     @unique
+  unitId            String
+  unit              Unit        @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  tenantName        String
+  tenantPhone       String
+  tenantEmail       String?
+  tenantIdNumber    String
+  startDate         DateTime
+  endDate           DateTime
+  rentalType        RentalType  @default(ANNUAL)
+  annualRent        Decimal     @db.Decimal(12, 2)
+  paymentOption     String      // 1 payment, 2 payments, 4 payments, monthly
+  paymentFrequency  String?     // '1_payment', '2_payments', 'monthly'
+  installmentsCount Int         @default(1)
+  securityDeposit   Decimal     @default(0) @db.Decimal(12, 2)
+  contractServices  Json?
+  includedAmenities String[]
+  termsConditions   String?
+  status            LeaseStatus @default(ACTIVE)
+  pdfUrl            String?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
 
-  installments     LeaseInstallment[]
-  securityDeposits SecurityDepositRecord[]
+  installments      LeaseInstallment[]
+  securityDeposits  SecurityDepositRecord[]
+  payments          PaymentRecord[]
 }
 
 model LeaseInstallment {
-  id          String            @id @default(uuid())
-  leaseId     String
-  lease       Lease             @relation(fields: [leaseId], references: [id], onDelete: Cascade)
-  number      Int
-  dueDate     DateTime
-  amount      Float
-  paidAmount  Float             @default(0)
-  status      InstallmentStatus @default(UPCOMING)
-  paidAt      DateTime?
-}
-
-model SecurityDepositRecord {
-  id          String   @id @default(uuid())
-  leaseId     String
-  lease       Lease    @relation(fields: [leaseId], references: [id], onDelete: Cascade)
-  amount      Float
-  status      String   // held, refunded, deducted
-  notes       String?
-  createdAt   DateTime @default(now())
+  id              String            @id @default(uuid())
+  leaseId         String
+  lease           Lease             @relation(fields: [leaseId], references: [id], onDelete: Cascade)
+  number          Int
+  label           String?           // e.g. "الدفعة الأولى"
+  dueDate         DateTime
+  amount          Decimal           @db.Decimal(12, 2)
+  paidAmount      Decimal           @default(0) @db.Decimal(12, 2)
+  remainingAmount Decimal           @db.Decimal(12, 2)
+  status          InstallmentStatus @default(UPCOMING)
+  paidAt          DateTime?
 }
 
 model PaymentRecord {
-  id            String   @id @default(uuid())
+  id            String    @id @default(uuid())
   bookingId     String?
-  booking       Booking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
-  amount        Float
-  paymentMethod String   // cash, card, transfer, mada
+  booking       Booking?  @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  leaseId       String?
+  lease         Lease?    @relation(fields: [leaseId], references: [id], onDelete: SetNull)
+  amount        Decimal   @db.Decimal(12, 2)
+  paymentMethod String    // cash, card, bank_transfer, mada, apple_pay
+  receiptNo     String?
   referenceNo   String?
-  paidAt        DateTime @default(now())
+  status        String    @default("completed") // completed, pending, refunded
+  isVerified    Boolean   @default(false)
+  paidAt        DateTime  @default(now())
   notes         String?
+}
+
+model SecurityDepositRecord {
+  id              String    @id @default(uuid())
+  leaseId         String?
+  lease           Lease?    @relation(fields: [leaseId], references: [id], onDelete: SetNull)
+  bookingId       String?
+  amount          Decimal   @db.Decimal(12, 2)
+  status          String    // held, refunded, deducted
+  deductedAmount  Decimal   @default(0) @db.Decimal(12, 2)
+  refundedAmount  Decimal   @default(0) @db.Decimal(12, 2)
+  deductionReason String?
+  notes           String?
+  createdAt       DateTime  @default(now())
 }
 
 model OperationalExpense {
   id                  String                   @id @default(uuid())
   expenseNumber       String                   @unique
   title               String
-  amount              Float
+  amount              Decimal                  @db.Decimal(12, 2)
   costCenterLevel     CostCenterLevel
   propertyId          String?
   property            Property?                @relation(fields: [propertyId], references: [id], onDelete: SetNull)
@@ -282,16 +362,17 @@ model ExpenseAllocation {
   expenseId   String
   expense     OperationalExpense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
   unitId      String
-  shareAmount Float
+  unit        Unit               @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  shareAmount Decimal            @db.Decimal(12, 2)
   percentage  Float
-  monthPeriod String             // e.g., "2026-03"
+  monthPeriod String             // e.g., "2026-10"
 }
 
 model ExpensePaymentEntry {
   id            String             @id @default(uuid())
   expenseId     String
   expense       OperationalExpense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
-  amount        Float
+  amount        Decimal            @db.Decimal(12, 2)
   paymentDate   DateTime           @default(now())
   paymentMethod String
   referenceNo   String?
@@ -308,6 +389,38 @@ model ExpenseCategoryConfig {
   defaultAllocationMethod CostAllocationMethod
   subcategories           String[]
   isActive                Boolean                  @default(true)
+}
+
+model RecurringExpenseSchedule {
+  id          String          @id @default(uuid())
+  title       String
+  categoryCode ExpenseCategoryType
+  amount      Decimal         @db.Decimal(12, 2)
+  propertyId  String?
+  unitId      String?
+  frequency   String          // monthly, quarterly, annual
+  nextDueDate DateTime
+  isActive    Boolean         @default(true)
+}
+
+model TenantAdjustment {
+  id          String   @id @default(uuid())
+  tenantName  String
+  unitNumber  String
+  type        String   // discount, penalty, fee
+  amount      Decimal  @db.Decimal(12, 2)
+  reason      String
+  date        DateTime @default(now())
+  approvedBy  String
+}
+
+model ContentSection {
+  id        String   @id
+  title     String
+  subtitle  String?
+  enabled   Boolean  @default(true)
+  order     Int      @default(0)
+  config    Json?
 }
 
 model AuditLog {
