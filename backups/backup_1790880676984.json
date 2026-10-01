@@ -164,13 +164,11 @@
       "id": "usr_super_admin_env",
       "username": "admin_test",
       "email": "admin@luxuryhome.sa",
-      "passwordHash": "$2b$10$XMKn1aci6VLmldOZiNZ5tOuyQqSVPrYcS6WO14E1WveHWfjez0saS",
       "name": "مدير النظام الرئيسي",
       "role": "SUPER_ADMIN",
       "allowedProperties": [
         "all"
       ],
-      "isActive": true,
       "createdAt": "2026-10-01T18:39:49.526Z"
     }
   ]

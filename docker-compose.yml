@@ -2,26 +2,29 @@ version: '3.8'
 
 services:
   # =========================================================
-  # App Service: Full-Stack Express Backend + React Vite Single Image
+  # App Service: Full-Stack Express Backend + React Vite
   # =========================================================
   app:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: ivoire_platform_app
+    container_name: luxury_home_app
     restart: always
-    ports:
-      - "3000:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
-      - DATABASE_URL=postgresql://ivoire_user:IvoireSecurePass2026@postgres:5432/ivoire_db?schema=public
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-luxury_home_user}:${POSTGRES_PASSWORD:-luxury_home_secure_pass_2026}@postgres:5432/${POSTGRES_DB:-luxury_home_db}?schema=public
       - REDIS_URL=redis://redis:6379
-      - JWT_SECRET=super_secret_jwt_key_ivoire_2026_prod
+      - JWT_SECRET=${JWT_SECRET:-luxury_home_jwt_production_secret_key_2026_secure_hash}
+      - INITIAL_ADMIN_USERNAME=${INITIAL_ADMIN_USERNAME:-admin}
+      - INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD:-admin123456}
       - UPLOAD_DIR=/app/uploads
+      - BACKUP_DIR=/app/backups
     volumes:
       - app_uploads:/app/uploads
-      - app_data:/app/data
+      - app_backups:/app/backups
+    networks:
+      - luxury_home_network
     depends_on:
       postgres:
         condition: service_healthy
@@ -29,44 +32,47 @@ services:
         condition: service_started
 
   # =========================================================
-  # Database Service: PostgreSQL 16
+  # Database Service: PostgreSQL 16 (Not exposed publicly)
   # =========================================================
   postgres:
     image: postgres:16-alpine
-    container_name: ivoire_platform_postgres
+    container_name: luxury_home_postgres
     restart: always
     environment:
-      POSTGRES_USER: ivoire_user
-      POSTGRES_PASSWORD: IvoireSecurePass2026
-      POSTGRES_DB: ivoire_db
+      POSTGRES_USER: ${POSTGRES_USER:-luxury_home_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-luxury_home_secure_pass_2026}
+      POSTGRES_DB: ${POSTGRES_DB:-luxury_home_db}
+    # Security: Only bind to localhost for local admin tools, not open to internet
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - luxury_home_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ivoire_user -d ivoire_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-luxury_home_user} -d ${POSTGRES_DB:-luxury_home_db}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   # =========================================================
-  # Cache & Background Worker Queue Service: Redis 7
+  # Cache Service: Redis 7 (Internal network only)
   # =========================================================
   redis:
     image: redis:7-alpine
-    container_name: ivoire_platform_redis
+    container_name: luxury_home_redis
     restart: always
-    ports:
-      - "6379:6379"
     volumes:
       - redis_data:/data
+    networks:
+      - luxury_home_network
 
   # =========================================================
-  # Reverse Proxy Service: Nginx
+  # Reverse Proxy: Nginx (Entrypoint for HTTP / HTTPS)
   # =========================================================
   nginx:
     image: nginx:alpine
-    container_name: ivoire_platform_nginx
+    container_name: luxury_home_nginx
     restart: always
     ports:
       - "80:80"
@@ -75,11 +81,17 @@ services:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - ./certbot/conf:/etc/letsencrypt:ro
       - ./certbot/www:/var/www/certbot:ro
+    networks:
+      - luxury_home_network
     depends_on:
       - app
+
+networks:
+  luxury_home_network:
+    driver: bridge
 
 volumes:
   postgres_data:
   redis_data:
   app_uploads:
-  app_data:
+  app_backups:

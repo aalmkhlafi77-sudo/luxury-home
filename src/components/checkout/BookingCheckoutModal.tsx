@@ -66,9 +66,30 @@ export const BookingCheckoutModal: React.FC<BookingCheckoutModalProps> = ({
     setIsProcessing(true);
     setErrorMessage(null);
     try {
-      // Simulate real bank authorization and atomic allocation check
-      await new Promise(r => setTimeout(r, 900));
+      // 1. Call server API to perform atomic conflict check & allocation
+      const serverRes = await fetch('/api/bookings/daily', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          unitId: unit.id,
+          checkIn: dates.checkIn,
+          checkOut: dates.checkOut,
+          guestsCount: dates.guests,
+          guestName: guestForm.fullName,
+          guestPhone: guestForm.phone,
+          guestEmail: guestForm.email,
+          guestIdNumber: guestForm.nationalId,
+          notes: `حجز إلكتروني - طريقة الدفع المختارة: ${paymentMethod}`
+        })
+      });
 
+      const data = await serverRes.json().catch(() => null);
+
+      if (!serverRes.ok) {
+        throw new Error(data?.message || 'تعذر إتمام الحجز على الخادم. قد تكون الفترة متداخلة.');
+      }
+
+      // 2. Register in local store
       const newBooking = createBooking({
         unitId: unit.id,
         guest: {
@@ -82,6 +103,10 @@ export const BookingCheckoutModal: React.FC<BookingCheckoutModalProps> = ({
         guestsCount: dates.guests,
         paymentMethod,
       });
+
+      if (data?.booking?.bookingNumber) {
+        newBooking.bookingNumber = data.booking.bookingNumber;
+      }
 
       setCompletedBooking(newBooking);
       setStep(4);
@@ -406,9 +431,15 @@ export const BookingCheckoutModal: React.FC<BookingCheckoutModalProps> = ({
                   <span className="font-bold text-[#282824]">{completedBooking.checkIn} إلى {completedBooking.checkOut}</span>
                 </div>
                 <div className="flex justify-between">
+                  <span className="text-[#68675F]">حالة السداد والتحصيل:</span>
+                  <span className="font-bold text-amber-900 bg-amber-100 px-2 py-0.5 rounded">
+                    بانتظار التحصيل والتأكيد الرسمي
+                  </span>
+                </div>
+                <div className="flex justify-between">
                   <span className="text-[#68675F]">الرمز السري للقفل الذكي:</span>
-                  <span className="font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded">
-                    تلقائي (الدخول يبدأ ٣:٠٠ م)
+                  <span className="font-bold text-[#68675F] bg-[#EFE9DF] px-2 py-0.5 rounded">
+                    يُفعل ويرسل تلقائياً عند إتمام التحقق والدخول
                   </span>
                 </div>
               </div>

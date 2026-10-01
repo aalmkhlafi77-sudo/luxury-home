@@ -159,13 +159,6 @@ function getStoredState(): AppState {
       if (!parsed.recurringExpenses || parsed.recurringExpenses.length === 0) {
         parsed.recurringExpenses = initialRecurringExpenses;
       }
-      // Ensure any initial expenses from initialExpenses (like the 120k rent) are present if missing
-      const existingExpenseIds = new Set((parsed.expenses || []).map((e: any) => e.id));
-      initialExpenses.forEach(exp => {
-        if (!existingExpenseIds.has(exp.id)) {
-          parsed.expenses.push(exp);
-        }
-      });
       return parsed;
     }
   } catch (e) {
@@ -199,13 +192,23 @@ function getStoredState(): AppState {
 export function saveState(state: AppState) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    // Asynchronously push to backend API server for persistent server DB storage
+    // Asynchronously push to backend API server with Bearer auth token
+    const token = localStorage.getItem('luxury_home_jwt_token');
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
     fetch('/api/state/sync', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(state),
+    }).then(res => {
+      if (!res.ok && res.status !== 401) {
+        console.warn(`[Sync Warning] Server state sync returned status ${res.status}`);
+      }
     }).catch(() => {
-      // Ignore background sync errors if server is unreachable
+      // Offline fallback
     });
   } catch (e) {
     console.error('Failed to save state', e);
@@ -383,7 +386,7 @@ export function useAppStore() {
       propertyId: unit.propertyId,
       guest: {
         ...payload.guest,
-        idVerified: true,
+        idVerified: false, // Verification pending official check
       },
       checkIn: payload.checkIn,
       checkOut: payload.checkOut,
@@ -397,7 +400,7 @@ export function useAppStore() {
       taxes,
       securityDeposit,
       totalAmount,
-      smartLockPin: pin,
+      smartLockPin: undefined, // PIN is securely provided upon check-in verification only
       smartLockPinValidFrom: `${payload.checkIn}T15:00:00`,
       smartLockPinValidTo: `${payload.checkOut}T12:00:00`,
       createdAt: new Date().toISOString(),
@@ -410,10 +413,10 @@ export function useAppStore() {
       referenceId: bookingId,
       amount: totalAmount - securityDeposit,
       method: payload.paymentMethod,
-      status: 'success',
+      status: 'pending', // Pending official payment confirmation
       transactionId: `TX_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`,
       createdAt: new Date().toISOString(),
-      notes: `سداد حجز فندقي #${bookingNumber}`
+      notes: `حجز فندقي #${bookingNumber} - بانتظار التحصيل والتأكيد`
     };
 
     const newDeposit: SecurityDepositRecord = {

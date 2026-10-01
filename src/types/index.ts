@@ -385,6 +385,7 @@ export interface Lease {
   endDate: string;   // YYYY-MM-DD
   monthsCount: number; // عدد الأشهر (مثلا 12 للسنوي)
   rentalType: 'monthly' | 'yearly';
+  type?: 'monthly' | 'yearly';
   yearlyPaymentOption?: AnnualPaymentOption; // دفعة واحدة أو دفعتين
   status: 'draft' | 'active' | 'expired' | 'terminated';
   // أسعار وتفاصيل مالية

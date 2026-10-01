@@ -26,57 +26,157 @@ async function runFinancialTests() {
   process.env.NODE_ENV = 'production';
   const server = await startServer(3098);
   const PORT = 3098;
+  let failures = 0;
 
   console.log('=====================================================');
-  console.log('💰 Running Server-Side Financials & Allocation Test Suite');
+  console.log('💰 Running Server-Side Financials & Cost Allocation Suite');
   console.log('=====================================================');
 
   try {
-    const res = await makeRequest({
+    // Test 1: Standard Equal Unit Allocation
+    console.log('\n[Test 1] Testing Equal Units OPEX Distribution...');
+    const res1 = await makeRequest({
       hostname: '127.0.0.1',
       port: PORT,
       path: '/api/financials/calculate-distribution',
       method: 'POST',
       headers: { 'Content-Type': 'application/json' }
     }, {
-      buildingRent: 120000,   // 10,000 / month
-      guardSalary: 3000,      // 3,000 / month
-      adminSalary: 10000,     // 10,000 / month
-      electricityBill: 1500,  // 1,500 / month
-      directMaintenance: 500, // 500 / month (direct for Unit 101)
+      buildingRent: 120000,
+      guardSalary: 3000,
+      adminSalary: 10000,
+      electricityBill: 1500,
+      directMaintenance: 500,
+      allocationMethod: 'EQUAL_UNITS',
       units: [
-        { id: '101', areaSqm: 50, isOccupied: true },
-        { id: '102', areaSqm: 50, isOccupied: true },
-        { id: '103', areaSqm: 50, isOccupied: false },
-        { id: '104', areaSqm: 50, isOccupied: false },
-        { id: '105', areaSqm: 50, isOccupied: true },
-        { id: '106', areaSqm: 50, isOccupied: true },
-        { id: '107', areaSqm: 50, isOccupied: true },
-        { id: '108', areaSqm: 50, isOccupied: true },
-        { id: '109', areaSqm: 50, isOccupied: false },
-        { id: '110', areaSqm: 50, isOccupied: true }
+        { id: '101', unitNumber: '101', areaSqm: 50, isOccupied: true },
+        { id: '102', unitNumber: '102', areaSqm: 50, isOccupied: true },
+        { id: '103', unitNumber: '103', areaSqm: 50, isOccupied: false },
+        { id: '104', unitNumber: '104', areaSqm: 50, isOccupied: false },
+        { id: '105', unitNumber: '105', areaSqm: 50, isOccupied: true },
+        { id: '106', unitNumber: '106', areaSqm: 50, isOccupied: true },
+        { id: '107', unitNumber: '107', areaSqm: 50, isOccupied: true },
+        { id: '108', unitNumber: '108', areaSqm: 50, isOccupied: true },
+        { id: '109', unitNumber: '109', areaSqm: 50, isOccupied: false },
+        { id: '110', unitNumber: '110', areaSqm: 50, isOccupied: true }
       ]
     });
 
-    console.log(`Status Code: ${res.status}`);
-    console.log('Financial Response Summary:', JSON.stringify(res.data.summary, null, 2));
-
-    const summary = res.data.summary;
-    if (summary && summary.discrepancyHalalas === 0) {
-      console.log('✅ PASS: Company OPEX matches sum of all allocated unit shares with 0.00 SAR discrepancy!');
+    if (res1.status === 200 && res1.data?.summary?.discrepancyHalalas === 0) {
+      console.log('✅ PASS: Equal units OPEX matches sum of unit shares with 0.00 discrepancy!');
     } else {
-      console.log('❌ FAIL: Discrepancy detected in company aggregation!');
+      console.error('❌ FAIL: Equal units distribution failed or had discrepancy.');
+      failures++;
+    }
+
+    // Test 2: SQM Area Allocation with Diverse Sizes (50m², 75m², 125m²)
+    console.log('\n[Test 2] Testing SQM Area Proportionate Allocation...');
+    const res2 = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/financials/allocate',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    }, {
+      title: 'فاتورة الكهرباء والخدمات المشتركة',
+      amount: 5000,
+      costCenterLevel: 'PROPERTY',
+      allocationMethod: 'SQM_AREA',
+      startDate: '2026-10-01',
+      endDate: '2026-10-31',
+      units: [
+        { id: 'u1', unitNumber: '101', areaSqm: 50, isOccupied: true },
+        { id: 'u2', unitNumber: '102', areaSqm: 75, isOccupied: true },
+        { id: 'u3', unitNumber: '201', areaSqm: 125, isOccupied: true }
+      ]
+    });
+
+    // Total area = 250m². u1 = 20% (1000 SAR), u2 = 30% (1500 SAR), u3 = 50% (2500 SAR)
+    const shares = res2.data?.shares || [];
+    const u1Share = shares.find((s: any) => s.unitId === 'u1')?.shareAmount;
+    const u3Share = shares.find((s: any) => s.unitId === 'u3')?.shareAmount;
+
+    if (res2.status === 200 && u1Share === 1000 && u3Share === 2500 && res2.data.distributedAmount === 5000) {
+      console.log('✅ PASS: Area-based allocation calculated exact proportional shares (1000 SAR, 2500 SAR)!');
+    } else {
+      console.error('❌ FAIL: Area-based allocation produced incorrect values:', res2.data);
+      failures++;
+    }
+
+    // Test 3: Indivisible Amount Halalas Rounding (1000 SAR divided among 3 equal units)
+    console.log('\n[Test 3] Testing Indivisible Amount Rounding (1000 SAR / 3 units)...');
+    const res3 = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/financials/allocate',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    }, {
+      title: 'صيانة دورية مصعد',
+      amount: 1000,
+      costCenterLevel: 'PROPERTY',
+      allocationMethod: 'EQUAL_UNITS',
+      startDate: '2026-10-01',
+      endDate: '2026-10-31',
+      units: [
+        { id: 'u1', unitNumber: '101', areaSqm: 50, isOccupied: true },
+        { id: 'u2', unitNumber: '102', areaSqm: 50, isOccupied: true },
+        { id: 'u3', unitNumber: '103', areaSqm: 50, isOccupied: true }
+      ]
+    });
+
+    const sum3 = res3.data?.shares?.reduce((acc: number, c: any) => acc + c.shareAmount, 0);
+    const diff3 = Math.abs(1000 - sum3);
+
+    if (res3.status === 200 && diff3 < 0.001 && res3.data?.distributedAmount === 1000) {
+      console.log(`✅ PASS: Indivisible 1000 SAR divided with exact deterministic rounding adjustment. Sum = ${sum3} SAR!`);
+    } else {
+      console.error(`❌ FAIL: Indivisible rounding failed. Sum = ${sum3}`);
+      failures++;
+    }
+
+    // Test 4: Zero Expense Handling (0 SAR is valid and should not load defaults)
+    console.log('\n[Test 4] Testing Zero Expense Acceptance (0 SAR)...');
+    const res4 = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/financials/allocate',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    }, {
+      title: 'مصروف صفري تحت المراجعة',
+      amount: 0,
+      costCenterLevel: 'PROPERTY',
+      allocationMethod: 'EQUAL_UNITS',
+      startDate: '2026-10-01',
+      endDate: '2026-10-31',
+      units: [
+        { id: 'u1', unitNumber: '101', areaSqm: 50, isOccupied: true },
+        { id: 'u2', unitNumber: '102', areaSqm: 50, isOccupied: true }
+      ]
+    });
+
+    if (res4.status === 200 && res4.data?.totalExpenseAmount === 0 && res4.data?.distributedAmount === 0) {
+      console.log('✅ PASS: Zero expense accepted accurately without fallback to mock numbers!');
+    } else {
+      console.error('❌ FAIL: Zero expense was not accepted or reverted to non-zero values.');
+      failures++;
     }
 
     console.log('\n=====================================================');
-    console.log('🎉 Server Financial Test Completed!');
+    if (failures === 0) {
+      console.log('🎉 ALL FINANCIAL & COST ALLOCATION TESTS PASSED (0 Failures)');
+    } else {
+      console.error(`💥 TEST SUITE COMPLETED WITH ${failures} FAILURE(S)`);
+    }
     console.log('=====================================================');
 
   } catch (err) {
-    console.error('Error during Financial test:', err);
+    console.error('Fatal error during Financial test:', err);
+    failures++;
   } finally {
     server.close();
-    process.exit(0);
+    process.exit(failures > 0 ? 1 : 0);
   }
 }
 

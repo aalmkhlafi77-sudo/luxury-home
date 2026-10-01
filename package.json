@@ -5,10 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "start": "tsx server.ts",
-    "build": "vite build",
-    "preview": "vite preview",
-    "clean": "rm -rf dist server.js",
+    "start": "node dist-server/server.js",
+    "build:client": "vite build",
+    "build:server": "esbuild server.ts --bundle --platform=node --format=esm --packages=external --outfile=dist-server/server.js",
+    "build": "vite build && npm run build:server",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate deploy",
+    "clean": "rm -rf dist dist-server",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
