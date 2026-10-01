@@ -28,14 +28,16 @@ import {
   computeCostAllocation
 } from './src/server/financialEngine.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const BACKUP_DIR = path.resolve(__dirname, 'backups');
-const UPLOADS_DIR = path.resolve(__dirname, 'uploads');
+const ROOT_DIR = process.cwd();
+const BACKUP_DIR = path.resolve(ROOT_DIR, 'backups');
+const UPLOADS_DIR = path.resolve(ROOT_DIR, 'uploads');
+const PRIVATE_DOCS_DIR = path.resolve(ROOT_DIR, 'private_docs');
+const DIST_DIR = path.resolve(ROOT_DIR, 'dist');
+const SERVER_DB_FILE = path.resolve(ROOT_DIR, 'server-db.json');
 
 // Ensure system directories exist
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+if (!fs.existsSync(PRIVATE_DOCS_DIR)) fs.mkdirSync(PRIVATE_DOCS_DIR, { recursive: true });
 if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR, { recursive: true });
 
 // Server state management
@@ -318,7 +320,17 @@ export async function startServer(customPort?: number) {
       return;
     }
 
-    // Initial setup: No admin exists yet -> Allow creating the very first Super Admin
+    // Initial setup: No admin exists yet -> Check ADMIN_SETUP_SECRET if configured
+    const expectedSecret = process.env.ADMIN_SETUP_SECRET;
+    const providedSecret = req.headers['x-admin-setup-secret'] || req.body.setupSecret;
+    if (expectedSecret && providedSecret !== expectedSecret) {
+      return res.status(403).json({
+        success: false,
+        code: 'INVALID_SETUP_SECRET',
+        message: 'مرفوض: رمز التهيئة الإدارية الأولية (ADMIN_SETUP_SECRET) غير صحيح.'
+      });
+    }
+
     await createAdminRecord();
 
     async function createAdminRecord() {
@@ -953,11 +965,10 @@ export async function startServer(customPort?: number) {
 
   // Serve static dist in production, or mount Vite dev middleware
   if (process.env.NODE_ENV === 'production') {
-    const distPath = path.resolve(__dirname, 'dist');
-    if (fs.existsSync(distPath)) {
-      app.use(express.static(distPath));
+    if (fs.existsSync(DIST_DIR)) {
+      app.use(express.static(DIST_DIR));
       app.get('*', (req: Request, res: Response) => {
-        res.sendFile(path.resolve(distPath, 'index.html'));
+        res.sendFile(path.resolve(DIST_DIR, 'index.html'));
       });
     } else {
       app.get('*', (req: Request, res: Response) => {
@@ -979,7 +990,17 @@ export async function startServer(customPort?: number) {
   return serverInstance;
 }
 
-// Start server directly if executed
-if (process.argv[1] && process.argv[1].endsWith('server.ts')) {
-  startServer();
+// Start server directly if executed in Node/TSX, but skip when imported by test runner
+const execPath = process.argv[1] || '';
+const isDirectExecution = (
+  execPath.endsWith('server.ts') ||
+  execPath.endsWith('server.js') ||
+  execPath.includes('dist-server')
+) && !process.env.TEST_SUITE_RUNNER;
+
+if (isDirectExecution) {
+  startServer().catch(err => {
+    console.error('[Server Start Error]:', err);
+    process.exit(1);
+  });
 }

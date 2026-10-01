@@ -40,7 +40,8 @@ export default function App() {
   const defaultEnd = nextWeek.toISOString().slice(0, 10);
 
   const [selectedPropertyId, setSelectedPropertyId] = useState<string>('all');
-  const [rentalType, setRentalType] = useState<'daily' | 'monthly'>('daily');
+  const [rentalType, setRentalType] = useState<'daily' | 'monthly' | 'yearly'>('daily');
+  const [annualPaymentTerms, setAnnualPaymentTerms] = useState<'single' | 'semi_annual'>('single');
   const [startDate, setStartDate] = useState<string>(defaultStart);
   const [endDate, setEndDate] = useState<string>(defaultEnd);
   const [monthsCount, setMonthsCount] = useState<number>(1);
@@ -55,7 +56,13 @@ export default function App() {
   
   const [checkoutData, setCheckoutData] = useState<{
     unit: Unit;
-    dates: { checkIn: string; checkOut: string; guests: number; rentalType: 'daily' | 'monthly' };
+    dates: {
+      checkIn: string;
+      checkOut: string;
+      guests: number;
+      rentalType: 'daily' | 'monthly' | 'yearly';
+      annualPaymentTerms?: 'single' | 'semi_annual';
+    };
   } | null>(null);
 
   const [isClientPortalOpen, setIsClientPortalOpen] = useState(false);
@@ -94,6 +101,11 @@ export default function App() {
     if (rentalType === 'monthly') {
       const d = new Date(`${startDate}T15:00:00`);
       d.setMonth(d.getMonth() + monthsCount);
+      computedEnd = d.toISOString().slice(0, 10);
+    } else if (rentalType === 'yearly') {
+      const d = new Date(`${startDate}T15:00:00`);
+      d.setFullYear(d.getFullYear() + 1);
+      d.setDate(d.getDate() - 1);
       computedEnd = d.toISOString().slice(0, 10);
     }
 
@@ -134,6 +146,11 @@ export default function App() {
       const d = new Date(`${startDate}T15:00:00`);
       d.setMonth(d.getMonth() + monthsCount);
       computedEnd = d.toISOString().slice(0, 10);
+    } else if (rentalType === 'yearly') {
+      const d = new Date(`${startDate}T15:00:00`);
+      d.setFullYear(d.getFullYear() + 1);
+      d.setDate(d.getDate() - 1);
+      computedEnd = d.toISOString().slice(0, 10);
     }
 
     setCheckoutData({
@@ -143,6 +160,7 @@ export default function App() {
         checkOut: computedEnd,
         guests: guestsCount,
         rentalType,
+        annualPaymentTerms,
       }
     });
   };
@@ -196,6 +214,8 @@ export default function App() {
           onPropertyChange={(id) => setSelectedPropertyId(id)}
           rentalType={rentalType}
           onRentalTypeChange={(type) => setRentalType(type)}
+          annualPaymentTerms={annualPaymentTerms}
+          onAnnualPaymentTermsChange={(terms) => setAnnualPaymentTerms(terms)}
           startDate={startDate}
           onStartDateChange={(d) => setStartDate(d)}
           endDate={endDate}

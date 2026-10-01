@@ -15,14 +15,17 @@ services:
       - PORT=3000
       - DATABASE_URL=postgresql://${POSTGRES_USER:-luxury_home_user}:${POSTGRES_PASSWORD:-luxury_home_secure_pass_2026}@postgres:5432/${POSTGRES_DB:-luxury_home_db}?schema=public
       - REDIS_URL=redis://redis:6379
-      - JWT_SECRET=${JWT_SECRET:-luxury_home_jwt_production_secret_key_2026_secure_hash}
+      - JWT_SECRET=${JWT_SECRET}
+      - ADMIN_SETUP_SECRET=${ADMIN_SETUP_SECRET}
       - INITIAL_ADMIN_USERNAME=${INITIAL_ADMIN_USERNAME:-admin}
-      - INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD:-admin123456}
+      - INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD}
       - UPLOAD_DIR=/app/uploads
       - BACKUP_DIR=/app/backups
+      - PRIVATE_DOCS_DIR=/app/private_docs
     volumes:
       - app_uploads:/app/uploads
       - app_backups:/app/backups
+      - app_private_docs:/app/private_docs
     networks:
       - luxury_home_network
     depends_on:
@@ -95,3 +98,4 @@ volumes:
   redis_data:
   app_uploads:
   app_backups:
+  app_private_docs:

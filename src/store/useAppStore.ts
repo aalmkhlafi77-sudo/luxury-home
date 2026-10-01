@@ -141,22 +141,22 @@ function getStoredState(): AppState {
           parsed.settings.navigation = initialNavigationSettings;
         }
       }
-      if (!parsed.parkingSpots) {
+      if (parsed.parkingSpots === undefined) {
         parsed.parkingSpots = initialParkingSpots;
       }
-      if (!parsed.handoverProtocols) {
+      if (parsed.handoverProtocols === undefined) {
         parsed.handoverProtocols = [];
       }
-      if (!parsed.expenses || parsed.expenses.length === 0) {
+      if (parsed.expenses === undefined) {
         parsed.expenses = initialExpenses;
       }
-      if (!parsed.adjustments) {
+      if (parsed.adjustments === undefined) {
         parsed.adjustments = initialAdjustments;
       }
-      if (!parsed.expenseCategories || parsed.expenseCategories.length === 0) {
+      if (parsed.expenseCategories === undefined) {
         parsed.expenseCategories = initialExpenseCategories;
       }
-      if (!parsed.recurringExpenses || parsed.recurringExpenses.length === 0) {
+      if (parsed.recurringExpenses === undefined) {
         parsed.recurringExpenses = initialRecurringExpenses;
       }
       return parsed;
@@ -468,6 +468,123 @@ export function useAppStore() {
     notify();
     return newBooking;
   }, [checkUnitAvailability]);
+
+  /**
+   * Add Authoritative Server-Created Booking directly to Store
+   */
+  const addServerBooking = useCallback((serverBooking: any) => {
+    if (!serverBooking) return null;
+    const unit = globalState.units.find(u => u.id === serverBooking.unitId);
+    const startStr = serverBooking.startDate ? new Date(serverBooking.startDate).toISOString().slice(0, 10) : (serverBooking.checkIn || '');
+    const endStr = serverBooking.endDate ? new Date(serverBooking.endDate).toISOString().slice(0, 10) : (serverBooking.checkOut || '');
+
+    const normalizedBooking: Booking = {
+      id: serverBooking.id || `bk_${Date.now()}`,
+      bookingNumber: serverBooking.bookingNumber || `LH-${Date.now().toString().slice(-6)}`,
+      unitId: serverBooking.unitId,
+      propertyId: unit?.propertyId || serverBooking.propertyId || '',
+      guest: {
+        fullName: serverBooking.guestName || serverBooking.guest?.fullName || 'عميل محجوز',
+        email: serverBooking.guestEmail || serverBooking.guest?.email || '',
+        phone: serverBooking.guestPhone || serverBooking.guest?.phone || '',
+        nationalIdOrPassport: serverBooking.guestIdNumber || serverBooking.guest?.nationalIdOrPassport || '',
+        idVerified: serverBooking.identityStatus === 'verified'
+      },
+      checkIn: startStr,
+      checkOut: endStr,
+      totalNights: serverBooking.totalNights || 1,
+      guestsCount: serverBooking.guestsCount || 1,
+      status: (serverBooking.status?.toLowerCase() || 'confirmed') as any,
+      rentalType: (serverBooking.rentalType?.toLowerCase() || 'daily') as any,
+      nightlyRate: Number(serverBooking.nightlyRate) || 0,
+      subtotal: Number(serverBooking.subtotal) || 0,
+      cleaningFee: Number(serverBooking.cleaningFee) || 0,
+      taxes: Number(serverBooking.taxes) || 0,
+      securityDeposit: Number(serverBooking.securityDeposit) || 0,
+      totalAmount: Number(serverBooking.totalAmount) || 0,
+      smartLockPin: serverBooking.smartLockPin || undefined,
+      smartLockPinValidFrom: serverBooking.startDate,
+      smartLockPinValidTo: serverBooking.endDate,
+      createdAt: serverBooking.createdAt || new Date().toISOString(),
+      allocationId: `alloc_${serverBooking.id}`,
+    };
+
+    const newAllocation: UnitAllocation = {
+      id: `alloc_${serverBooking.id}`,
+      unitId: serverBooking.unitId,
+      startDate: normalizedBooking.checkIn,
+      endDate: normalizedBooking.checkOut,
+      type: 'booking',
+      referenceId: normalizedBooking.bookingNumber,
+      status: 'active',
+      notes: `حجز مؤكد #${normalizedBooking.bookingNumber} - ${normalizedBooking.guest.fullName}`
+    };
+
+    globalState = {
+      ...globalState,
+      bookings: [normalizedBooking, ...globalState.bookings.filter(b => b.id !== normalizedBooking.id && b.bookingNumber !== normalizedBooking.bookingNumber)],
+      allocations: [newAllocation, ...globalState.allocations.filter(a => a.referenceId !== normalizedBooking.bookingNumber && a.referenceId !== normalizedBooking.id)]
+    };
+
+    saveState(globalState);
+    notify();
+    return normalizedBooking;
+  }, []);
+
+  /**
+   * Add Authoritative Server-Created Lease Contract directly to Store
+   */
+  const addServerLease = useCallback((serverLease: any, serverInstallments?: any[]) => {
+    if (!serverLease) return null;
+    const unit = globalState.units.find(u => u.id === serverLease.unitId);
+    const startStr = serverLease.startDate ? new Date(serverLease.startDate).toISOString().slice(0, 10) : '';
+    const endStr = serverLease.endDate ? new Date(serverLease.endDate).toISOString().slice(0, 10) : '';
+
+    const normalizedLease: Lease = {
+      id: serverLease.id || `lease_${Date.now()}`,
+      contractNumber: serverLease.contractNumber || `CNT-${Date.now().toString().slice(-6)}`,
+      unitId: serverLease.unitId,
+      propertyId: unit?.propertyId || serverLease.propertyId || '',
+      tenant: {
+        fullName: serverLease.tenantName || serverLease.tenant?.fullName || 'مستأجر معتمد',
+        phone: serverLease.tenantPhone || serverLease.tenant?.phone || '',
+        email: serverLease.tenantEmail || serverLease.tenant?.email || '',
+        nationalIdOrPassport: serverLease.tenantIdNumber || serverLease.tenant?.nationalIdOrPassport || '',
+        idVerified: true
+      },
+      startDate: startStr,
+      endDate: endStr,
+      rentalType: (serverLease.rentalType?.toLowerCase() || 'annual') as any,
+      annualRent: Number(serverLease.annualRent) || 0,
+      paymentOption: serverLease.paymentOption || '1_payment',
+      paymentFrequency: serverLease.paymentFrequency || '1_payment',
+      securityDeposit: Number(serverLease.securityDeposit) || 0,
+      status: (serverLease.status?.toLowerCase() || 'active') as any,
+      createdAt: serverLease.createdAt || new Date().toISOString(),
+      installments: serverInstallments || serverLease.installments || []
+    };
+
+    const newAllocation: UnitAllocation = {
+      id: `alloc_${serverLease.id}`,
+      unitId: serverLease.unitId,
+      startDate: normalizedLease.startDate,
+      endDate: normalizedLease.endDate,
+      type: 'lease',
+      referenceId: normalizedLease.contractNumber,
+      status: 'active',
+      notes: `عقد إيجار #${normalizedLease.contractNumber} - ${normalizedLease.tenant.fullName}`
+    };
+
+    globalState = {
+      ...globalState,
+      leases: [normalizedLease, ...globalState.leases.filter(l => l.id !== normalizedLease.id && l.contractNumber !== normalizedLease.contractNumber)],
+      allocations: [newAllocation, ...globalState.allocations.filter(a => a.referenceId !== normalizedLease.contractNumber && a.referenceId !== normalizedLease.id)]
+    };
+
+    saveState(globalState);
+    notify();
+    return normalizedLease;
+  }, []);
 
   /**
    * Comprehensive Contract & Lease Creator (Supports Monthly and Yearly)
@@ -3101,6 +3218,8 @@ export function useAppStore() {
     checkUnitAvailability,
     searchAvailableUnits,
     createBooking,
+    addServerBooking,
+    addServerLease,
     createMonthlyLease,
     createContractLease,
     recordInstallmentPayment,

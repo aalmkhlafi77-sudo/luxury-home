@@ -3,75 +3,11 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path2 from "path";
 import fs from "fs";
-import { fileURLToPath as fileURLToPath2 } from "url";
 
 // src/server/auth.ts
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
-var JWT_SECRET = process.env.JWT_SECRET || "luxury_home_jwt_production_secret_key_2026_secure_hash";
-var TOKEN_EXPIRY = "24h";
-async function hashPassword(plainText) {
-  const salt = await bcrypt.genSalt(10);
-  return bcrypt.hash(plainText, salt);
-}
-async function verifyPassword(plainText, hashed) {
-  if (!plainText || !hashed) return false;
-  return bcrypt.compare(plainText, hashed);
-}
-function generateToken(payload) {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
-}
-function verifyToken(token) {
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    return decoded;
-  } catch (err) {
-    return null;
-  }
-}
-function authenticateToken(req, res, next) {
-  const authHeader = req.headers["authorization"];
-  const token = authHeader && authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : authHeader && authHeader.trim();
-  if (!token) {
-    return res.status(401).json({
-      success: false,
-      code: "AUTH_REQUIRED",
-      message: "\u0645\u0637\u0644\u0648\u0628 \u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644 \u0648\u062A\u0648\u0641\u064A\u0631 \u0631\u0645\u0632 \u0627\u0644\u0645\u0635\u0627\u062F\u0642\u0629 \u0627\u0644\u0645\u0639\u062A\u0645\u062F \u0644\u062A\u0646\u0641\u064A\u0630 \u0647\u0630\u0647 \u0627\u0644\u0639\u0645\u0644\u064A\u0629."
-    });
-  }
-  const payload = verifyToken(token);
-  if (!payload) {
-    return res.status(401).json({
-      success: false,
-      code: "TOKEN_INVALID_OR_EXPIRED",
-      message: "\u0631\u0645\u0632 \u0627\u0644\u062C\u0644\u0633\u0629 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D \u0623\u0648 \u0627\u0646\u062A\u0647\u062A \u0635\u0644\u0627\u062D\u064A\u062A\u0647. \u064A\u0631\u062C\u0649 \u0625\u0639\u0627\u062F\u0629 \u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644."
-    });
-  }
-  req.user = payload;
-  next();
-}
-function requireRoles(allowedRoles) {
-  return (req, res, next) => {
-    if (!req.user) {
-      return res.status(401).json({
-        success: false,
-        code: "AUTH_REQUIRED",
-        message: "\u0645\u0637\u0644\u0648\u0628 \u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644 \u0644\u0644\u062A\u062D\u0642\u0642 \u0645\u0646 \u0627\u0644\u0635\u0644\u0627\u062D\u064A\u0627\u062A."
-      });
-    }
-    if (req.user.role === "SUPER_ADMIN") {
-      return next();
-    }
-    if (!allowedRoles.includes(req.user.role)) {
-      return res.status(403).json({
-        success: false,
-        code: "INSUFFICIENT_PERMISSIONS",
-        message: `\u0644\u064A\u0633 \u0644\u062F\u064A\u0643 \u0627\u0644\u0635\u0644\u0627\u062D\u064A\u0629 \u0627\u0644\u0643\u0627\u0641\u064A\u0629 \u0644\u0644\u0648\u0635\u0648\u0644 \u0644\u0647\u0630\u0627 \u0627\u0644\u0645\u0633\u0627\u0631 (\u0627\u0644\u062F\u0648\u0631 \u0627\u0644\u0645\u0637\u0644\u0648\u0628: ${allowedRoles.join(", ")}).`
-      });
-    }
-    next();
-  };
-}
+import crypto from "crypto";
 
 // src/server/db.ts
 import { PrismaClient, Role } from "@prisma/client";
@@ -106,6 +42,105 @@ async function checkDatabaseHealth() {
   }
 }
 var LEGACY_DB_FILE = path.resolve(__dirname, "../../server-db.json");
+
+// src/server/auth.ts
+var IS_PROD = process.env.NODE_ENV === "production";
+var JWT_SECRET = process.env.JWT_SECRET || "";
+if (IS_PROD && !JWT_SECRET) {
+  console.error("[CRITICAL SECURITY ERROR] JWT_SECRET environment variable must be set in production mode!");
+  JWT_SECRET = crypto.randomBytes(64).toString("hex");
+} else if (!JWT_SECRET) {
+  JWT_SECRET = "luxury_home_dev_session_secret_" + crypto.randomBytes(16).toString("hex");
+}
+var TOKEN_EXPIRY = "24h";
+async function hashPassword(plainText) {
+  const salt = await bcrypt.genSalt(10);
+  return bcrypt.hash(plainText, salt);
+}
+async function verifyPassword(plainText, hashed) {
+  if (!plainText || !hashed) return false;
+  return bcrypt.compare(plainText, hashed);
+}
+function generateToken(payload) {
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
+}
+function verifyToken(token) {
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    return decoded;
+  } catch (err) {
+    return null;
+  }
+}
+async function authenticateToken(req, res, next) {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : authHeader && authHeader.trim();
+  if (!token) {
+    return res.status(401).json({
+      success: false,
+      code: "AUTH_REQUIRED",
+      message: "\u0645\u0637\u0644\u0648\u0628 \u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644 \u0648\u062A\u0648\u0641\u064A\u0631 \u0631\u0645\u0632 \u0627\u0644\u0645\u0635\u0627\u062F\u0642\u0629 \u0627\u0644\u0645\u0639\u062A\u0645\u062F \u0644\u062A\u0646\u0641\u064A\u0630 \u0647\u0630\u0647 \u0627\u0644\u0639\u0645\u0644\u064A\u0629."
+    });
+  }
+  const payload = verifyToken(token);
+  if (!payload || !payload.userId) {
+    return res.status(401).json({
+      success: false,
+      code: "TOKEN_INVALID_OR_EXPIRED",
+      message: "\u0631\u0645\u0632 \u0627\u0644\u062C\u0644\u0633\u0629 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D \u0623\u0648 \u0627\u0646\u062A\u0647\u062A \u0635\u0644\u0627\u062D\u064A\u062A\u0647. \u064A\u0631\u062C\u0649 \u0625\u0639\u0627\u062F\u0629 \u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644."
+    });
+  }
+  if (process.env.DATABASE_URL) {
+    try {
+      const dbUser = await prisma.user.findUnique({
+        where: { id: payload.userId }
+      });
+      if (!dbUser) {
+        return res.status(401).json({
+          success: false,
+          code: "USER_NOT_FOUND",
+          message: "\u0627\u0644\u0645\u0633\u062A\u062E\u062F\u0645 \u0635\u0627\u062D\u0628 \u0627\u0644\u062C\u0644\u0633\u0629 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F \u0641\u064A \u0627\u0644\u0646\u0638\u0627\u0645 \u0623\u0648 \u062A\u0645 \u062D\u0630\u0641\u0647."
+        });
+      }
+      if (!dbUser.isActive) {
+        return res.status(403).json({
+          success: false,
+          code: "ACCOUNT_DEACTIVATED",
+          message: "\u062A\u0645 \u062A\u0639\u0637\u064A\u0644 \u0647\u0630\u0627 \u0627\u0644\u062D\u0633\u0627\u0628 \u0645\u0646 \u0642\u0628\u0644 \u0627\u0644\u0625\u062F\u0627\u0631\u0629. \u064A\u0631\u062C\u0649 \u0645\u0631\u0627\u062C\u0639\u0629 \u0627\u0644\u0645\u0634\u0631\u0641."
+        });
+      }
+      payload.role = dbUser.role;
+      payload.allowedProperties = dbUser.allowedProperties || [];
+      req.dbUser = dbUser;
+    } catch (dbErr) {
+      console.warn("[Auth] Database check error during token auth:", dbErr);
+    }
+  }
+  req.user = payload;
+  next();
+}
+function requireRoles(allowedRoles) {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        code: "AUTH_REQUIRED",
+        message: "\u0645\u0637\u0644\u0648\u0628 \u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644 \u0644\u0644\u062A\u062D\u0642\u0642 \u0645\u0646 \u0627\u0644\u0635\u0644\u0627\u062D\u064A\u0627\u062A."
+      });
+    }
+    if (req.user.role === "SUPER_ADMIN") {
+      return next();
+    }
+    if (!allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        code: "INSUFFICIENT_PERMISSIONS",
+        message: `\u0644\u064A\u0633 \u0644\u062F\u064A\u0643 \u0627\u0644\u0635\u0644\u0627\u062D\u064A\u0629 \u0627\u0644\u0643\u0627\u0641\u064A\u0629 \u0644\u0644\u0648\u0635\u0648\u0644 \u0644\u0647\u0630\u0627 \u0627\u0644\u0645\u0633\u0627\u0631 (\u0627\u0644\u062F\u0648\u0631 \u0627\u0644\u0645\u0637\u0644\u0648\u0628: ${allowedRoles.join(", ")}).`
+      });
+    }
+    next();
+  };
+}
 
 // src/server/reservationService.ts
 import { Decimal } from "@prisma/client/runtime/library";
@@ -619,11 +654,14 @@ function computeCostAllocation(input) {
 }
 
 // server.ts
-var __filename2 = fileURLToPath2(import.meta.url);
-var __dirname2 = path2.dirname(__filename2);
-var BACKUP_DIR = path2.resolve(__dirname2, "backups");
-var UPLOADS_DIR = path2.resolve(__dirname2, "uploads");
+var ROOT_DIR = process.cwd();
+var BACKUP_DIR = path2.resolve(ROOT_DIR, "backups");
+var UPLOADS_DIR = path2.resolve(ROOT_DIR, "uploads");
+var PRIVATE_DOCS_DIR = path2.resolve(ROOT_DIR, "private_docs");
+var DIST_DIR = path2.resolve(ROOT_DIR, "dist");
+var SERVER_DB_FILE = path2.resolve(ROOT_DIR, "server-db.json");
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+if (!fs.existsSync(PRIVATE_DOCS_DIR)) fs.mkdirSync(PRIVATE_DOCS_DIR, { recursive: true });
 if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR, { recursive: true });
 var dbState = null;
 var lastServerUpdateTimestamp = Date.now();
@@ -832,6 +870,15 @@ async function startServer(customPort) {
         await createAdminRecord();
       });
       return;
+    }
+    const expectedSecret = process.env.ADMIN_SETUP_SECRET;
+    const providedSecret = req.headers["x-admin-setup-secret"] || req.body.setupSecret;
+    if (expectedSecret && providedSecret !== expectedSecret) {
+      return res.status(403).json({
+        success: false,
+        code: "INVALID_SETUP_SECRET",
+        message: "\u0645\u0631\u0641\u0648\u0636: \u0631\u0645\u0632 \u0627\u0644\u062A\u0647\u064A\u0626\u0629 \u0627\u0644\u0625\u062F\u0627\u0631\u064A\u0629 \u0627\u0644\u0623\u0648\u0644\u064A\u0629 (ADMIN_SETUP_SECRET) \u063A\u064A\u0631 \u0635\u062D\u064A\u062D."
+      });
     }
     await createAdminRecord();
     async function createAdminRecord() {
@@ -1334,11 +1381,10 @@ async function startServer(customPort) {
   });
   app.use("/api", apiRouter);
   if (process.env.NODE_ENV === "production") {
-    const distPath = path2.resolve(__dirname2, "dist");
-    if (fs.existsSync(distPath)) {
-      app.use(express.static(distPath));
+    if (fs.existsSync(DIST_DIR)) {
+      app.use(express.static(DIST_DIR));
       app.get("*", (req, res) => {
-        res.sendFile(path2.resolve(distPath, "index.html"));
+        res.sendFile(path2.resolve(DIST_DIR, "index.html"));
       });
     } else {
       app.get("*", (req, res) => {
@@ -1357,8 +1403,13 @@ async function startServer(customPort) {
   });
   return serverInstance;
 }
-if (process.argv[1] && process.argv[1].endsWith("server.ts")) {
-  startServer();
+var execPath = process.argv[1] || "";
+var isDirectExecution = (execPath.endsWith("server.ts") || execPath.endsWith("server.js") || execPath.includes("dist-server")) && !process.env.TEST_SUITE_RUNNER;
+if (isDirectExecution) {
+  startServer().catch((err) => {
+    console.error("[Server Start Error]:", err);
+    process.exit(1);
+  });
 }
 export {
   startServer

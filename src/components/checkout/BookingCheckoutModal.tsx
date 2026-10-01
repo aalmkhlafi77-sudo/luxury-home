@@ -30,11 +30,12 @@ export const BookingCheckoutModal: React.FC<BookingCheckoutModalProps> = ({
   onClose,
   onBookingComplete,
 }) => {
-  const { state, createBooking } = useAppStore();
+  const { state, addServerBooking, addServerLease } = useAppStore();
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [completedBooking, setCompletedBooking] = useState<Booking | null>(null);
+  const [completedContractNumber, setCompletedContractNumber] = useState<string | null>(null);
 
   // Guest Details Form State
   const [guestForm, setGuestForm] = useState({
@@ -51,67 +52,108 @@ export const BookingCheckoutModal: React.FC<BookingCheckoutModalProps> = ({
 
   const property = state.properties.find(p => p.id === unit.propertyId);
 
-  // Financial calculations
+  // Financial calculations based on true rental mode
+  const isYearly = dates.rentalType === 'yearly';
+  const isMonthly = dates.rentalType === 'monthly';
+  const isDaily = dates.rentalType === 'daily';
+
   const startMs = new Date(`${dates.checkIn}T15:00:00`).getTime();
   const endMs = new Date(`${dates.checkOut}T12:00:00`).getTime();
   const calculatedNights = Math.max(1, Math.round((endMs - startMs) / (1000 * 60 * 60 * 24)));
 
-  const subtotal = (dates.rentalType === 'daily' ? unit.dailyRate : Math.round(unit.monthlyRate / 30)) * calculatedNights;
-  const cleaningFee = unit.cleaningFee;
-  const taxes = Math.round((subtotal + cleaningFee) * (unit.taxPercentage / 100));
-  const securityDeposit = unit.securityDeposit;
-  const totalAmountToPay = subtotal + cleaningFee + taxes;
+  let subtotal = 0;
+  let totalPeriodRent = 0;
+  const cleaningFee = isDaily ? unit.cleaningFee : 0;
+  const securityDeposit = isYearly ? 2500 : (isMonthly ? 1500 : unit.securityDeposit);
+
+  if (isYearly) {
+    totalPeriodRent = unit.annualPrice || (unit.monthlyRate * 12);
+    // If semi-annual payment option selected, 1st installment is 50%
+    subtotal = dates.annualPaymentTerms === 'semi_annual' ? Math.round(totalPeriodRent / 2) : totalPeriodRent;
+  } else if (isMonthly) {
+    totalPeriodRent = unit.monthlyRate;
+    subtotal = unit.monthlyRate;
+  } else {
+    subtotal = unit.dailyRate * calculatedNights;
+  }
+
+  const taxes = isDaily ? Math.round((subtotal + cleaningFee) * (unit.taxPercentage / 100)) : 0;
+  const totalAmountToPay = subtotal + cleaningFee + taxes + securityDeposit;
 
   const handleFinalSubmit = async () => {
+    if (isProcessing) return;
     setIsProcessing(true);
     setErrorMessage(null);
+
     try {
-      // 1. Call server API to perform atomic conflict check & allocation
-      const serverRes = await fetch('/api/bookings/daily', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          unitId: unit.id,
-          checkIn: dates.checkIn,
-          checkOut: dates.checkOut,
-          guestsCount: dates.guests,
-          guestName: guestForm.fullName,
-          guestPhone: guestForm.phone,
-          guestEmail: guestForm.email,
-          guestIdNumber: guestForm.nationalId,
-          notes: `حجز إلكتروني - طريقة الدفع المختارة: ${paymentMethod}`
-        })
-      });
+      if (isDaily) {
+        // 1. Call server API for daily booking
+        const serverRes = await fetch('/api/bookings/daily', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            unitId: unit.id,
+            checkIn: dates.checkIn,
+            checkOut: dates.checkOut,
+            guestsCount: dates.guests,
+            guestName: guestForm.fullName,
+            guestPhone: guestForm.phone,
+            guestEmail: guestForm.email,
+            guestIdNumber: guestForm.nationalId,
+            notes: `حجز إلكتروني يومي - طريقة الدفع المختارة: ${paymentMethod}`
+          })
+        });
 
-      const data = await serverRes.json().catch(() => null);
+        const data = await serverRes.json().catch(() => null);
 
-      if (!serverRes.ok) {
-        throw new Error(data?.message || 'تعذر إتمام الحجز على الخادم. قد تكون الفترة متداخلة.');
+        if (!serverRes.ok) {
+          throw new Error(data?.message || 'تعذر إتمام الحجز على الخادم. قد تكون الفترة متداخلة.');
+        }
+
+        // 2. Register authoritative server-created booking in local state
+        const authoritativeBooking = addServerBooking(data.booking);
+        if (authoritativeBooking) {
+          setCompletedBooking(authoritativeBooking);
+          onBookingComplete(authoritativeBooking);
+        }
+        setStep(4);
+      } else {
+        // Monthly or Annual Lease Contract
+        const paymentFrequency = isYearly
+          ? (dates.annualPaymentTerms === 'semi_annual' ? '2_payments' : '1_payment')
+          : 'monthly';
+
+        const serverRes = await fetch('/api/leases/contract', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            unitId: unit.id,
+            rentalType: isYearly ? 'annual' : 'monthly',
+            startDate: dates.checkIn,
+            endDate: dates.checkOut,
+            durationMonths: isYearly ? 12 : 1,
+            paymentFrequency,
+            tenantName: guestForm.fullName,
+            tenantPhone: guestForm.phone,
+            tenantEmail: guestForm.email,
+            tenantIdNumber: guestForm.nationalId,
+            contractServices: ['wifi', 'parking', 'maintenance'],
+            termsConditions: 'عقد إيجار إلكتروني معتمد لدى منصة منزل الفخامة'
+          })
+        });
+
+        const data = await serverRes.json().catch(() => null);
+
+        if (!serverRes.ok) {
+          throw new Error(data?.message || 'تعذر تسجيل عقد الإيجار على الخادم.');
+        }
+
+        addServerLease(data.lease, data.installments);
+        setCompletedContractNumber(data.lease?.contractNumber || `CNT-${Date.now()}`);
+        setStep(4);
       }
-
-      // 2. Register in local store
-      const newBooking = createBooking({
-        unitId: unit.id,
-        guest: {
-          fullName: guestForm.fullName,
-          email: guestForm.email,
-          phone: guestForm.phone,
-          nationalIdOrPassport: guestForm.nationalId,
-        },
-        checkIn: dates.checkIn,
-        checkOut: dates.checkOut,
-        guestsCount: dates.guests,
-        paymentMethod,
-      });
-
-      if (data?.booking?.bookingNumber) {
-        newBooking.bookingNumber = data.booking.bookingNumber;
-      }
-
-      setCompletedBooking(newBooking);
-      setStep(4);
     } catch (err: any) {
-      setErrorMessage(err.message || 'حدث خطأ غير متوقع أثناء معالجة حجزك.');
+      setErrorMessage(err.message || 'حدث خطأ غير متوقع أثناء معالجة طلبك.');
     } finally {
       setIsProcessing(false);
     }

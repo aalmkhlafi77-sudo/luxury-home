@@ -2,9 +2,21 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
+import { prisma } from './db.js';
 
-// Secret key management: use env var or secure fallback for session
-const JWT_SECRET = process.env.JWT_SECRET || 'luxury_home_jwt_production_secret_key_2026_secure_hash';
+// Secret key management: in production, JWT_SECRET is mandatory
+const IS_PROD = process.env.NODE_ENV === 'production';
+let JWT_SECRET = process.env.JWT_SECRET || '';
+
+if (IS_PROD && !JWT_SECRET) {
+  console.error('[CRITICAL SECURITY ERROR] JWT_SECRET environment variable must be set in production mode!');
+  // Generate high-entropy runtime key to prevent hardcoded defaults
+  JWT_SECRET = crypto.randomBytes(64).toString('hex');
+} else if (!JWT_SECRET) {
+  // Ephemeral development secret
+  JWT_SECRET = 'luxury_home_dev_session_secret_' + crypto.randomBytes(16).toString('hex');
+}
+
 const TOKEN_EXPIRY = '24h';
 
 export interface TokenPayload {
@@ -17,6 +29,7 @@ export interface TokenPayload {
 
 export interface AuthenticatedRequest extends Request {
   user?: TokenPayload;
+  dbUser?: any;
 }
 
 // Password hashing
@@ -45,8 +58,17 @@ export function verifyToken(token: string): TokenPayload | null {
   }
 }
 
-// Express Middleware: Authenticate Token
-export function authenticateToken(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+// Sanitize user object to never return passwordHash to client
+export function sanitizeUser(user: any) {
+  if (!user) return null;
+  const sanitized = { ...user };
+  delete sanitized.passwordHash;
+  delete sanitized.password;
+  return sanitized;
+}
+
+// Express Middleware: Authenticate Token & Validate against Live Database/User Store
+export async function authenticateToken(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.startsWith('Bearer ') 
     ? authHeader.slice(7).trim() 
@@ -61,12 +83,45 @@ export function authenticateToken(req: AuthenticatedRequest, res: Response, next
   }
 
   const payload = verifyToken(token);
-  if (!payload) {
+  if (!payload || !payload.userId) {
     return res.status(401).json({
       success: false,
       code: 'TOKEN_INVALID_OR_EXPIRED',
       message: 'رمز الجلسة غير صالح أو انتهت صلاحيته. يرجى إعادة تسجيل الدخول.'
     });
+  }
+
+  // Check user status in PostgreSQL database if available
+  if (process.env.DATABASE_URL) {
+    try {
+      const dbUser = await prisma.user.findUnique({
+        where: { id: payload.userId }
+      });
+
+      if (!dbUser) {
+        return res.status(401).json({
+          success: false,
+          code: 'USER_NOT_FOUND',
+          message: 'المستخدم صاحب الجلسة غير موجود في النظام أو تم حذفه.'
+        });
+      }
+
+      if (!dbUser.isActive) {
+        return res.status(403).json({
+          success: false,
+          code: 'ACCOUNT_DEACTIVATED',
+          message: 'تم تعطيل هذا الحساب من قبل الإدارة. يرجى مراجعة المشرف.'
+        });
+      }
+
+      // Update payload with real-time DB roles and permissions
+      payload.role = dbUser.role as any;
+      payload.allowedProperties = dbUser.allowedProperties || [];
+      req.dbUser = dbUser;
+    } catch (dbErr) {
+      // If DB error occurs, proceed with verified token payload but warn
+      console.warn('[Auth] Database check error during token auth:', dbErr);
+    }
   }
 
   req.user = payload;
