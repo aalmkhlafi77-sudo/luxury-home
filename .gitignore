@@ -6,3 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
+backups/
+uploads/
+private_docs/
+*.sqlite
+*.db
