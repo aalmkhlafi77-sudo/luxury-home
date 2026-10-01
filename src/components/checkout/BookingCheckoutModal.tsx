@@ -67,7 +67,7 @@ export const BookingCheckoutModal: React.FC<BookingCheckoutModalProps> = ({
   const securityDeposit = isYearly ? 2500 : (isMonthly ? 1500 : unit.securityDeposit);
 
   if (isYearly) {
-    totalPeriodRent = unit.annualPrice || (unit.monthlyRate * 12);
+    totalPeriodRent = unit.yearlyRate || (unit.monthlyRate * 12);
     // If semi-annual payment option selected, 1st installment is 50%
     subtotal = dates.annualPaymentTerms === 'semi_annual' ? Math.round(totalPeriodRent / 2) : totalPeriodRent;
   } else if (isMonthly) {

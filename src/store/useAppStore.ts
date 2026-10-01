@@ -192,26 +192,88 @@ function getStoredState(): AppState {
 export function saveState(state: AppState) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    // Asynchronously push to backend API server with Bearer auth token
+  } catch (e) {
+    console.error('Failed to save state to localStorage', e);
+  }
+}
+
+// Helper to make authenticated server calls
+export async function apiCall(endpoint: string, method: string = 'GET', body?: any) {
+  const token = localStorage.getItem('luxury_home_jwt_token');
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const res = await fetch(endpoint, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined
+  });
+
+  if (!res.ok && res.status !== 401) {
+    const errorData = await res.json().catch(() => ({ message: 'فشلت العملية على الخادم' }));
+    throw new Error(errorData.message || `خطأ من الخادم (${res.status})`);
+  }
+
+  return res.json().catch(() => ({ success: true }));
+}
+
+// Fetch authoritative server state on boot
+let hasLoadedServerState = false;
+export async function loadAuthoritativeServerState() {
+  if (hasLoadedServerState) return;
+  hasLoadedServerState = true;
+
+  try {
     const token = localStorage.getItem('luxury_home_jwt_token');
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+      const stateRes = await apiCall('/api/state', 'GET');
+      if (stateRes.success && stateRes.state) {
+        const s = stateRes.state;
+        globalState = {
+          ...globalState,
+          settings: s.settings ? { ...globalState.settings, ...s.settings } : globalState.settings,
+          properties: Array.isArray(s.properties) && s.properties.length > 0 ? s.properties : globalState.properties,
+          units: Array.isArray(s.units) && s.units.length > 0 ? s.units : globalState.units,
+          bookings: Array.isArray(s.bookings) ? s.bookings : globalState.bookings,
+          leases: Array.isArray(s.leases) ? s.leases : globalState.leases,
+          expenses: Array.isArray(s.expenses) ? s.expenses : globalState.expenses,
+          auditLogs: Array.isArray(s.auditLogs) ? s.auditLogs : globalState.auditLogs
+        };
+        saveState(globalState);
+        notify();
+        return;
+      }
     }
 
-    fetch('/api/state/sync', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(state),
-    }).then(res => {
-      if (!res.ok && res.status !== 401) {
-        console.warn(`[Sync Warning] Server state sync returned status ${res.status}`);
-      }
-    }).catch(() => {
-      // Offline fallback
-    });
-  } catch (e) {
-    console.error('Failed to save state', e);
+    // Public state fallback
+    const [settingsRes, propsRes, unitsRes] = await Promise.all([
+      fetch('/api/public/settings').then(r => r.json()).catch(() => null),
+      fetch('/api/public/properties').then(r => r.json()).catch(() => null),
+      fetch('/api/public/units').then(r => r.json()).catch(() => null),
+    ]);
+
+    let changed = false;
+    if (settingsRes?.success && settingsRes.settings) {
+      globalState = { ...globalState, settings: { ...globalState.settings, ...settingsRes.settings } };
+      changed = true;
+    }
+    if (propsRes?.success && Array.isArray(propsRes.properties) && propsRes.properties.length > 0) {
+      globalState = { ...globalState, properties: propsRes.properties };
+      changed = true;
+    }
+    if (unitsRes?.success && Array.isArray(unitsRes.units) && unitsRes.units.length > 0) {
+      globalState = { ...globalState, units: unitsRes.units };
+      changed = true;
+    }
+
+    if (changed) {
+      saveState(globalState);
+      notify();
+    }
+  } catch (err) {
+    console.warn('[Store] Note: Could not fetch initial state from API server:', err);
   }
 }
 
@@ -228,6 +290,7 @@ export function useAppStore() {
   const [, setTick] = useState(0);
 
   useEffect(() => {
+    loadAuthoritativeServerState();
     const handleUpdate = () => setTick((t) => t + 1);
     listeners.add(handleUpdate);
     return () => {
@@ -516,7 +579,9 @@ export function useAppStore() {
       endDate: normalizedBooking.checkOut,
       type: 'booking',
       referenceId: normalizedBooking.bookingNumber,
+      prepBufferHours: 2,
       status: 'active',
+      createdAt: new Date().toISOString(),
       notes: `حجز مؤكد #${normalizedBooking.bookingNumber} - ${normalizedBooking.guest.fullName}`
     };
 
@@ -539,6 +604,7 @@ export function useAppStore() {
     const unit = globalState.units.find(u => u.id === serverLease.unitId);
     const startStr = serverLease.startDate ? new Date(serverLease.startDate).toISOString().slice(0, 10) : '';
     const endStr = serverLease.endDate ? new Date(serverLease.endDate).toISOString().slice(0, 10) : '';
+    const totalVal = Number(serverLease.annualRent) || Number(serverLease.totalContractValue) || 0;
 
     const normalizedLease: Lease = {
       id: serverLease.id || `lease_${Date.now()}`,
@@ -554,12 +620,18 @@ export function useAppStore() {
       },
       startDate: startStr,
       endDate: endStr,
-      rentalType: (serverLease.rentalType?.toLowerCase() || 'annual') as any,
-      annualRent: Number(serverLease.annualRent) || 0,
-      paymentOption: serverLease.paymentOption || '1_payment',
-      paymentFrequency: serverLease.paymentFrequency || '1_payment',
+      monthsCount: serverLease.monthsCount || 12,
+      rentalType: (serverLease.rentalType?.toLowerCase() === 'monthly' ? 'monthly' : 'yearly'),
+      monthlyRent: Number(serverLease.monthlyRent) || Math.round(totalVal / 12),
+      yearlyRent: totalVal,
+      totalContractValue: totalVal,
       securityDeposit: Number(serverLease.securityDeposit) || 0,
       status: (serverLease.status?.toLowerCase() || 'active') as any,
+      allocationId: `alloc_${serverLease.id || Date.now()}`,
+      inclusionType: 'all_inclusive',
+      services: serverLease.services || [],
+      termsSnapshot: serverLease.termsSnapshot || 'شروط وأحكام عقد الإيجار القياسي المعتمد',
+      amendments: serverLease.amendments || [],
       createdAt: serverLease.createdAt || new Date().toISOString(),
       installments: serverInstallments || serverLease.installments || []
     };
@@ -571,7 +643,9 @@ export function useAppStore() {
       endDate: normalizedLease.endDate,
       type: 'lease',
       referenceId: normalizedLease.contractNumber,
+      prepBufferHours: 0,
       status: 'active',
+      createdAt: new Date().toISOString(),
       notes: `عقد إيجار #${normalizedLease.contractNumber} - ${normalizedLease.tenant.fullName}`
     };
 
@@ -1658,6 +1732,11 @@ export function useAppStore() {
     };
 
     notify();
+
+    // Async push to server
+    apiCall('/api/settings', 'PUT', newSettings).catch(err => {
+      console.warn('[Sync Error] Could not update settings on server:', err.message);
+    });
   }, []);
 
   const updateContentSections = useCallback((sections: ContentSection[]) => {
@@ -1729,6 +1808,22 @@ export function useAppStore() {
     };
 
     notify();
+
+    // Push to backend API
+    apiCall('/api/properties', 'POST', {
+      id: propId,
+      name: payload.name,
+      code: payload.identifierCode,
+      address: payload.address,
+      city: payload.city,
+      district: payload.district,
+      floorsCount: payload.totalFloors,
+      unitsCount: (payload as any).totalUnits || 0,
+      description: payload.description,
+      images: payload.media?.map(m => m.url) || [],
+      isActive: payload.status !== 'unlisted'
+    }).catch(err => console.warn('[Sync Error] Property creation sync:', err.message));
+
     return newProperty;
   }, []);
 
@@ -1752,6 +1847,18 @@ export function useAppStore() {
     };
 
     notify();
+
+    apiCall(`/api/properties/${propertyId}`, 'PUT', {
+      name: updates.name,
+      code: updates.identifierCode,
+      address: updates.address,
+      city: updates.city,
+      district: updates.district,
+      floorsCount: updates.totalFloors,
+      unitsCount: (updates as any).totalUnits,
+      description: updates.description,
+      isActive: updates.status ? updates.status !== 'unlisted' : undefined
+    }).catch(err => console.warn('[Sync Error] Property update sync:', err.message));
   }, []);
 
   const archiveProperty = useCallback((propertyId: string) => {
@@ -1783,6 +1890,10 @@ export function useAppStore() {
     };
 
     notify();
+
+    apiCall(`/api/properties/${propertyId}`, 'DELETE').catch(err => {
+      console.warn('[Sync Error] Property archive sync:', err.message);
+    });
   }, []);
 
   /**
@@ -1891,6 +2002,24 @@ export function useAppStore() {
     };
 
     notify();
+
+    apiCall('/api/units', 'POST', {
+      id: unitId,
+      propertyId: payload.propertyId,
+      floorId: payload.floorId,
+      unitNumber: payload.unitNumber,
+      type: payload.type,
+      areaSqm: payload.areaSqm,
+      dailyRate: payload.dailyRate,
+      monthlyRate: payload.monthlyRate,
+      annualRate: payload.yearlyRate,
+      occupancyStatus: payload.occupancyStatus,
+      publicationStatus: payload.publicationStatus,
+      images: payload.media?.map(m => m.url) || [],
+      spaces: payload.spaces,
+      smartLockPin: (payload as any).smartLockPin
+    }).catch(err => console.warn('[Sync Error] Unit creation sync:', err.message));
+
     return newUnit;
   }, []);
 
@@ -2120,6 +2249,19 @@ export function useAppStore() {
     };
 
     notify();
+
+    apiCall(`/api/units/${unitId}`, 'PUT', {
+      unitNumber: updates.unitNumber,
+      type: updates.type,
+      areaSqm: updates.areaSqm,
+      dailyRate: updates.dailyRate,
+      monthlyRate: updates.monthlyRate,
+      annualRate: updates.yearlyRate,
+      occupancyStatus: updates.occupancyStatus,
+      publicationStatus: updates.publicationStatus,
+      spaces: updates.spaces,
+      smartLockPin: (updates as any).smartLockPin
+    }).catch(err => console.warn('[Sync Error] Unit update sync:', err.message));
   }, []);
 
   const archiveUnit = useCallback((unitId: string) => {
@@ -2158,6 +2300,10 @@ export function useAppStore() {
     };
 
     notify();
+
+    apiCall(`/api/units/${unitId}`, 'DELETE').catch(err => {
+      console.warn('[Sync Error] Unit archive sync:', err.message);
+    });
   }, []);
 
   /**
@@ -2877,6 +3023,20 @@ export function useAppStore() {
     };
 
     notify();
+
+    apiCall('/api/expenses', 'POST', {
+      id: expId,
+      title: payload.description,
+      amount: payload.amount,
+      costCenterLevel: payload.level?.toUpperCase() || 'PROPERTY',
+      propertyId: payload.propertyId,
+      unitId: payload.unitId,
+      categoryCode: payload.category || 'OPERATIONS_OTHER',
+      startDate: payload.servicePeriodStart || payload.date,
+      endDate: payload.servicePeriodEnd || payload.date,
+      status: payload.recordStatus || 'approved'
+    }).catch(err => console.warn('[Sync Error] Expense creation sync:', err.message));
+
     return newExpense;
   }, []);
 
@@ -2917,7 +3077,14 @@ export function useAppStore() {
       }),
       auditLogs: [newLog, ...globalState.auditLogs],
     };
+
     notify();
+
+    apiCall(`/api/expenses/${expId}`, 'PUT', {
+      title: updates.description,
+      amount: updates.amount,
+      status: updates.recordStatus
+    }).catch(err => console.warn('[Sync Error] Expense update sync:', err.message));
   }, []);
 
   const addExpensePayment = useCallback((expenseId: string, paymentData: Omit<ExpensePaymentEntry, 'id' | 'createdAt'>) => {
@@ -3029,6 +3196,10 @@ export function useAppStore() {
       expenses: (globalState.expenses || []).filter(e => e.id !== expId),
     };
     notify();
+
+    apiCall(`/api/expenses/${expId}`, 'DELETE').catch(err => {
+      console.warn('[Sync Error] Expense deletion sync:', err.message);
+    });
   }, []);
 
   // Expense Categories & Default Rules Management

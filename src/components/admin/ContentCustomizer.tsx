@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAppStore } from '../../store/useAppStore';
-import { ContentSection } from '../../types';
+import { ContentSection, NavigationSettings } from '../../types';
 import {
   Save,
   RotateCcw,
@@ -14,7 +14,7 @@ export const ContentCustomizer: React.FC = () => {
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   // Navigation Form State
-  const [navForm, setNavForm] = useState(() => {
+  const [navForm, setNavForm] = useState<NavigationSettings>(() => {
     return state.settings.navigation || {
       enableBottomNav: true,
       headerHeightPx: 80,
@@ -30,11 +30,11 @@ export const ContentCustomizer: React.FC = () => {
         { id: 'nav_contact', label: 'اتصل بنا', targetSectionId: 'contact', visible: true, order: 6 },
       ],
       bottomNavItems: [
-        { id: 'bnav_home', label: 'الرئيسية', type: 'section', targetSectionId: 'hero', icon: 'Home', visible: true, order: 1 },
-        { id: 'bnav_units', label: 'الوحدات', type: 'section', targetSectionId: 'units', icon: 'Sparkles', visible: true, order: 2 },
-        { id: 'bnav_bookings', label: 'حجوزاتي', type: 'my_bookings', icon: 'CalendarDays', visible: true, order: 3 },
-        { id: 'bnav_account', label: 'حسابي', type: 'account', icon: 'User', visible: true, order: 4 },
-        { id: 'bnav_more', label: 'المزيد', type: 'more', icon: 'Menu', visible: true, order: 5 },
+        { id: 'bnav_home', label: 'الرئيسية', type: 'section' as const, targetSectionId: 'hero', icon: 'Home', visible: true, order: 1 },
+        { id: 'bnav_units', label: 'الوحدات', type: 'section' as const, targetSectionId: 'units', icon: 'Sparkles', visible: true, order: 2 },
+        { id: 'bnav_bookings', label: 'حجوزاتي', type: 'my_bookings' as const, icon: 'CalendarDays', visible: true, order: 3 },
+        { id: 'bnav_account', label: 'حسابي', type: 'account' as const, icon: 'User', visible: true, order: 4 },
+        { id: 'bnav_more', label: 'المزيد', type: 'more' as const, icon: 'Menu', visible: true, order: 5 },
       ]
     };
   });

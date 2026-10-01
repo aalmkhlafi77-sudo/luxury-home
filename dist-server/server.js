@@ -179,6 +179,21 @@ function requireRoles(allowedRoles) {
     next();
   };
 }
+function checkPropertyAccess(req, res, next) {
+  if (!req.user) return res.status(401).json({ success: false, message: "\u0645\u0637\u0644\u0648\u0628 \u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644." });
+  if (req.user.role === "SUPER_ADMIN") return next();
+  const propertyId = req.params.propertyId || req.body.propertyId || req.query.propertyId;
+  if (!propertyId) return next();
+  const allowed = req.user.allowedProperties || [];
+  if (allowed.includes("all") || allowed.includes(String(propertyId))) {
+    return next();
+  }
+  return res.status(403).json({
+    success: false,
+    code: "PROPERTY_ACCESS_DENIED",
+    message: "\u063A\u064A\u0631 \u0645\u0635\u0631\u062D \u0644\u0643 \u0628\u0625\u062F\u0627\u0631\u0629 \u0623\u0648 \u0639\u0631\u0636 \u0628\u064A\u0627\u0646\u0627\u062A \u0647\u0630\u0627 \u0627\u0644\u0639\u0642\u0627\u0631 \u0627\u0644\u0645\u062D\u062F\u062F."
+  });
+}
 
 // src/server/repository.ts
 import { Decimal } from "@prisma/client/runtime/library";
@@ -225,19 +240,107 @@ async function getCompanySettingsFromDb() {
     return null;
   }
 }
+async function updateCompanySettingsInDb(data) {
+  if (!process.env.DATABASE_URL) return null;
+  const updated = await prisma.companySettings.upsert({
+    where: { id: "default" },
+    update: {
+      companyName: data.companyName,
+      companyNameEn: data.companyNameEn,
+      tagline: data.tagline,
+      logoUrl: data.logoUrl,
+      iconUrl: data.iconUrl,
+      phone: data.phone,
+      whatsapp: data.whatsapp,
+      email: data.email,
+      crNumber: data.crNumber,
+      taxNumber: data.taxNumber,
+      nationalAddress: data.nationalAddress,
+      checkInTime: data.checkInTime,
+      checkOutTime: data.checkOutTime,
+      navigation: data.navigation,
+      themeConfig: data.themeConfig
+    },
+    create: {
+      id: "default",
+      ...data
+    }
+  });
+  return serializeDecimals(updated);
+}
 async function getPropertiesFromDb(allowedPropertyIds) {
   if (!process.env.DATABASE_URL) return [];
   const isUniversal = !allowedPropertyIds || allowedPropertyIds.includes("all");
   const properties = await prisma.property.findMany({
     where: isUniversal ? {} : { id: { in: allowedPropertyIds } },
     include: {
-      floors: true,
-      units: true,
+      floors: { orderBy: { number: "asc" } },
+      units: { orderBy: { unitNumber: "asc" } },
       parkingSpots: true
     },
     orderBy: { createdAt: "asc" }
   });
   return serializeDecimals(properties);
+}
+async function createPropertyInDb(data) {
+  if (!process.env.DATABASE_URL) return null;
+  const created = await prisma.property.create({
+    data: {
+      name: data.name,
+      code: data.code,
+      address: data.address,
+      city: data.city || "\u0627\u0644\u0631\u064A\u0627\u0636",
+      district: data.district,
+      floorsCount: Number(data.floorsCount) || 1,
+      unitsCount: Number(data.unitsCount) || 0,
+      totalAreaSqm: Number(data.totalAreaSqm) || 0,
+      rooftopPayment: new Decimal(data.rooftopPayment || 0),
+      description: data.description || null,
+      images: Array.isArray(data.images) ? data.images : [],
+      isActive: data.isActive !== false
+    },
+    include: { floors: true, units: true, parkingSpots: true }
+  });
+  return serializeDecimals(created);
+}
+async function updatePropertyInDb(id, data) {
+  if (!process.env.DATABASE_URL) return null;
+  const updateData = {};
+  if (data.name !== void 0) updateData.name = data.name;
+  if (data.code !== void 0) updateData.code = data.code;
+  if (data.address !== void 0) updateData.address = data.address;
+  if (data.city !== void 0) updateData.city = data.city;
+  if (data.district !== void 0) updateData.district = data.district;
+  if (data.floorsCount !== void 0) updateData.floorsCount = Number(data.floorsCount);
+  if (data.unitsCount !== void 0) updateData.unitsCount = Number(data.unitsCount);
+  if (data.totalAreaSqm !== void 0) updateData.totalAreaSqm = Number(data.totalAreaSqm);
+  if (data.rooftopPayment !== void 0) updateData.rooftopPayment = new Decimal(data.rooftopPayment);
+  if (data.description !== void 0) updateData.description = data.description;
+  if (data.images !== void 0) updateData.images = Array.isArray(data.images) ? data.images : [];
+  if (data.isActive !== void 0) updateData.isActive = Boolean(data.isActive);
+  const updated = await prisma.property.update({
+    where: { id },
+    data: updateData,
+    include: { floors: true, units: true, parkingSpots: true }
+  });
+  return serializeDecimals(updated);
+}
+async function deletePropertyInDb(id) {
+  if (!process.env.DATABASE_URL) return null;
+  const activeAllocations = await prisma.unitAllocation.findFirst({
+    where: {
+      unit: { propertyId: id },
+      status: "active",
+      endDate: { gte: /* @__PURE__ */ new Date() }
+    }
+  });
+  if (activeAllocations) {
+    throw new Error("\u0644\u0627 \u064A\u0645\u0643\u0646 \u062D\u0630\u0641 \u0627\u0644\u0639\u0642\u0627\u0631 \u0644\u0648\u062C\u0648\u062F \u0648\u062D\u062F\u0627\u062A \u0645\u0631\u062A\u0628\u0637\u0629 \u0628\u062D\u062C\u0648\u0632\u0627\u062A \u0623\u0648 \u0639\u0642\u0648\u062F \u0625\u064A\u062C\u0627\u0631 \u0646\u0634\u0637\u0629 \u062D\u0627\u0644\u064A\u0627\u064B.");
+  }
+  const deleted = await prisma.property.delete({
+    where: { id }
+  });
+  return serializeDecimals(deleted);
 }
 async function getUnitsFromDb(allowedPropertyIds) {
   if (!process.env.DATABASE_URL) return [];
@@ -246,11 +349,109 @@ async function getUnitsFromDb(allowedPropertyIds) {
     where: isUniversal ? {} : { propertyId: { in: allowedPropertyIds } },
     include: {
       property: true,
-      floor: true
+      floor: true,
+      allocations: {
+        where: { status: "active", endDate: { gte: /* @__PURE__ */ new Date() } }
+      }
     },
     orderBy: { unitNumber: "asc" }
   });
   return serializeDecimals(units);
+}
+async function createUnitInDb(data) {
+  if (!process.env.DATABASE_URL) return null;
+  const existing = await prisma.unit.findFirst({
+    where: {
+      propertyId: data.propertyId,
+      unitNumber: data.unitNumber
+    }
+  });
+  if (existing) {
+    throw new Error(`\u0627\u0644\u0648\u062D\u062F\u0629 \u0631\u0642\u0645 (${data.unitNumber}) \u0645\u0648\u062C\u0648\u062F\u0629 \u0645\u0633\u0628\u0642\u0627\u064B \u0641\u064A \u0647\u0630\u0627 \u0627\u0644\u0639\u0642\u0627\u0631.`);
+  }
+  const created = await prisma.unit.create({
+    data: {
+      propertyId: data.propertyId,
+      floorId: data.floorId || null,
+      unitNumber: data.unitNumber,
+      type: data.type || "apartment",
+      areaSqm: Number(data.areaSqm) || 0,
+      dailyRate: new Decimal(data.dailyRate || 0),
+      monthlyRate: new Decimal(data.monthlyRate || 0),
+      annualRate: new Decimal(data.annualRate || 0),
+      occupancyStatus: data.occupancyStatus || "vacant",
+      isClean: data.isClean !== false,
+      publicationStatus: data.publicationStatus || "published",
+      images: Array.isArray(data.images) ? data.images : [],
+      spaces: data.spaces || null,
+      fittings: data.fittings || null,
+      smartLockPin: data.smartLockPin || null
+    },
+    include: { property: true, floor: true }
+  });
+  await prisma.property.update({
+    where: { id: data.propertyId },
+    data: { unitsCount: { increment: 1 } }
+  }).catch(() => {
+  });
+  return serializeDecimals(created);
+}
+async function updateUnitInDb(id, data) {
+  if (!process.env.DATABASE_URL) return null;
+  const existing = await prisma.unit.findUnique({ where: { id } });
+  if (!existing) throw new Error("\u0627\u0644\u0648\u062D\u062F\u0629 \u0627\u0644\u0645\u062D\u062F\u062F\u0629 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F\u0629.");
+  if (data.unitNumber && data.unitNumber !== existing.unitNumber) {
+    const duplicate = await prisma.unit.findFirst({
+      where: {
+        id: { not: id },
+        propertyId: data.propertyId || existing.propertyId,
+        unitNumber: data.unitNumber
+      }
+    });
+    if (duplicate) {
+      throw new Error(`\u0627\u0644\u0648\u062D\u062F\u0629 \u0631\u0642\u0645 (${data.unitNumber}) \u0645\u0633\u062C\u0644\u0629 \u0633\u0644\u0641\u0627\u064B \u0641\u064A \u0646\u0641\u0633 \u0627\u0644\u0639\u0642\u0627\u0631.`);
+    }
+  }
+  const updateData = {};
+  if (data.floorId !== void 0) updateData.floorId = data.floorId || null;
+  if (data.unitNumber !== void 0) updateData.unitNumber = data.unitNumber;
+  if (data.type !== void 0) updateData.type = data.type;
+  if (data.areaSqm !== void 0) updateData.areaSqm = Number(data.areaSqm);
+  if (data.dailyRate !== void 0) updateData.dailyRate = new Decimal(data.dailyRate);
+  if (data.monthlyRate !== void 0) updateData.monthlyRate = new Decimal(data.monthlyRate);
+  if (data.annualRate !== void 0) updateData.annualRate = new Decimal(data.annualRate);
+  if (data.occupancyStatus !== void 0) updateData.occupancyStatus = data.occupancyStatus;
+  if (data.isClean !== void 0) updateData.isClean = Boolean(data.isClean);
+  if (data.publicationStatus !== void 0) updateData.publicationStatus = data.publicationStatus;
+  if (data.images !== void 0) updateData.images = Array.isArray(data.images) ? data.images : [];
+  if (data.spaces !== void 0) updateData.spaces = data.spaces;
+  if (data.fittings !== void 0) updateData.fittings = data.fittings;
+  if (data.smartLockPin !== void 0) updateData.smartLockPin = data.smartLockPin;
+  const updated = await prisma.unit.update({
+    where: { id },
+    data: updateData,
+    include: { property: true, floor: true }
+  });
+  return serializeDecimals(updated);
+}
+async function deleteUnitInDb(id) {
+  if (!process.env.DATABASE_URL) return null;
+  const activeAlloc = await prisma.unitAllocation.findFirst({
+    where: { unitId: id, status: "active", endDate: { gte: /* @__PURE__ */ new Date() } }
+  });
+  if (activeAlloc) {
+    throw new Error("\u0644\u0627 \u064A\u0645\u0643\u0646 \u062D\u0630\u0641 \u0623\u0648 \u0625\u0644\u063A\u0627\u0621 \u0627\u0644\u0648\u062D\u062F\u0629 \u0644\u0648\u062C\u0648\u062F \u062D\u062C\u0632 \u0623\u0648 \u0639\u0642\u062F \u0646\u0634\u0637 \u0645\u0631\u062A\u0628\u0637 \u0628\u0647\u0627.");
+  }
+  const unit = await prisma.unit.findUnique({ where: { id } });
+  const deleted = await prisma.unit.delete({ where: { id } });
+  if (unit?.propertyId) {
+    await prisma.property.update({
+      where: { id: unit.propertyId },
+      data: { unitsCount: { decrement: 1 } }
+    }).catch(() => {
+    });
+  }
+  return serializeDecimals(deleted);
 }
 async function getBookingsFromDb(allowedPropertyIds) {
   if (!process.env.DATABASE_URL) return [];
@@ -300,6 +501,85 @@ async function getExpensesFromDb(allowedPropertyIds) {
   });
   return serializeDecimals(expenses);
 }
+async function createExpenseInDb(data) {
+  if (!process.env.DATABASE_URL) return null;
+  const expenseNumber = `EXP-${Date.now().toString().slice(-6)}`;
+  const now = /* @__PURE__ */ new Date();
+  const start = data.startDate ? new Date(data.startDate) : now;
+  const end = data.endDate ? new Date(data.endDate) : now;
+  const created = await prisma.operationalExpense.create({
+    data: {
+      expenseNumber,
+      title: data.title,
+      amount: new Decimal(data.amount),
+      costCenterLevel: data.costCenterLevel || "PROPERTY",
+      propertyId: data.propertyId || null,
+      unitId: data.unitId || null,
+      categoryCode: data.categoryCode || "OPERATIONS_OTHER",
+      subcategory: data.subcategory || null,
+      expenseDate: data.expenseDate ? new Date(data.expenseDate) : now,
+      startDate: start,
+      endDate: end,
+      temporalType: data.temporalType || "NONE",
+      allocationMethod: data.allocationMethod || "EQUAL_UNITS",
+      status: data.status || "approved",
+      isCapitalAsset: Boolean(data.isCapitalAsset),
+      notes: data.notes || null,
+      createdById: data.createdById || null,
+      allocations: data.allocations && data.allocations.length > 0 ? {
+        create: data.allocations.map((a) => ({
+          unitId: a.unitId,
+          shareAmount: new Decimal(a.shareAmount),
+          percentage: Number(a.percentage) || 0,
+          monthPeriod: a.monthPeriod || now.toISOString().slice(0, 7)
+        }))
+      } : void 0,
+      payments: data.payments && data.payments.length > 0 ? {
+        create: data.payments.map((p) => ({
+          amount: new Decimal(p.amount),
+          paymentMethod: p.paymentMethod || "bank_transfer",
+          referenceNo: p.referenceNo || null,
+          notes: p.notes || null
+        }))
+      } : void 0
+    },
+    include: {
+      property: true,
+      unit: true,
+      allocations: { include: { unit: true } },
+      payments: true
+    }
+  });
+  return serializeDecimals(created);
+}
+async function updateExpenseInDb(id, data) {
+  if (!process.env.DATABASE_URL) return null;
+  const updateData = {};
+  if (data.title !== void 0) updateData.title = data.title;
+  if (data.amount !== void 0) updateData.amount = new Decimal(data.amount);
+  if (data.status !== void 0) updateData.status = data.status;
+  if (data.notes !== void 0) updateData.notes = data.notes;
+  if (data.categoryCode !== void 0) updateData.categoryCode = data.categoryCode;
+  if (data.subcategory !== void 0) updateData.subcategory = data.subcategory;
+  const updated = await prisma.operationalExpense.update({
+    where: { id },
+    data: updateData,
+    include: {
+      property: true,
+      unit: true,
+      allocations: { include: { unit: true } },
+      payments: true
+    }
+  });
+  return serializeDecimals(updated);
+}
+async function deleteExpenseInDb(id) {
+  if (!process.env.DATABASE_URL) return null;
+  const deleted = await prisma.operationalExpense.delete({
+    where: { id }
+  });
+  return serializeDecimals(deleted);
+}
 async function recordAuditLogInDb(data) {
   if (!process.env.DATABASE_URL) return null;
   try {
@@ -329,6 +609,299 @@ async function getAuditLogsFromDb(limit = 100) {
   } catch (e) {
     return [];
   }
+}
+async function importDataIntoDb(payload) {
+  if (!process.env.DATABASE_URL) {
+    throw new Error("\u0642\u0627\u0639\u062F\u0629 \u0628\u064A\u0627\u0646\u0627\u062A PostgreSQL \u063A\u064A\u0631 \u0645\u062A\u0635\u0644\u0629.");
+  }
+  const results = {
+    properties: { total: 0, imported: 0, duplicatesSkipped: 0 },
+    floors: { total: 0, imported: 0, duplicatesSkipped: 0 },
+    units: { total: 0, imported: 0, duplicatesSkipped: 0 },
+    bookings: { total: 0, imported: 0, duplicatesSkipped: 0 },
+    leases: { total: 0, imported: 0, duplicatesSkipped: 0 },
+    expenses: { total: 0, imported: 0, duplicatesSkipped: 0 }
+  };
+  const properties = Array.isArray(payload.properties) ? payload.properties : [];
+  const units = Array.isArray(payload.units) ? payload.units : [];
+  const bookings = Array.isArray(payload.bookings) ? payload.bookings : [];
+  const leases = Array.isArray(payload.leases) ? payload.leases : [];
+  const expenses = Array.isArray(payload.expenses) ? payload.expenses : [];
+  results.properties.total = properties.length;
+  results.units.total = units.length;
+  results.bookings.total = bookings.length;
+  results.leases.total = leases.length;
+  results.expenses.total = expenses.length;
+  await prisma.$transaction(async (tx) => {
+    if (payload.settings) {
+      await tx.companySettings.upsert({
+        where: { id: "default" },
+        update: {
+          companyName: payload.settings.companyName || void 0,
+          companyNameEn: payload.settings.companyNameEn || void 0,
+          tagline: payload.settings.tagline || void 0,
+          phone: payload.settings.phone || void 0,
+          whatsapp: payload.settings.whatsapp || void 0,
+          email: payload.settings.email || void 0,
+          logoUrl: payload.settings.logoUrl || void 0,
+          iconUrl: payload.settings.iconUrl || void 0,
+          checkInTime: payload.settings.checkInTime || void 0,
+          checkOutTime: payload.settings.checkOutTime || void 0
+        },
+        create: {
+          id: "default",
+          companyName: payload.settings.companyName || "Luxury home \u0645\u0646\u0632\u0644 \u0627\u0644\u0641\u062E\u0627\u0645\u0629",
+          companyNameEn: payload.settings.companyNameEn || "Luxury Home",
+          tagline: payload.settings.tagline || "\u062A\u062C\u0631\u0628\u0629 \u0633\u0643\u0646\u064A\u0629 \u0641\u0627\u062E\u0631\u0629",
+          phone: payload.settings.phone || "+966 11 000 0000",
+          whatsapp: payload.settings.whatsapp || "+966 50 000 0000",
+          email: payload.settings.email || "vip@luxuryhome.sa",
+          checkInTime: payload.settings.checkInTime || "15:00",
+          checkOutTime: payload.settings.checkOutTime || "12:00"
+        }
+      });
+    }
+    for (const prop of properties) {
+      const existing = await tx.property.findFirst({
+        where: { OR: [{ id: prop.id }, { code: prop.code || prop.id }] }
+      });
+      if (existing) {
+        results.properties.duplicatesSkipped++;
+        continue;
+      }
+      await tx.property.create({
+        data: {
+          id: prop.id,
+          name: prop.name || "\u0645\u0628\u0646\u0649 \u0633\u0643\u0646\u064A",
+          code: prop.code || prop.id || `P-${Date.now()}`,
+          address: prop.address || "\u0627\u0644\u0631\u064A\u0627\u0636",
+          city: prop.city || "\u0627\u0644\u0631\u064A\u0627\u0636",
+          district: prop.district || "\u062D\u064A \u0627\u0644\u0646\u0631\u062C\u0633",
+          floorsCount: Number(prop.floorsCount) || 1,
+          unitsCount: Number(prop.unitsCount) || 0,
+          totalAreaSqm: Number(prop.totalAreaSqm) || 0,
+          rooftopPayment: new Decimal(prop.rooftopPayment || 0),
+          description: prop.description || null,
+          images: Array.isArray(prop.images) ? prop.images : [],
+          isActive: prop.isActive !== false
+        }
+      });
+      results.properties.imported++;
+    }
+    for (const u of units) {
+      const existing = await tx.unit.findFirst({
+        where: { OR: [{ id: u.id }, { AND: [{ propertyId: u.propertyId }, { unitNumber: u.unitNumber }] }] }
+      });
+      if (existing) {
+        results.units.duplicatesSkipped++;
+        continue;
+      }
+      const propExists = await tx.property.findUnique({ where: { id: u.propertyId } });
+      if (!propExists) {
+        results.units.duplicatesSkipped++;
+        continue;
+      }
+      await tx.unit.create({
+        data: {
+          id: u.id,
+          propertyId: u.propertyId,
+          floorId: u.floorId || null,
+          unitNumber: u.unitNumber || "101",
+          type: u.type || "apartment",
+          areaSqm: Number(u.areaSqm) || 0,
+          dailyRate: new Decimal(u.dailyRate || 0),
+          monthlyRate: new Decimal(u.monthlyRate || 0),
+          annualRate: new Decimal(u.annualRate || u.yearlyRate || 0),
+          occupancyStatus: u.occupancyStatus || "vacant",
+          isClean: u.isClean !== false,
+          publicationStatus: u.publicationStatus || "published",
+          images: Array.isArray(u.images) ? u.images : u.media ? u.media.map((m) => m.url || m) : [],
+          spaces: u.spaces || null,
+          fittings: u.fittings || null,
+          smartLockPin: u.smartLockPin || null
+        }
+      });
+      results.units.imported++;
+    }
+    for (const b of bookings) {
+      const bNumber = b.bookingNumber || b.id;
+      const existing = await tx.booking.findFirst({
+        where: { OR: [{ id: b.id }, { bookingNumber: bNumber }] }
+      });
+      if (existing) {
+        results.bookings.duplicatesSkipped++;
+        continue;
+      }
+      const unit = await tx.unit.findUnique({ where: { id: b.unitId } });
+      if (!unit) {
+        results.bookings.duplicatesSkipped++;
+        continue;
+      }
+      const checkIn = new Date(b.startDate || b.checkIn);
+      const checkOut = new Date(b.endDate || b.checkOut);
+      await tx.booking.create({
+        data: {
+          id: b.id,
+          bookingNumber: bNumber,
+          unitId: b.unitId,
+          guestName: b.guestName || b.guest?.fullName || "\u0646\u0632\u064A\u0644 \u062D\u062C\u0632",
+          guestPhone: b.guestPhone || b.guest?.phone || "+966500000000",
+          guestEmail: b.guestEmail || b.guest?.email || null,
+          startDate: checkIn,
+          endDate: checkOut,
+          rentalType: (b.rentalType || "daily").toUpperCase(),
+          totalAmount: new Decimal(b.totalAmount || b.pricing?.total || 0),
+          paidAmount: new Decimal(b.paidAmount || 0),
+          status: (b.status || "confirmed").toUpperCase()
+        }
+      });
+      await tx.unitAllocation.create({
+        data: {
+          unitId: b.unitId,
+          startDate: checkIn,
+          endDate: checkOut,
+          rentalType: "DAILY",
+          referenceId: bNumber,
+          purpose: "booking",
+          status: "active"
+        }
+      });
+      results.bookings.imported++;
+    }
+    for (const l of leases) {
+      const cNumber = l.contractNumber || l.id;
+      const existing = await tx.lease.findFirst({
+        where: { OR: [{ id: l.id }, { contractNumber: cNumber }] }
+      });
+      if (existing) {
+        results.leases.duplicatesSkipped++;
+        continue;
+      }
+      const unit = await tx.unit.findUnique({ where: { id: l.unitId } });
+      if (!unit) {
+        results.leases.duplicatesSkipped++;
+        continue;
+      }
+      const start = new Date(l.startDate);
+      const end = new Date(l.endDate);
+      await tx.lease.create({
+        data: {
+          id: l.id,
+          contractNumber: cNumber,
+          unitId: l.unitId,
+          tenantName: l.tenantName || l.tenant?.fullName || "\u0645\u0633\u062A\u0623\u062C\u0631 \u0645\u0639\u062A\u0645\u062F",
+          tenantPhone: l.tenantPhone || l.tenant?.phone || "+966500000000",
+          tenantEmail: l.tenantEmail || l.tenant?.email || null,
+          tenantIdNumber: l.tenantIdNumber || l.tenant?.nationalIdOrPassport || "1000000000",
+          startDate: start,
+          endDate: end,
+          rentalType: (l.rentalType || "annual").toUpperCase(),
+          annualRent: new Decimal(l.annualRent || l.totalRent || 0),
+          paymentOption: l.paymentOption || "1_payment",
+          paymentFrequency: l.paymentFrequency || "1_payment",
+          securityDeposit: new Decimal(l.securityDeposit || 0),
+          status: (l.status || "active").toUpperCase()
+        }
+      });
+      await tx.unitAllocation.create({
+        data: {
+          unitId: l.unitId,
+          startDate: start,
+          endDate: end,
+          rentalType: (l.rentalType || "annual").toUpperCase(),
+          referenceId: cNumber,
+          purpose: "lease",
+          status: "active"
+        }
+      });
+      results.leases.imported++;
+    }
+    for (const exp of expenses) {
+      const expNumber = exp.expenseNumber || exp.id || `EXP-${Date.now()}`;
+      const existing = await tx.operationalExpense.findFirst({
+        where: { OR: [{ id: exp.id }, { expenseNumber: expNumber }] }
+      });
+      if (existing) {
+        results.expenses.duplicatesSkipped++;
+        continue;
+      }
+      await tx.operationalExpense.create({
+        data: {
+          id: exp.id,
+          expenseNumber: expNumber,
+          title: exp.title || exp.description || "\u0645\u0635\u0631\u0648\u0641 \u062A\u0634\u063A\u064A\u0644\u064A",
+          amount: new Decimal(exp.amount || 0),
+          costCenterLevel: (exp.costCenterLevel || exp.level || "PROPERTY").toUpperCase(),
+          propertyId: exp.propertyId || null,
+          unitId: exp.unitId || null,
+          categoryCode: exp.categoryCode || "OPERATIONS_OTHER",
+          startDate: exp.startDate ? new Date(exp.startDate) : /* @__PURE__ */ new Date(),
+          endDate: exp.endDate ? new Date(exp.endDate) : /* @__PURE__ */ new Date(),
+          status: exp.status || "approved"
+        }
+      });
+      results.expenses.imported++;
+    }
+  });
+  return results;
+}
+async function exportFullDatabase() {
+  if (!process.env.DATABASE_URL) return null;
+  const [
+    settings,
+    properties,
+    floors,
+    units,
+    amenities,
+    parkingSpots,
+    allocations,
+    bookings,
+    leases,
+    installments,
+    payments,
+    securityDeposits,
+    expenses,
+    expenseAllocations,
+    auditLogs
+  ] = await Promise.all([
+    prisma.companySettings.findUnique({ where: { id: "default" } }),
+    prisma.property.findMany(),
+    prisma.floor.findMany(),
+    prisma.unit.findMany(),
+    prisma.amenity.findMany(),
+    prisma.parkingSpot.findMany(),
+    prisma.unitAllocation.findMany(),
+    prisma.booking.findMany(),
+    prisma.lease.findMany(),
+    prisma.leaseInstallment.findMany(),
+    prisma.paymentRecord.findMany(),
+    prisma.securityDepositRecord.findMany(),
+    prisma.operationalExpense.findMany(),
+    prisma.expenseAllocation.findMany(),
+    prisma.auditLog.findMany({ take: 500, orderBy: { createdAt: "desc" } })
+  ]);
+  return serializeDecimals({
+    metadata: {
+      exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      version: "2.0.0",
+      schema: "PostgreSQL-LuxuryHome"
+    },
+    settings,
+    properties,
+    floors,
+    units,
+    amenities,
+    parkingSpots,
+    allocations,
+    bookings,
+    leases,
+    installments,
+    payments,
+    securityDeposits,
+    expenses,
+    expenseAllocations,
+    auditLogs
+  });
 }
 
 // src/server/reservationService.ts
@@ -1230,6 +1803,96 @@ async function startServer(customPort) {
     const filtered = isUniversal ? memoryState?.properties || [] : (memoryState?.properties || []).filter((p) => allowed.includes(p.id));
     res.json({ success: true, properties: filtered });
   });
+  apiRouter.post("/properties", authenticateToken, requireRoles(["SUPER_ADMIN", "PROPERTY_MANAGER"]), async (req, res) => {
+    try {
+      const { name, code, address, city, district, floorsCount, unitsCount, totalAreaSqm, rooftopPayment, description, images, isActive } = req.body;
+      if (!name || !code || !address || !district) {
+        return res.status(400).json({ success: false, message: "\u0628\u064A\u0627\u0646\u0627\u062A \u0627\u0644\u0645\u0628\u0646\u0649 \u063A\u064A\u0631 \u0645\u0643\u062A\u0645\u0644\u0629 (\u0627\u0644\u0627\u0633\u0645\u060C \u0627\u0644\u0643\u0648\u062F\u060C \u0627\u0644\u0639\u0646\u0648\u0627\u0646\u060C \u0627\u0644\u062D\u064A \u0645\u0637\u0644\u0648\u0628\u0629)." });
+      }
+      if (process.env.DATABASE_URL) {
+        const prop = await createPropertyInDb(req.body);
+        await recordAuditLogInDb({
+          userId: req.user?.userId,
+          userName: req.user?.username || "\u0627\u0644\u0645\u0633\u0624\u0648\u0644",
+          action: "\u0625\u0646\u0634\u0627\u0621 \u0645\u0628\u0646\u0649 / \u0639\u0642\u0627\u0631 \u062C\u062F\u064A\u062F",
+          module: "\u0625\u062F\u0627\u0631\u0629 \u0627\u0644\u0639\u0642\u0627\u0631\u0627\u062A",
+          details: `\u0625\u0646\u0634\u0627\u0621 \u0627\u0644\u0645\u0628\u0646\u0649 ${name} (${code})`,
+          ipAddress: req.ip
+        });
+        return res.json({ success: true, property: prop, message: "\u062A\u0645 \u062D\u0641\u0638 \u0627\u0644\u0645\u0628\u0646\u0649 \u0628\u0646\u062C\u0627\u062D \u0641\u064A \u0642\u0627\u0639\u062F\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A." });
+      }
+      const newProp = {
+        id: req.body.id || `prop_${Date.now()}`,
+        name,
+        code,
+        address,
+        city: city || "\u0627\u0644\u0631\u064A\u0627\u0636",
+        district,
+        floorsCount: Number(floorsCount) || 1,
+        unitsCount: Number(unitsCount) || 0,
+        totalAreaSqm: Number(totalAreaSqm) || 0,
+        rooftopPayment: Number(rooftopPayment) || 0,
+        description: description || null,
+        images: Array.isArray(images) ? images : [],
+        isActive: isActive !== false,
+        createdAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      if (!memoryState.properties) memoryState.properties = [];
+      memoryState.properties.push(newProp);
+      return res.json({ success: true, property: newProp, message: "\u062A\u0645 \u062D\u0641\u0638 \u0627\u0644\u0645\u0628\u0646\u0649 \u0628\u0646\u062C\u0627\u062D." });
+    } catch (err) {
+      return res.status(400).json({ success: false, message: err?.message || "\u0641\u0634\u0644 \u062D\u0641\u0638 \u0627\u0644\u0645\u0628\u0646\u0649." });
+    }
+  });
+  apiRouter.put("/properties/:id", authenticateToken, requireRoles(["SUPER_ADMIN", "PROPERTY_MANAGER"]), checkPropertyAccess, async (req, res) => {
+    try {
+      const { id } = req.params;
+      if (process.env.DATABASE_URL) {
+        const updated = await updatePropertyInDb(id, req.body);
+        await recordAuditLogInDb({
+          userId: req.user?.userId,
+          userName: req.user?.username || "\u0627\u0644\u0645\u0633\u0624\u0648\u0644",
+          action: "\u062A\u0639\u062F\u064A\u0644 \u0628\u064A\u0627\u0646\u0627\u062A \u0645\u0628\u0646\u0649",
+          module: "\u0625\u062F\u0627\u0631\u0629 \u0627\u0644\u0639\u0642\u0627\u0631\u0627\u062A",
+          details: `\u062A\u0639\u062F\u064A\u0644 \u0627\u0644\u0645\u0628\u0646\u0649 ${id}`,
+          ipAddress: req.ip
+        });
+        return res.json({ success: true, property: updated, message: "\u062A\u0645 \u062A\u062D\u062F\u064A\u062B \u0628\u064A\u0627\u0646\u0627\u062A \u0627\u0644\u0645\u0628\u0646\u0649 \u0628\u0646\u062C\u0627\u062D." });
+      }
+      if (!memoryState.properties) memoryState.properties = [];
+      const idx = memoryState.properties.findIndex((p) => p.id === id);
+      if (idx !== -1) {
+        memoryState.properties[idx] = { ...memoryState.properties[idx], ...req.body };
+        return res.json({ success: true, property: memoryState.properties[idx], message: "\u062A\u0645 \u062A\u062D\u062F\u064A\u062B \u0628\u064A\u0627\u0646\u0627\u062A \u0627\u0644\u0645\u0628\u0646\u0649." });
+      }
+      return res.status(404).json({ success: false, message: "\u0627\u0644\u0645\u0628\u0646\u0649 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+    } catch (err) {
+      return res.status(400).json({ success: false, message: err?.message || "\u0641\u0634\u0644 \u062A\u062D\u062F\u064A\u062B \u0627\u0644\u0645\u0628\u0646\u0649." });
+    }
+  });
+  apiRouter.delete("/properties/:id", authenticateToken, requireRoles(["SUPER_ADMIN"]), checkPropertyAccess, async (req, res) => {
+    try {
+      const { id } = req.params;
+      if (process.env.DATABASE_URL) {
+        await deletePropertyInDb(id);
+        await recordAuditLogInDb({
+          userId: req.user?.userId,
+          userName: req.user?.username || "\u0627\u0644\u0645\u0633\u0624\u0648\u0644",
+          action: "\u062D\u0630\u0641 \u0645\u0628\u0646\u0649 / \u0639\u0642\u0627\u0631",
+          module: "\u0625\u062F\u0627\u0631\u0629 \u0627\u0644\u0639\u0642\u0627\u0631\u0627\u062A",
+          details: `\u062D\u0630\u0641 \u0627\u0644\u0645\u0628\u0646\u0649 ${id}`,
+          ipAddress: req.ip
+        });
+        return res.json({ success: true, message: "\u062A\u0645 \u062D\u0630\u0641 \u0627\u0644\u0645\u0628\u0646\u0649 \u0628\u0646\u062C\u0627\u062D." });
+      }
+      if (memoryState.properties) {
+        memoryState.properties = memoryState.properties.filter((p) => p.id !== id);
+      }
+      return res.json({ success: true, message: "\u062A\u0645 \u062D\u0630\u0641 \u0627\u0644\u0645\u0628\u0646\u0649 \u0628\u0646\u062C\u0627\u062D." });
+    } catch (err) {
+      return res.status(400).json({ success: false, message: err?.message || "\u0641\u0634\u0644 \u062D\u0630\u0641 \u0627\u0644\u0645\u0628\u0646\u0649." });
+    }
+  });
   apiRouter.get("/units", authenticateToken, async (req, res) => {
     const user = req.user;
     const allowed = user.role === "SUPER_ADMIN" ? ["all"] : user.allowedProperties;
@@ -1240,6 +1903,89 @@ async function startServer(customPort) {
     const isUniversal = allowed.includes("all");
     const filtered = isUniversal ? memoryState?.units || [] : (memoryState?.units || []).filter((u) => allowed.includes(u.propertyId));
     res.json({ success: true, units: filtered });
+  });
+  apiRouter.post("/units", authenticateToken, requireRoles(["SUPER_ADMIN", "PROPERTY_MANAGER"]), async (req, res) => {
+    try {
+      const { propertyId, unitNumber } = req.body;
+      if (!propertyId || !unitNumber) {
+        return res.status(400).json({ success: false, message: "\u0645\u0639\u0631\u0641 \u0627\u0644\u0639\u0642\u0627\u0631 \u0648\u0631\u0642\u0645 \u0627\u0644\u0648\u062D\u062F\u0629 \u0645\u0637\u0644\u0648\u0628\u0627\u0646." });
+      }
+      const user = req.user;
+      if (user.role !== "SUPER_ADMIN" && !user.allowedProperties?.includes(propertyId)) {
+        return res.status(403).json({ success: false, message: "\u063A\u064A\u0631 \u0645\u0635\u0631\u062D \u0644\u0643 \u0628\u0625\u0636\u0627\u0641\u0629 \u0648\u062D\u062F\u0627\u062A \u0641\u064A \u0647\u0630\u0627 \u0627\u0644\u0639\u0642\u0627\u0631." });
+      }
+      if (process.env.DATABASE_URL) {
+        const unit = await createUnitInDb(req.body);
+        await recordAuditLogInDb({
+          userId: req.user?.userId,
+          userName: req.user?.username || "\u0627\u0644\u0645\u0633\u0624\u0648\u0644",
+          action: "\u0625\u0646\u0634\u0627\u0621 \u0648\u062D\u062F\u0629 \u0633\u0643\u0646\u064A\u0629 \u062C\u062F\u064A\u062F\u0629",
+          module: "\u0625\u062F\u0627\u0631\u0629 \u0627\u0644\u0648\u062D\u062F\u0627\u062A",
+          details: `\u0625\u0646\u0634\u0627\u0621 \u0627\u0644\u0648\u062D\u062F\u0629 ${unitNumber} \u0641\u064A \u0627\u0644\u0639\u0642\u0627\u0631 ${propertyId}`,
+          ipAddress: req.ip
+        });
+        return res.json({ success: true, unit, message: "\u062A\u0645 \u062D\u0641\u0638 \u0627\u0644\u0648\u062D\u062F\u0629 \u0628\u0646\u062C\u0627\u062D \u0641\u064A \u0642\u0627\u0639\u062F\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A." });
+      }
+      const newUnit = {
+        id: req.body.id || `unit_${Date.now()}`,
+        ...req.body,
+        createdAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      if (!memoryState.units) memoryState.units = [];
+      memoryState.units.push(newUnit);
+      return res.json({ success: true, unit: newUnit, message: "\u062A\u0645 \u062D\u0641\u0638 \u0627\u0644\u0648\u062D\u062F\u0629 \u0628\u0646\u062C\u0627\u062D." });
+    } catch (err) {
+      return res.status(400).json({ success: false, message: err?.message || "\u0641\u0634\u0644 \u062D\u0641\u0638 \u0627\u0644\u0648\u062D\u062F\u0629." });
+    }
+  });
+  apiRouter.put("/units/:id", authenticateToken, requireRoles(["SUPER_ADMIN", "PROPERTY_MANAGER"]), async (req, res) => {
+    try {
+      const { id } = req.params;
+      if (process.env.DATABASE_URL) {
+        const updated = await updateUnitInDb(id, req.body);
+        await recordAuditLogInDb({
+          userId: req.user?.userId,
+          userName: req.user?.username || "\u0627\u0644\u0645\u0633\u0624\u0648\u0644",
+          action: "\u062A\u0639\u062F\u064A\u0644 \u0628\u064A\u0627\u0646\u0627\u062A \u0648\u062D\u062F\u0629",
+          module: "\u0625\u062F\u0627\u0631\u0629 \u0627\u0644\u0648\u062D\u062F\u0627\u062A",
+          details: `\u062A\u0639\u062F\u064A\u0644 \u0627\u0644\u0648\u062D\u062F\u0629 ${id}`,
+          ipAddress: req.ip
+        });
+        return res.json({ success: true, unit: updated, message: "\u062A\u0645 \u062A\u062D\u062F\u064A\u062B \u0628\u064A\u0627\u0646\u0627\u062A \u0627\u0644\u0648\u062D\u062F\u0629 \u0628\u0646\u062C\u0627\u062D." });
+      }
+      if (!memoryState.units) memoryState.units = [];
+      const idx = memoryState.units.findIndex((u) => u.id === id);
+      if (idx !== -1) {
+        memoryState.units[idx] = { ...memoryState.units[idx], ...req.body };
+        return res.json({ success: true, unit: memoryState.units[idx], message: "\u062A\u0645 \u062A\u062D\u062F\u064A\u062B \u0628\u064A\u0627\u0646\u0627\u062A \u0627\u0644\u0648\u062D\u062F\u0629." });
+      }
+      return res.status(404).json({ success: false, message: "\u0627\u0644\u0648\u062D\u062F\u0629 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F\u0629." });
+    } catch (err) {
+      return res.status(400).json({ success: false, message: err?.message || "\u0641\u0634\u0644 \u062A\u062D\u062F\u064A\u062B \u0627\u0644\u0648\u062D\u062F\u0629." });
+    }
+  });
+  apiRouter.delete("/units/:id", authenticateToken, requireRoles(["SUPER_ADMIN", "PROPERTY_MANAGER"]), async (req, res) => {
+    try {
+      const { id } = req.params;
+      if (process.env.DATABASE_URL) {
+        await deleteUnitInDb(id);
+        await recordAuditLogInDb({
+          userId: req.user?.userId,
+          userName: req.user?.username || "\u0627\u0644\u0645\u0633\u0624\u0648\u0644",
+          action: "\u062D\u0630\u0641 \u0648\u062D\u062F\u0629 \u0633\u0643\u0646\u064A\u0629",
+          module: "\u0625\u062F\u0627\u0631\u0629 \u0627\u0644\u0648\u062D\u062F\u0627\u062A",
+          details: `\u062D\u0630\u0641 \u0627\u0644\u0648\u062D\u062F\u0629 ${id}`,
+          ipAddress: req.ip
+        });
+        return res.json({ success: true, message: "\u062A\u0645 \u062D\u0630\u0641 \u0627\u0644\u0648\u062D\u062F\u0629 \u0628\u0646\u062C\u0627\u062D." });
+      }
+      if (memoryState.units) {
+        memoryState.units = memoryState.units.filter((u) => u.id !== id);
+      }
+      return res.json({ success: true, message: "\u062A\u0645 \u062D\u0630\u0641 \u0627\u0644\u0648\u062D\u062F\u0629 \u0628\u0646\u062C\u0627\u062D." });
+    } catch (err) {
+      return res.status(400).json({ success: false, message: err?.message || "\u0641\u0634\u0644 \u062D\u0630\u0641 \u0627\u0644\u0648\u062D\u062F\u0629." });
+    }
   });
   apiRouter.get("/bookings", authenticateToken, async (req, res) => {
     const user = req.user;
@@ -1267,6 +2013,135 @@ async function startServer(customPort) {
       return res.json({ success: true, expenses });
     }
     res.json({ success: true, expenses: memoryState?.expenses || [] });
+  });
+  apiRouter.post("/expenses", authenticateToken, requireRoles(["SUPER_ADMIN", "PROPERTY_MANAGER", "ACCOUNTANT"]), async (req, res) => {
+    try {
+      const { title, amount, costCenterLevel } = req.body;
+      if (!title || amount === void 0) {
+        return res.status(400).json({ success: false, message: "\u0639\u0646\u0648\u0627\u0646 \u0627\u0644\u0645\u0635\u0631\u0648\u0641 \u0648\u0642\u064A\u0645\u062A\u0647 \u0645\u0637\u0644\u0648\u0628\u0627\u0646." });
+      }
+      if (process.env.DATABASE_URL) {
+        const exp = await createExpenseInDb({
+          ...req.body,
+          createdById: req.user?.userId
+        });
+        await recordAuditLogInDb({
+          userId: req.user?.userId,
+          userName: req.user?.username || "\u0627\u0644\u0645\u0633\u0624\u0648\u0644 \u0627\u0644\u0645\u0627\u0644\u064A",
+          action: "\u062A\u0633\u062C\u064A\u0644 \u0645\u0635\u0631\u0648\u0641 \u062A\u0634\u063A\u064A\u0644\u064A",
+          module: "\u0627\u0644\u0625\u062F\u0627\u0631\u0629 \u0627\u0644\u0645\u0627\u0644\u064A\u0629",
+          details: `\u062A\u0633\u062C\u064A\u0644 \u0645\u0635\u0631\u0648\u0641 ${title} \u0628\u0642\u064A\u0645\u0629 ${amount} \u0631.\u0633`,
+          ipAddress: req.ip
+        });
+        return res.json({ success: true, expense: exp, message: "\u062A\u0645 \u062D\u0641\u0638 \u0627\u0644\u0645\u0635\u0631\u0648\u0641 \u0628\u0646\u062C\u0627\u062D \u0641\u064A \u0642\u0627\u0639\u062F\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A." });
+      }
+      const newExp = {
+        id: req.body.id || `exp_${Date.now()}`,
+        expenseNumber: `EXP-${Date.now().toString().slice(-6)}`,
+        ...req.body,
+        createdAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      if (!memoryState.expenses) memoryState.expenses = [];
+      memoryState.expenses.push(newExp);
+      return res.json({ success: true, expense: newExp, message: "\u062A\u0645 \u062D\u0641\u0638 \u0627\u0644\u0645\u0635\u0631\u0648\u0641 \u0628\u0646\u062C\u0627\u062D." });
+    } catch (err) {
+      return res.status(400).json({ success: false, message: err?.message || "\u0641\u0634\u0644 \u062D\u0641\u0638 \u0627\u0644\u0645\u0635\u0631\u0648\u0641." });
+    }
+  });
+  apiRouter.put("/expenses/:id", authenticateToken, requireRoles(["SUPER_ADMIN", "PROPERTY_MANAGER", "ACCOUNTANT"]), async (req, res) => {
+    try {
+      const { id } = req.params;
+      if (process.env.DATABASE_URL) {
+        const updated = await updateExpenseInDb(id, req.body);
+        await recordAuditLogInDb({
+          userId: req.user?.userId,
+          userName: req.user?.username || "\u0627\u0644\u0645\u0633\u0624\u0648\u0644 \u0627\u0644\u0645\u0627\u0644\u064A",
+          action: "\u062A\u0639\u062F\u064A\u0644 \u0645\u0635\u0631\u0648\u0641 \u062A\u0634\u063A\u064A\u0644\u064A",
+          module: "\u0627\u0644\u0625\u062F\u0627\u0631\u0629 \u0627\u0644\u0645\u0627\u0644\u064A\u0629",
+          details: `\u062A\u0639\u062F\u064A\u0644 \u0627\u0644\u0645\u0635\u0631\u0648\u0641 ${id}`,
+          ipAddress: req.ip
+        });
+        return res.json({ success: true, expense: updated, message: "\u062A\u0645 \u062A\u062D\u062F\u064A\u062B \u0628\u064A\u0627\u0646\u0627\u062A \u0627\u0644\u0645\u0635\u0631\u0648\u0641 \u0628\u0646\u062C\u0627\u062D." });
+      }
+      if (!memoryState.expenses) memoryState.expenses = [];
+      const idx = memoryState.expenses.findIndex((e) => e.id === id);
+      if (idx !== -1) {
+        memoryState.expenses[idx] = { ...memoryState.expenses[idx], ...req.body };
+        return res.json({ success: true, expense: memoryState.expenses[idx], message: "\u062A\u0645 \u062A\u062D\u062F\u064A\u062B \u0628\u064A\u0627\u0646\u0627\u062A \u0627\u0644\u0645\u0635\u0631\u0648\u0641." });
+      }
+      return res.status(404).json({ success: false, message: "\u0627\u0644\u0645\u0635\u0631\u0648\u0641 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
+    } catch (err) {
+      return res.status(400).json({ success: false, message: err?.message || "\u0641\u0634\u0644 \u062A\u062D\u062F\u064A\u062B \u0627\u0644\u0645\u0635\u0631\u0648\u0641." });
+    }
+  });
+  apiRouter.delete("/expenses/:id", authenticateToken, requireRoles(["SUPER_ADMIN", "ACCOUNTANT"]), async (req, res) => {
+    try {
+      const { id } = req.params;
+      if (process.env.DATABASE_URL) {
+        await deleteExpenseInDb(id);
+        await recordAuditLogInDb({
+          userId: req.user?.userId,
+          userName: req.user?.username || "\u0627\u0644\u0645\u0633\u0624\u0648\u0644 \u0627\u0644\u0645\u0627\u0644\u064A",
+          action: "\u062D\u0630\u0641 \u0645\u0635\u0631\u0648\u0641 \u062A\u0634\u063A\u064A\u0644\u064A",
+          module: "\u0627\u0644\u0625\u062F\u0627\u0631\u0629 \u0627\u0644\u0645\u0627\u0644\u064A\u0629",
+          details: `\u062D\u0630\u0641 \u0627\u0644\u0645\u0635\u0631\u0648\u0641 ${id}`,
+          ipAddress: req.ip
+        });
+        return res.json({ success: true, message: "\u062A\u0645 \u062D\u0630\u0641 \u0627\u0644\u0645\u0635\u0631\u0648\u0641 \u0628\u0646\u062C\u0627\u062D." });
+      }
+      if (memoryState.expenses) {
+        memoryState.expenses = memoryState.expenses.filter((e) => e.id !== id);
+      }
+      return res.json({ success: true, message: "\u062A\u0645 \u062D\u0630\u0641 \u0627\u0644\u0645\u0635\u0631\u0648\u0641 \u0628\u0646\u062C\u0627\u062D." });
+    } catch (err) {
+      return res.status(400).json({ success: false, message: err?.message || "\u0641\u0634\u0644 \u062D\u0630\u0641 \u0627\u0644\u0645\u0635\u0631\u0648\u0641." });
+    }
+  });
+  apiRouter.put("/settings", authenticateToken, requireRoles(["SUPER_ADMIN"]), async (req, res) => {
+    try {
+      if (process.env.DATABASE_URL) {
+        const updated = await updateCompanySettingsInDb(req.body);
+        await recordAuditLogInDb({
+          userId: req.user?.userId,
+          userName: req.user?.username || "\u0627\u0644\u0645\u0633\u0624\u0648\u0644",
+          action: "\u062A\u062D\u062F\u064A\u062B \u0625\u0639\u062F\u0627\u062F\u0627\u062A \u0648\u0647\u0648\u064A\u0629 \u0627\u0644\u0645\u0646\u0634\u0623\u0629",
+          module: "\u0627\u0644\u0625\u0639\u062F\u0627\u062F\u0627\u062A \u0627\u0644\u0639\u0627\u0645\u0629",
+          details: "\u062A\u062D\u062F\u064A\u062B \u0625\u0639\u062F\u0627\u062F\u0627\u062A \u0648\u0647\u0648\u064A\u0629 \u0627\u0644\u0634\u0631\u0643\u0629 \u0648\u0633\u0627\u0639\u0627\u062A \u0627\u0644\u062F\u062E\u0648\u0644 \u0648\u0627\u0644\u0645\u0648\u0642\u0639",
+          ipAddress: req.ip
+        });
+        return res.json({ success: true, settings: updated, message: "\u062A\u0645 \u062A\u062D\u062F\u064A\u062B \u0625\u0639\u062F\u0627\u062F\u0627\u062A \u0648\u0647\u0648\u064A\u0629 \u0627\u0644\u0645\u0646\u0634\u0623\u0629 \u0628\u0646\u062C\u0627\u062D \u0641\u064A \u0642\u0627\u0639\u062F\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A." });
+      }
+      memoryState.settings = { ...memoryState.settings, ...req.body };
+      return res.json({ success: true, settings: memoryState.settings, message: "\u062A\u0645 \u062A\u062D\u062F\u064A\u062B \u0625\u0639\u062F\u0627\u062F\u0627\u062A \u0627\u0644\u0645\u0646\u0634\u0623\u0629 \u0628\u0646\u062C\u0627\u062D." });
+    } catch (err) {
+      return res.status(400).json({ success: false, message: err?.message || "\u0641\u0634\u0644 \u062A\u062D\u062F\u064A\u062B \u0627\u0644\u0625\u0639\u062F\u0627\u062F\u0627\u062A." });
+    }
+  });
+  apiRouter.post("/media/upload", authenticateToken, async (req, res) => {
+    try {
+      const { base64Data, fileName, isPrivate } = req.body;
+      if (!base64Data || !fileName) {
+        return res.status(400).json({ success: false, message: "\u0628\u064A\u0627\u0646\u0627\u062A \u0627\u0644\u0645\u0644\u0641 \u0648\u0627\u0633\u0645 \u0627\u0644\u0645\u0644\u0641 \u0645\u0637\u0644\u0648\u0628\u0627\u0646." });
+      }
+      const safeName = `${Date.now()}_${path2.basename(fileName).replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+      const targetDir = isPrivate ? PRIVATE_DOCS_DIR : UPLOADS_DIR;
+      const targetPath = path2.join(targetDir, safeName);
+      const cleanBase64 = base64Data.replace(/^data:[^;]+;base64,/, "");
+      const buffer = Buffer.from(cleanBase64, "base64");
+      if (buffer.length > 15 * 1024 * 1024) {
+        return res.status(400).json({ success: false, message: "\u062D\u062C\u0645 \u0627\u0644\u0645\u0644\u0641 \u064A\u062A\u062C\u0627\u0648\u0632 \u0627\u0644\u062D\u062F \u0627\u0644\u0645\u0633\u0645\u0648\u062D (15 \u0645\u064A\u063A\u0627\u0628\u0627\u064A\u062A)." });
+      }
+      fs.writeFileSync(targetPath, buffer);
+      const publicUrl = isPrivate ? `/api/documents/private/${safeName}` : `/uploads/${safeName}`;
+      return res.json({
+        success: true,
+        url: publicUrl,
+        fileName: safeName,
+        message: "\u062A\u0645 \u0631\u0641\u0639 \u0648\u062A\u0623\u0645\u064A\u0646 \u0627\u0644\u0645\u0644\u0641 \u0628\u0646\u062C\u0627\u062D."
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, message: err?.message || "\u0641\u0634\u0644 \u0631\u0641\u0639 \u0627\u0644\u0645\u0644\u0641." });
+    }
   });
   apiRouter.get("/state", authenticateToken, async (req, res) => {
     const user = req.user;
@@ -1512,40 +2387,64 @@ async function startServer(customPort) {
   apiRouter.get("/financials/statement/:id", authenticateToken, async (req, res) => {
     try {
       const { id } = req.params;
+      const user = req.user;
       if (process.env.DATABASE_URL) {
-        const lease = await prisma.lease.findFirst({
+        const lease2 = await prisma.lease.findFirst({
           where: { OR: [{ id }, { contractNumber: id }, { unitId: id }] },
-          include: { unit: true, installments: true, payments: true, securityDeposits: true }
+          include: {
+            unit: { include: { property: true } },
+            installments: { orderBy: { number: "asc" } },
+            payments: { orderBy: { paidAt: "desc" } },
+            securityDeposits: true
+          }
         });
-        if (lease) {
-          const totalRent = Number(lease.annualRent);
-          const totalPaid = lease.payments.reduce((sum, p) => sum + Number(p.amount), 0);
-          const totalDeposit = lease.securityDeposits.reduce((sum, d) => sum + Number(d.amount), 0);
-          return res.json({
-            success: true,
-            statement: {
-              contractNumber: lease.contractNumber,
-              tenantName: lease.tenantName,
-              unitNumber: lease.unit?.unitNumber,
-              startDate: lease.startDate,
-              endDate: lease.endDate,
-              rentalType: lease.rentalType,
-              totalRent,
-              totalPaid,
-              remainingBalance: Math.max(0, totalRent - totalPaid),
-              securityDeposit: {
-                totalHeld: totalDeposit,
-                status: lease.securityDeposits[0]?.status || "held"
-              },
-              installments: serializeDecimals(lease.installments),
-              payments: serializeDecimals(lease.payments)
-            }
+        if (!lease2) {
+          return res.status(404).json({ success: false, message: "\u0644\u0645 \u064A\u062A\u0645 \u0627\u0644\u0639\u062B\u0648\u0631 \u0639\u0644\u0649 \u0639\u0642\u062F \u0623\u0648 \u0643\u0634\u0641 \u062D\u0633\u0627\u0628 \u0644\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0627\u0644\u0645\u062D\u062F\u062F\u0629." });
+        }
+        const isSuperAdmin = user.role === "SUPER_ADMIN";
+        const isPropertyAllowed = Array.isArray(user.allowedProperties) && (user.allowedProperties.includes("all") || user.allowedProperties.includes(lease2.unit?.propertyId));
+        const isTenantOwner = user.role === "TENANT" && (user.email === lease2.tenantEmail || user.userId === lease2.tenantIdNumber);
+        if (!isSuperAdmin && !isPropertyAllowed && !isTenantOwner) {
+          return res.status(403).json({
+            success: false,
+            code: "FORBIDDEN",
+            message: "\u063A\u064A\u0631 \u0645\u0635\u0631\u062D \u0644\u0643 \u0628\u0639\u0631\u0636 \u0643\u0634\u0641 \u0627\u0644\u062D\u0633\u0627\u0628 \u0627\u0644\u0645\u0627\u0644\u064A \u0644\u0647\u0630\u0627 \u0627\u0644\u0639\u0642\u062F."
           });
         }
+        const totalRent = Number(lease2.annualRent);
+        const totalPaid = lease2.payments.reduce((sum, p) => sum + Number(p.amount), 0);
+        const totalDeposit = lease2.securityDeposits.reduce((sum, d) => sum + Number(d.amount), 0);
+        return res.json({
+          success: true,
+          statement: {
+            contractNumber: lease2.contractNumber,
+            tenantName: lease2.tenantName,
+            tenantPhone: lease2.tenantPhone,
+            tenantEmail: lease2.tenantEmail,
+            unitNumber: lease2.unit?.unitNumber,
+            propertyName: lease2.unit?.property?.name,
+            startDate: lease2.startDate,
+            endDate: lease2.endDate,
+            rentalType: lease2.rentalType,
+            totalRent,
+            totalPaid,
+            remainingBalance: Math.max(0, totalRent - totalPaid),
+            securityDeposit: {
+              totalHeld: totalDeposit,
+              status: lease2.securityDeposits[0]?.status || "held"
+            },
+            installments: serializeDecimals(lease2.installments),
+            payments: serializeDecimals(lease2.payments)
+          }
+        });
       }
-      return res.status(404).json({ success: false, message: "\u0644\u0645 \u064A\u062A\u0645 \u0627\u0644\u0639\u062B\u0648\u0631 \u0639\u0644\u0649 \u0639\u0642\u062F \u0623\u0648 \u0643\u0634\u0641 \u062D\u0633\u0627\u0628 \u0644\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0627\u0644\u0645\u062D\u062F\u062F\u0629." });
+      const lease = (memoryState?.leases || []).find((l) => l.id === id || l.contractNumber === id || l.unitId === id);
+      if (!lease) {
+        return res.status(404).json({ success: false, message: "\u0644\u0645 \u064A\u062A\u0645 \u0627\u0644\u0639\u062B\u0648\u0631 \u0639\u0644\u0649 \u0639\u0642\u062F \u0623\u0648 \u0643\u0634\u0641 \u062D\u0633\u0627\u0628 \u0644\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0627\u0644\u0645\u062D\u062F\u062F\u0629." });
+      }
+      return res.json({ success: true, statement: lease });
     } catch (err) {
-      return res.status(500).json({ success: false, message: err.message });
+      return res.status(500).json({ success: false, message: err.message || "\u0641\u0634\u0644 \u062A\u0648\u0644\u064A\u062F \u0643\u0634\u0641 \u0627\u0644\u062D\u0633\u0627\u0628." });
     }
   });
   apiRouter.post("/admin/import-data", authenticateToken, requireRoles(["SUPER_ADMIN"]), async (req, res) => {
@@ -1554,11 +2453,11 @@ async function startServer(customPort) {
     if (!dataToImport || typeof dataToImport !== "object") {
       return res.status(400).json({ success: false, message: "\u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0627\u0644\u0645\u0631\u0627\u062F \u0627\u0633\u062A\u064A\u0631\u0627\u062F\u0647\u0627 \u063A\u064A\u0631 \u0635\u0627\u0644\u062D\u0629." });
     }
-    const properties = dataToImport.properties || [];
-    const units = dataToImport.units || [];
-    const bookings = dataToImport.bookings || [];
-    const leases = dataToImport.leases || [];
-    const expenses = dataToImport.expenses || [];
+    const properties = Array.isArray(dataToImport.properties) ? dataToImport.properties : [];
+    const units = Array.isArray(dataToImport.units) ? dataToImport.units : [];
+    const bookings = Array.isArray(dataToImport.bookings) ? dataToImport.bookings : [];
+    const leases = Array.isArray(dataToImport.leases) ? dataToImport.leases : [];
+    const expenses = Array.isArray(dataToImport.expenses) ? dataToImport.expenses : [];
     const previewSummary = {
       properties: { total: properties.length, newRecords: properties.length, duplicatesSkipped: 0 },
       units: { total: units.length, newRecords: units.length, duplicatesSkipped: 0 },
@@ -1575,24 +2474,42 @@ async function startServer(customPort) {
       });
     }
     if (mode === "commit") {
-      await recordAuditLogInDb({
-        userId: req.user?.userId,
-        userName: req.user?.username || "\u0627\u0644\u0645\u0633\u0624\u0648\u0644",
-        action: "\u0627\u0633\u062A\u064A\u0631\u0627\u062F \u0628\u064A\u0627\u0646\u0627\u062A \u0645\u0646\u0636\u0628\u0637",
-        module: "\u0625\u062F\u0627\u0631\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0648\u0627\u0644\u062A\u0631\u062D\u064A\u0644",
-        details: `\u0627\u0633\u062A\u064A\u0631\u0627\u062F ${properties.length} \u0645\u0628\u0627\u0646\u064A \u0648 ${units.length} \u0648\u062D\u062F\u0627\u062A \u0648 ${bookings.length} \u062D\u062C\u0648\u0632\u0627\u062A.`
-      });
-      return res.json({
-        success: true,
-        mode: "commit",
-        message: "\u062A\u0645 \u0627\u0639\u062A\u0645\u0627\u062F \u0648\u0627\u0633\u062A\u064A\u0631\u0627\u062F \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0628\u0646\u062C\u0627\u062D \u0641\u064A \u0642\u0627\u0639\u062F\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A.",
-        imported: previewSummary
-      });
+      try {
+        let importedStats = null;
+        if (process.env.DATABASE_URL) {
+          importedStats = await importDataIntoDb(dataToImport);
+        } else {
+          memoryState = {
+            ...memoryState,
+            ...dataToImport
+          };
+          importedStats = previewSummary;
+        }
+        await recordAuditLogInDb({
+          userId: req.user?.userId,
+          userName: req.user?.username || "\u0627\u0644\u0645\u0633\u0624\u0648\u0644",
+          action: "\u0627\u0633\u062A\u064A\u0631\u0627\u062F \u0628\u064A\u0627\u0646\u0627\u062A \u0645\u0646\u0636\u0628\u0637",
+          module: "\u0625\u062F\u0627\u0631\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0648\u0627\u0644\u062A\u0631\u062D\u064A\u0644",
+          details: `\u0627\u0633\u062A\u064A\u0631\u0627\u062F \u0648\u0627\u0639\u062A\u0645\u0627\u062F \u0628\u064A\u0627\u0646\u0627\u062A \u062A\u0634\u063A\u064A\u0644\u064A\u0629 \u062C\u062F\u064A\u062F\u0629 \u0641\u064A \u0642\u0627\u0639\u062F\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A.`
+        });
+        return res.json({
+          success: true,
+          mode: "commit",
+          message: "\u062A\u0645 \u0627\u0639\u062A\u0645\u0627\u062F \u0648\u0627\u0633\u062A\u064A\u0631\u0627\u062F \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0628\u0646\u062C\u0627\u062D \u0641\u064A \u0642\u0627\u0639\u062F\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A.",
+          imported: importedStats
+        });
+      } catch (importErr) {
+        return res.status(500).json({ success: false, message: `\u0641\u0634\u0644 \u0627\u0633\u062A\u064A\u0631\u0627\u062F \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A: ${importErr.message}` });
+      }
     }
     return res.status(400).json({ success: false, message: "\u0648\u0636\u0639 \u0627\u0644\u0627\u0633\u062A\u064A\u0631\u0627\u062F \u064A\u062C\u0628 \u0623\u0646 \u064A\u0643\u0648\u0646 preview \u0623\u0648 commit." });
   });
   apiRouter.get("/documents/private/:docName", authenticateToken, (req, res) => {
-    const docPath = path2.join(PRIVATE_DOCS_DIR, path2.basename(req.params.docName));
+    const safeDocName = path2.basename(req.params.docName);
+    const docPath = path2.join(PRIVATE_DOCS_DIR, safeDocName);
+    if (!docPath.startsWith(PRIVATE_DOCS_DIR)) {
+      return res.status(403).json({ success: false, message: "\u0645\u0633\u0627\u0631 \u0645\u0633\u062A\u0646\u062F \u063A\u064A\u0631 \u0645\u0635\u0631\u062D \u0628\u0647." });
+    }
     if (!fs.existsSync(docPath)) {
       return res.status(404).json({ success: false, message: "\u0627\u0644\u0645\u0633\u062A\u0646\u062F \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
     }
@@ -1602,18 +2519,11 @@ async function startServer(customPort) {
     const backupFileName = `backup_${Date.now()}.json`;
     const backupFilePath = path2.join(BACKUP_DIR, backupFileName);
     try {
-      let stateToExport = memoryState;
+      let stateToExport = null;
       if (process.env.DATABASE_URL) {
-        const [settings, properties, units, bookings, leases, expenses, auditLogs] = await Promise.all([
-          getCompanySettingsFromDb(),
-          getPropertiesFromDb(["all"]),
-          getUnitsFromDb(["all"]),
-          getBookingsFromDb(["all"]),
-          getLeasesFromDb(["all"]),
-          getExpensesFromDb(["all"]),
-          getAuditLogsFromDb(500)
-        ]);
-        stateToExport = { settings, properties, units, bookings, leases, expenses, auditLogs };
+        stateToExport = await exportFullDatabase();
+      } else {
+        stateToExport = memoryState;
       }
       fs.writeFileSync(backupFilePath, JSON.stringify(stateToExport, null, 2), "utf-8");
       await recordAuditLogInDb({
@@ -1630,33 +2540,39 @@ async function startServer(customPort) {
         timestamp: (/* @__PURE__ */ new Date()).toISOString()
       });
     } catch (e) {
-      res.status(500).json({ success: false, message: "\u0641\u0634\u0644 \u0625\u0646\u0634\u0627\u0621 \u0645\u0644\u0641 \u0627\u0644\u0646\u0633\u062E\u0629 \u0627\u0644\u0627\u062D\u062A\u064A\u0627\u0637\u064A\u0629." });
+      res.status(500).json({ success: false, message: `\u0641\u0634\u0644 \u0625\u0646\u0634\u0627\u0621 \u0645\u0644\u0641 \u0627\u0644\u0646\u0633\u062E\u0629 \u0627\u0644\u0627\u062D\u062A\u064A\u0627\u0637\u064A\u0629: ${e?.message}` });
     }
   });
   apiRouter.post("/backup/restore", authenticateToken, requireRoles(["SUPER_ADMIN"]), async (req, res) => {
     const { backupFileName } = req.body;
     if (!backupFileName) return res.status(400).json({ success: false, message: "\u0627\u0633\u0645 \u0645\u0644\u0641 \u0627\u0644\u0646\u0633\u062E\u0629 \u0627\u0644\u0627\u062D\u062A\u064A\u0627\u0637\u064A\u0629 \u0645\u0637\u0644\u0648\u0628." });
-    const backupFilePath = path2.join(BACKUP_DIR, backupFileName);
-    if (!fs.existsSync(backupFilePath)) {
+    const safeFileName = path2.basename(backupFileName);
+    const backupFilePath = path2.join(BACKUP_DIR, safeFileName);
+    if (!backupFilePath.startsWith(BACKUP_DIR) || !fs.existsSync(backupFilePath)) {
       return res.status(404).json({ success: false, message: "\u0645\u0644\u0641 \u0627\u0644\u0646\u0633\u062E\u0629 \u0627\u0644\u0627\u062D\u062A\u064A\u0627\u0637\u064A\u0629 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F." });
     }
     try {
       const data = fs.readFileSync(backupFilePath, "utf-8");
       const restored = JSON.parse(data);
+      if (process.env.DATABASE_URL) {
+        await importDataIntoDb(restored);
+      } else {
+        memoryState = restored;
+      }
       await recordAuditLogInDb({
         userId: req.user?.userId,
         userName: req.user?.username || "\u0627\u0644\u0645\u0633\u0624\u0648\u0644",
         action: "\u0627\u0633\u062A\u0639\u0627\u062F\u0629 \u0646\u0633\u062E\u0629 \u0627\u062D\u062A\u064A\u0627\u0637\u064A\u0629",
         module: "\u0627\u0644\u0646\u0633\u062E \u0627\u0644\u0627\u062D\u062A\u064A\u0627\u0637\u064A",
-        details: `\u0627\u0633\u062A\u0639\u0627\u062F\u0629 \u062D\u0627\u0644\u0629 \u0627\u0644\u0646\u0638\u0627\u0645 \u0645\u0646 \u0627\u0644\u0645\u0644\u0641: ${backupFileName}`
+        details: `\u0627\u0633\u062A\u0639\u0627\u062F\u0629 \u062D\u0627\u0644\u0629 \u0627\u0644\u0646\u0638\u0627\u0645 \u0645\u0646 \u0627\u0644\u0645\u0644\u0641: ${safeFileName}`
       });
       res.json({
         success: true,
-        message: "\u062A\u0645\u062A \u0627\u0633\u062A\u0639\u0627\u062F\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0628\u0646\u062C\u0627\u062D.",
+        message: "\u062A\u0645\u062A \u0627\u0633\u062A\u0639\u0627\u062F\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0628\u0646\u062C\u0627\u062D \u0645\u0646 \u0627\u0644\u0646\u0633\u062E\u0629 \u0627\u0644\u0627\u062D\u062A\u064A\u0627\u0637\u064A\u0629 \u0625\u0644\u0649 \u0642\u0627\u0639\u062F\u0629 \u0627\u0644\u0628\u064A\u0627\u0646\u0627\u062A.",
         timestamp: (/* @__PURE__ */ new Date()).toISOString()
       });
     } catch (e) {
-      res.status(500).json({ success: false, message: "\u0641\u0634\u0644 \u0642\u0631\u0627\u0621\u0629 \u0648\u0627\u0633\u062A\u0639\u0627\u062F\u0629 \u0645\u0644\u0641 \u0627\u0644\u0646\u0633\u062E\u0629 \u0627\u0644\u0627\u062D\u062A\u064A\u0627\u0637\u064A\u0629." });
+      res.status(500).json({ success: false, message: `\u0641\u0634\u0644 \u0642\u0631\u0627\u0621\u0629 \u0648\u0627\u0633\u062A\u0639\u0627\u062F\u0629 \u0645\u0644\u0641 \u0627\u0644\u0646\u0633\u062E\u0629 \u0627\u0644\u0627\u062D\u062A\u064A\u0627\u0637\u064A\u0629: ${e?.message}` });
     }
   });
   app.use("/api", apiRouter);

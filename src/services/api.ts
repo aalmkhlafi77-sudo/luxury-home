@@ -106,7 +106,7 @@ export const authService = {
     return res;
   },
 
-  async registerAdmin(data: { username: string; password: string; name?: string; email?: string }) {
+  async registerAdmin(data: { username: string; password: string; name?: string; email?: string; setupSecret?: string }) {
     const res = await apiFetch('/api/auth/register-admin', {
       method: 'POST',
       body: JSON.stringify(data)
@@ -134,6 +134,74 @@ export const authService = {
   }
 };
 
+// Properties Service
+export const propertyService = {
+  async getProperties() {
+    return apiFetch('/api/properties');
+  },
+  async createProperty(data: any) {
+    return apiFetch('/api/properties', { method: 'POST', body: JSON.stringify(data) });
+  },
+  async updateProperty(id: string, data: any) {
+    return apiFetch(`/api/properties/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+  },
+  async deleteProperty(id: string) {
+    return apiFetch(`/api/properties/${id}`, { method: 'DELETE' });
+  }
+};
+
+// Units Service
+export const unitService = {
+  async getUnits() {
+    return apiFetch('/api/units');
+  },
+  async createUnit(data: any) {
+    return apiFetch('/api/units', { method: 'POST', body: JSON.stringify(data) });
+  },
+  async updateUnit(id: string, data: any) {
+    return apiFetch(`/api/units/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+  },
+  async deleteUnit(id: string) {
+    return apiFetch(`/api/units/${id}`, { method: 'DELETE' });
+  }
+};
+
+// Expenses Service
+export const expenseService = {
+  async getExpenses() {
+    return apiFetch('/api/expenses');
+  },
+  async createExpense(data: any) {
+    return apiFetch('/api/expenses', { method: 'POST', body: JSON.stringify(data) });
+  },
+  async updateExpense(id: string, data: any) {
+    return apiFetch(`/api/expenses/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+  },
+  async deleteExpense(id: string) {
+    return apiFetch(`/api/expenses/${id}`, { method: 'DELETE' });
+  }
+};
+
+// Settings Service
+export const settingsService = {
+  async getPublicSettings() {
+    return apiFetch('/api/public/settings');
+  },
+  async updateSettings(data: any) {
+    return apiFetch('/api/settings', { method: 'PUT', body: JSON.stringify(data) });
+  }
+};
+
+// Media Service
+export const mediaService = {
+  async uploadFile(base64Data: string, fileName: string, isPrivate: boolean = false) {
+    return apiFetch('/api/media/upload', {
+      method: 'POST',
+      body: JSON.stringify({ base64Data, fileName, isPrivate })
+    });
+  }
+};
+
 // Booking & Lease Service
 export const bookingService = {
   async createDailyBooking(payload: any) {
@@ -155,19 +223,41 @@ export const bookingService = {
       method: 'POST',
       body: JSON.stringify(payload)
     });
+  },
+
+  async getStatement(id: string) {
+    return apiFetch(`/api/financials/statement/${id}`);
   }
 };
 
-// State Synchronization Service
+// State Service
 export const stateService = {
   async fetchServerState() {
     return apiFetch('/api/state');
-  },
+  }
+};
 
-  async pushServerState(state: any) {
-    return apiFetch('/api/state/sync', {
+// Admin Import & Backup Service
+export const adminService = {
+  async previewImport(payload: any) {
+    return apiFetch('/api/admin/import-data', {
       method: 'POST',
-      body: JSON.stringify(state)
+      body: JSON.stringify({ mode: 'preview', payload })
+    });
+  },
+  async commitImport(payload: any) {
+    return apiFetch('/api/admin/import-data', {
+      method: 'POST',
+      body: JSON.stringify({ mode: 'commit', payload })
+    });
+  },
+  async exportBackup() {
+    return apiFetch('/api/backup/export', { method: 'POST' });
+  },
+  async restoreBackup(backupFileName: string) {
+    return apiFetch('/api/backup/restore', {
+      method: 'POST',
+      body: JSON.stringify({ backupFileName })
     });
   }
 };
