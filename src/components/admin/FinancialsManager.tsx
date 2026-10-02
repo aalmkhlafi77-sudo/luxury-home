@@ -67,9 +67,12 @@ export const FinancialsManager: React.FC = () => {
       alert('يوجد عملية معلّقة لتأمين آخر. يرجى إكمالها أو حلها أولاً.');
       return;
     }
-    setDeductAmount('');
-    setDeductReason('');
-    setDeductReference('');
+    // Only reset fields if there is no pending operation for this deposit!
+    if (!pendingOperation.current) {
+      setDeductAmount('');
+      setDeductReason('');
+      setDeductReference('');
+    }
     setErrorMsg(null);
     setSuccessMsg(null);
     setDeductModalDepositId(depositId);
@@ -129,11 +132,14 @@ export const FinancialsManager: React.FC = () => {
         throw new Error('فشل في الاتصال بالخادم. يرجى المحاولة مرة أخرى لإرسال نفس مفتاح العملية بأمان.');
       }
 
-      if (response.status >= 400 && response.status < 500) {
-        isConfirmedRejection = true;
-      }
-
       const result = await response.json().catch(() => null);
+
+      if (response.status >= 400 && response.status < 500) {
+        // Only treat as confirmed rejection if the response contains a JSON body with success indicator
+        if (result && typeof result === 'object' && ('success' in result || 'message' in result)) {
+          isConfirmedRejection = true;
+        }
+      }
 
       if (!response.ok || result?.success !== true) {
         throw new Error(result?.message ?? `خطأ من الخادم (رمز الحالة: ${response.status})`);
@@ -141,12 +147,12 @@ export const FinancialsManager: React.FC = () => {
 
       pendingOperation.current = null;
       setDeductModalDepositId(null);
-      setSuccessMsg('تم تسجيل العملية في الخادم وتحديث البيانات المعتمدة.');
+      setSuccessMsg('تم تسجيل وتوثيق العملية في الخادم بنجاح.');
 
       try {
         await loadAuthoritativeServerState(true);
       } catch (stateErr) {
-        console.error('فشل تحديث الشاشة بعد نجاح العملية المالية:', stateErr);
+        setSuccessMsg('تهانينا، تم تسجيل وحفظ العملية المالية بنجاح في الخادم، ولكن تعذر تحديث قائمة البيانات المعروضة حالياً بسبب فشل شبكة مؤقت. يرجى تحديث الصفحة يدوياً لاحقاً.');
       }
     } catch (error) {
       if (isConfirmedRejection) {
@@ -539,59 +545,126 @@ export const FinancialsManager: React.FC = () => {
             <h4 className="font-bold text-sm text-[#282824]">
               تسجيل اقتطاع تلف من وديعة التأمين ({selectedDeposit.guestName})
             </h4>
-            <form onSubmit={handleDeductSubmit} className="space-y-3">
-              <div>
-                <label className="block text-[#68675F] font-semibold mb-1">المبلغ المراد اقتطاعه (ر.س) *</label>
-                <input
-                  type="number"
-                  required
-                  min="0.01"
-                  step="0.01"
-                  max={selectedDeposit.amount}
-                  value={deductAmount}
-                  onChange={(e) => setDeductAmount(e.target.value)}
-                  className="w-full p-2.5 bg-white border border-[#E3DCCD] rounded-xl font-bold tabular-nums text-left focus:outline-none"
-                  placeholder="0.00"
-                />
+            {pendingOperation.current ? (
+              <div className="space-y-4">
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-2xl space-y-2 text-right">
+                  <p className="font-bold text-amber-900 text-xs flex items-center gap-1.5">
+                    <AlertCircle className="w-4.5 h-4.5 text-amber-600 shrink-0" />
+                    <span>تنبيه: توجد محاولة معلّقة سابقة لم يتم تأكيد نجاحها!</span>
+                  </p>
+                  <div className="text-[11px] text-[#68675F] space-y-1 bg-white p-3 rounded-xl border border-[#E3DCCD]">
+                    <div><strong>مبلغ الاقتطاع المطلوب:</strong> {pendingOperation.current.payload.deductedAmount} ر.س</div>
+                    <div><strong>مبرر الاقتطاع:</strong> {pendingOperation.current.payload.deductionReason}</div>
+                    <div><strong>المرجع المالي:</strong> {pendingOperation.current.payload.refundReference}</div>
+                    <div className="font-mono text-[9px] text-gray-500 mt-1 border-t border-gray-100 pt-1">
+                      <strong>مفتاح المحاولة:</strong> {pendingOperation.current.key}
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-amber-800">
+                    يمكنك إعادة إرسال هذه المحاولة مجدداً بنفس المفتاح والبيانات لتأمين سلامتها المالية، أو إلغاؤها نهائياً للبدء ببيانات جديدة.
+                  </p>
+                </div>
+                <div className="flex flex-col gap-2 pt-2 border-t border-[#E3DCCD]/60">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (pendingOperation.current) {
+                        await submitDepositOp({
+                          depositId: pendingOperation.current.depositId,
+                          refundAmount: pendingOperation.current.payload.refundAmount,
+                          deductedAmount: pendingOperation.current.payload.deductedAmount,
+                          deductionReason: pendingOperation.current.payload.deductionReason,
+                          refundMethod: pendingOperation.current.payload.refundMethod,
+                          refundReference: pendingOperation.current.payload.refundReference,
+                          refundType: pendingOperation.current.payload.refundType,
+                        });
+                      }
+                    }}
+                    disabled={saving}
+                    className="w-full py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold cursor-pointer text-center text-xs"
+                  >
+                    {saving ? 'جاري إعادة الإرسال...' : 'إرسال المحاولة المعلقة مجدداً بنفس المفتاح'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (confirm('تحذير: إلغاء المحاولة المعلّقة قد يؤدي إلى تكرار الخصم إذا كان الخادم قد نفذها وتأخر الاتصال. هل تريد المتابعة والإلغاء؟')) {
+                        pendingOperation.current = null;
+                        setErrorMsg(null);
+                        setSuccessMsg(null);
+                        setDeductAmount('');
+                        setDeductReason('');
+                        setDeductReference('');
+                      }
+                    }}
+                    className="w-full py-2 border border-[#E3DCCD] bg-white text-gray-700 hover:bg-gray-50 rounded-xl font-semibold cursor-pointer text-center text-xs"
+                  >
+                    إلغاء المحاولة والبدء من جديد ببيانات مختلفة
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDeductModalDepositId(null)}
+                    className="w-full py-1.5 text-center text-[#68675F] hover:text-[#282824] font-medium text-xs cursor-pointer"
+                  >
+                    إغلاق النافذة مؤقتاً
+                  </button>
+                </div>
               </div>
-              <div>
-                <label className="block text-[#68675F] font-semibold mb-1">وصف مبرر اقتطاع التلفيات الموثقة *</label>
-                <textarea
-                  rows={2}
-                  required
-                  value={deductReason}
-                  onChange={(e) => setDeductReason(e.target.value)}
-                  className="w-full p-2.5 bg-white border border-[#E3DCCD] rounded-xl text-right focus:outline-none focus:border-[#B69A68]"
-                  placeholder="أدخل مبرر الاقتطاع بالتفصيل..."
-                />
-              </div>
-              <div>
-                <label className="block text-[#68675F] font-semibold mb-1">مرجع إثبات الصرف أو مستند الخصم *</label>
-                <input
-                  type="text"
-                  required
-                  value={deductReference}
-                  onChange={(e) => setDeductReference(e.target.value)}
-                  className="w-full p-2.5 bg-white border border-[#E3DCCD] rounded-xl text-right focus:outline-none focus:border-[#B69A68]"
-                  placeholder="مثال: DOC-DAMAGE-101"
-                />
-              </div>
-              <div className="flex justify-end gap-2 pt-2 border-t border-[#E3DCCD]/60">
-                <button
-                  type="button"
-                  onClick={() => setDeductModalDepositId(null)}
-                  className="px-3 py-1.5 border border-[#E3DCCD] rounded-xl cursor-pointer"
-                >
-                  إلغاء التراجع
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-1.5 bg-rose-700 hover:bg-rose-800 text-white rounded-xl font-bold cursor-pointer"
-                >
-                  تطبيق الاقتطاع المالي
-                </button>
-              </div>
-            </form>
+            ) : (
+              <form onSubmit={handleDeductSubmit} className="space-y-3">
+                <div>
+                  <label className="block text-[#68675F] font-semibold mb-1">المبلغ المراد اقتطاعه (ر.س) *</label>
+                  <input
+                    type="number"
+                    required
+                    min="0.01"
+                    step="0.01"
+                    max={selectedDeposit.amount}
+                    value={deductAmount}
+                    onChange={(e) => setDeductAmount(e.target.value)}
+                    className="w-full p-2.5 bg-white border border-[#E3DCCD] rounded-xl font-bold tabular-nums text-left focus:outline-none"
+                    placeholder="0.00"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[#68675F] font-semibold mb-1">وصف مبرر اقتطاع التلفيات الموثقة *</label>
+                  <textarea
+                    rows={2}
+                    required
+                    value={deductReason}
+                    onChange={(e) => setDeductReason(e.target.value)}
+                    className="w-full p-2.5 bg-white border border-[#E3DCCD] rounded-xl text-right focus:outline-none focus:border-[#B69A68]"
+                    placeholder="أدخل مبرر الاقتطاع بالتفصيل..."
+                  />
+                </div>
+                <div>
+                  <label className="block text-[#68675F] font-semibold mb-1">مرجع إثبات الصرف أو مستند الخصم *</label>
+                  <input
+                    type="text"
+                    required
+                    value={deductReference}
+                    onChange={(e) => setDeductReference(e.target.value)}
+                    className="w-full p-2.5 bg-white border border-[#E3DCCD] rounded-xl text-right focus:outline-none focus:border-[#B69A68]"
+                    placeholder="مثال: DOC-DAMAGE-101"
+                  />
+                </div>
+                <div className="flex justify-end gap-2 pt-2 border-t border-[#E3DCCD]/60">
+                  <button
+                    type="button"
+                    onClick={() => setDeductModalDepositId(null)}
+                    className="px-3 py-1.5 border border-[#E3DCCD] rounded-xl cursor-pointer"
+                  >
+                    إلغاء التراجع
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-1.5 bg-rose-700 hover:bg-rose-800 text-white rounded-xl font-bold cursor-pointer"
+                  >
+                    تطبيق الاقتطاع المالي
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}

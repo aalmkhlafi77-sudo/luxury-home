@@ -156,9 +156,9 @@ async function initializeFallbackState() {
       return true;
     }).map((sd: any) => ({
       ...sd,
-      collectedAmount: sd.collectedAmount !== undefined ? sd.collectedAmount : (sd.amount ?? 0),
-      collectionReference: sd.collectionReference || 'BANK-REC-INIT-01',
-      collectionVerifiedAt: sd.collectionVerifiedAt || new Date().toISOString(),
+      collectedAmount: sd.collectedAmount ?? 0,
+      collectionReference: sd.collectionReference ?? null,
+      collectionVerifiedAt: sd.collectionVerifiedAt ?? null,
       refundedAmount: sd.refundedAmount ?? 0,
       deductedAmount: sd.deductedAmount ?? 0,
     }));
@@ -1803,9 +1803,9 @@ export async function startServer(customPort?: number) {
         id: `sd_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
         bookingId: newBooking.id,
         amount: 1000,
-        collectedAmount: 1000,
-        collectionReference: `BANK-REC-${Date.now().toString().slice(-6)}`,
-        collectionVerifiedAt: new Date().toISOString(),
+        collectedAmount: 0,
+        collectionReference: null,
+        collectionVerifiedAt: null,
         status: 'held',
         refundedAmount: 0,
         deductedAmount: 0,

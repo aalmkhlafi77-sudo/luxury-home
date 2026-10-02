@@ -1738,13 +1738,7 @@ export function useAppStore() {
   /**
    * Security deposit actions: deduct or refund
    */
-  const processDepositDeduction = useCallback((_depositId: string, _amount: number, _reason: string, _approvedBy: string) => {
-    // Local mutations removed. Deposit deductions must be executed via server API with strict verification.
-  }, []);
 
-  const refundSecurityDeposit = useCallback((_depositId: string, _refundAmount: number) => {
-    // Local mutations removed. Deposit refunds must be executed via server API with strict verification.
-  }, []);
 
   /**
    * Log guest view of smart lock PIN (Audit compliance requirement)
@@ -3646,8 +3640,6 @@ export function useAppStore() {
     reportMaintenanceTask,
     resolveMaintenanceTask,
     blockUnitPeriod,
-    processDepositDeduction,
-    refundSecurityDeposit,
     logSmartLockPinView,
     updateCompanySettings,
     updateContentSections,
