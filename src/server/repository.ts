@@ -12,6 +12,7 @@ import {
 } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from './db.js';
+import crypto from 'crypto';
 
 // Safe serialization helper for Decimals & Dates in JSON API responses
 export function serializeDecimals<T>(obj: T): T {
@@ -476,9 +477,47 @@ export async function createBatchUnitsInDb(params: {
   floorId: string;
   units: any[];
   idempotencyKey?: string;
+  userId?: string;
 }) {
   if (!process.env.DATABASE_URL) return null;
-  const { propertyId, floorId, units } = params;
+  const { propertyId, floorId, units, idempotencyKey, userId } = params;
+
+  // Calculate payload fingerprint hash for idempotency verification
+  const normalizedPayload = JSON.stringify({
+    propertyId,
+    floorId,
+    units: units.map(u => ({
+      unitNumber: String(u.unitNumber).trim(),
+      type: u.type,
+      areaSqm: Number(u.areaSqm ?? 0),
+      dailyRate: Number(u.dailyRate ?? 0),
+      monthlyRate: Number(u.monthlyRate ?? 0),
+      annualRate: Number(u.annualRate ?? u.yearlyRate ?? 0)
+    }))
+  });
+  const requestHash = crypto.createHash('sha256').update(normalizedPayload).digest('hex');
+
+  // If idempotencyKey provided, check existing record
+  if (idempotencyKey) {
+    const existingRecord = await prisma.idempotencyRecord.findUnique({
+      where: {
+        key_operationType: {
+          key: idempotencyKey,
+          operationType: 'batch_units_create'
+        }
+      }
+    });
+
+    if (existingRecord) {
+      if (existingRecord.requestHash === requestHash) {
+        return existingRecord.responseBody as any[];
+      } else {
+        const err: any = new Error('تعارض مفتاح منع التكرار: تم استخدام نفس المفتاح مع بيانات حمولة مختلفة.');
+        err.statusCode = 409;
+        throw err;
+      }
+    }
+  }
 
   // 1. Verify Property
   const property = await prisma.property.findUnique({ where: { id: propertyId } });
@@ -509,11 +548,28 @@ export async function createBatchUnitsInDb(params: {
 
   if (existing.length > 0) {
     const duplicateList = existing.map(u => u.unitNumber).join(', ');
-    throw new Error(`تعذر إنشاء المجموعة لوجود وحدات مسجلة سلفاً في المبنى بنفس الأرقام: (${duplicateList}). لم يتم حفظ أي وحدة.`);
+    const err: any = new Error(`تعذر إنشاء المجموعة لوجود وحدات مسجلة سلفاً في المبنى بنفس الأرقام: (${duplicateList}). لم يتم حفظ أي وحدة.`);
+    err.statusCode = 409;
+    throw err;
   }
 
   // 5. Execute transactional batch insertion
   const createdUnits = await prisma.$transaction(async (tx) => {
+    // If concurrent request race condition occurred with the same idempotency key
+    if (idempotencyKey) {
+      const concurrentRecord = await tx.idempotencyRecord.findUnique({
+        where: {
+          key_operationType: {
+            key: idempotencyKey,
+            operationType: 'batch_units_create'
+          }
+        }
+      });
+      if (concurrentRecord) {
+        return concurrentRecord.responseBody as any[];
+      }
+    }
+
     const results = [];
     for (const u of units) {
       const created = await tx.unit.create({
@@ -569,10 +625,25 @@ export async function createBatchUnitsInDb(params: {
       data: { unitsCount: { increment: units.length } }
     });
 
-    return results;
+    const serializedResults = serializeDecimals(results);
+
+    if (idempotencyKey) {
+      await tx.idempotencyRecord.create({
+        data: {
+          key: idempotencyKey,
+          operationType: 'batch_units_create',
+          userId: userId || null,
+          requestHash,
+          statusCode: 200,
+          responseBody: serializedResults as any
+        }
+      });
+    }
+
+    return serializedResults;
   });
 
-  return serializeDecimals(createdUnits);
+  return createdUnits;
 }
 
 export async function deleteUnitInDb(id: string) {
@@ -1063,9 +1134,40 @@ export async function importDataIntoDb(payload: any) {
   return results;
 }
 
+export async function saveDocumentRecordInDb(data: {
+  fileName: string;
+  originalName: string;
+  fileSize: number;
+  mimeType?: string | null;
+  isPrivate: boolean;
+  ownerUserId?: string | null;
+  propertyId?: string | null;
+  unitId?: string | null;
+  bookingId?: string | null;
+  leaseId?: string | null;
+  notes?: string | null;
+}) {
+  if (!process.env.DATABASE_URL) return null;
+  const doc = await prisma.documentRecord.upsert({
+    where: { fileName: data.fileName },
+    update: data,
+    create: data
+  });
+  return serializeDecimals(doc);
+}
+
+export async function getDocumentRecordFromDb(fileName: string) {
+  if (!process.env.DATABASE_URL) return null;
+  const doc = await prisma.documentRecord.findUnique({
+    where: { fileName }
+  });
+  return serializeDecimals(doc);
+}
+
 export async function exportFullDatabase() {
   if (!process.env.DATABASE_URL) return null;
   const [
+    users,
     settings,
     properties,
     floors,
@@ -1080,8 +1182,16 @@ export async function exportFullDatabase() {
     securityDeposits,
     expenses,
     expenseAllocations,
+    expensePayments,
+    expenseCategories,
+    recurringSchedules,
+    tenantAdjustments,
+    contentSections,
+    documentRecords,
+    idempotencyRecords,
     auditLogs
   ] = await Promise.all([
+    prisma.user.findMany(),
     prisma.companySettings.findUnique({ where: { id: 'default' } }),
     prisma.property.findMany(),
     prisma.floor.findMany(),
@@ -1096,7 +1206,14 @@ export async function exportFullDatabase() {
     prisma.securityDepositRecord.findMany(),
     prisma.operationalExpense.findMany(),
     prisma.expenseAllocation.findMany(),
-    prisma.auditLog.findMany({ take: 500, orderBy: { createdAt: 'desc' } })
+    prisma.expensePaymentEntry.findMany(),
+    prisma.expenseCategoryConfig.findMany(),
+    prisma.recurringExpenseSchedule.findMany(),
+    prisma.tenantAdjustment.findMany(),
+    prisma.contentSection.findMany(),
+    prisma.documentRecord.findMany(),
+    prisma.idempotencyRecord.findMany(),
+    prisma.auditLog.findMany({ orderBy: { createdAt: 'desc' } }) // Complete audit logs (no take limit)
   ]);
 
   return serializeDecimals({
@@ -1105,6 +1222,7 @@ export async function exportFullDatabase() {
       version: '2.0.0',
       schema: 'PostgreSQL-LuxuryHome'
     },
+    users,
     settings,
     properties,
     floors,
@@ -1119,6 +1237,394 @@ export async function exportFullDatabase() {
     securityDeposits,
     expenses,
     expenseAllocations,
+    expensePayments,
+    expenseCategories,
+    recurringSchedules,
+    tenantAdjustments,
+    contentSections,
+    documentRecords,
+    idempotencyRecords,
     auditLogs
+  });
+}
+
+export async function restoreFullDatabaseInDb(backupData: any) {
+  if (!process.env.DATABASE_URL) return null;
+  if (!backupData || typeof backupData !== 'object') {
+    throw new Error('بيانات النسخة الاحتياطية غير صالحة.');
+  }
+
+  return await prisma.$transaction(async (tx) => {
+    // 1. Clean existing records in reverse dependency order
+    await tx.idempotencyRecord.deleteMany();
+    await tx.documentRecord.deleteMany();
+    await tx.expensePaymentEntry.deleteMany();
+    await tx.expenseAllocation.deleteMany();
+    await tx.operationalExpense.deleteMany();
+    await tx.recurringExpenseSchedule.deleteMany();
+    await tx.expenseCategoryConfig.deleteMany();
+    await tx.tenantAdjustment.deleteMany();
+    await tx.paymentRecord.deleteMany();
+    await tx.securityDepositRecord.deleteMany();
+    await tx.leaseInstallment.deleteMany();
+    await tx.lease.deleteMany();
+    await tx.booking.deleteMany();
+    await tx.unitAllocation.deleteMany();
+    await tx.parkingSpot.deleteMany();
+    await tx.unit.deleteMany();
+    await tx.floor.deleteMany();
+    await tx.property.deleteMany();
+    await tx.amenity.deleteMany();
+    await tx.contentSection.deleteMany();
+    await tx.auditLog.deleteMany();
+    if (Array.isArray(backupData.users) && backupData.users.length > 0) {
+      await tx.user.deleteMany();
+    }
+
+    // 2. Restore in dependency order
+    // Users
+    if (Array.isArray(backupData.users)) {
+      for (const u of backupData.users) {
+        await tx.user.create({
+          data: {
+            id: u.id,
+            username: u.username,
+            email: u.email,
+            passwordHash: u.passwordHash,
+            name: u.name,
+            phone: u.phone || null,
+            role: u.role as any,
+            allowedProperties: Array.isArray(u.allowedProperties) ? u.allowedProperties : ['all'],
+            isActive: u.isActive !== false,
+            createdAt: u.createdAt ? new Date(u.createdAt) : new Date()
+          }
+        });
+      }
+    }
+
+    // Settings
+    if (backupData.settings) {
+      const s = backupData.settings;
+      await tx.companySettings.upsert({
+        where: { id: s.id || 'default' },
+        update: {
+          companyName: s.companyName,
+          companyNameEn: s.companyNameEn,
+          tagline: s.tagline,
+          logoUrl: s.logoUrl,
+          phone: s.phone,
+          whatsapp: s.whatsapp,
+          email: s.email,
+          crNumber: s.crNumber,
+          taxNumber: s.taxNumber,
+          nationalAddress: s.nationalAddress,
+          checkInTime: s.checkInTime,
+          checkOutTime: s.checkOutTime,
+          navigation: s.navigation || null,
+          themeConfig: s.themeConfig || null
+        },
+        create: {
+          id: s.id || 'default',
+          companyName: s.companyName || 'Luxury Home',
+          companyNameEn: s.companyNameEn || 'Luxury Home',
+          tagline: s.tagline || '',
+          logoUrl: s.logoUrl,
+          phone: s.phone || '',
+          whatsapp: s.whatsapp || '',
+          email: s.email || '',
+          crNumber: s.crNumber || '',
+          taxNumber: s.taxNumber || '',
+          nationalAddress: s.nationalAddress || '',
+          checkInTime: s.checkInTime || '15:00',
+          checkOutTime: s.checkOutTime || '12:00',
+          navigation: s.navigation || null,
+          themeConfig: s.themeConfig || null
+        }
+      });
+    }
+
+    // Properties
+    if (Array.isArray(backupData.properties)) {
+      for (const p of backupData.properties) {
+        await tx.property.create({
+          data: {
+            id: p.id,
+            name: p.name,
+            code: p.code,
+            address: p.address,
+            city: p.city || 'الرياض',
+            district: p.district,
+            floorsCount: p.floorsCount || 1,
+            unitsCount: p.unitsCount || 0,
+            totalAreaSqm: Number(p.totalAreaSqm || 0),
+            rooftopPayment: new Decimal(p.rooftopPayment || 0),
+            description: p.description || null,
+            images: Array.isArray(p.images) ? p.images : [],
+            isActive: p.isActive !== false,
+            createdAt: p.createdAt ? new Date(p.createdAt) : new Date()
+          }
+        });
+      }
+    }
+
+    // Floors
+    if (Array.isArray(backupData.floors)) {
+      for (const f of backupData.floors) {
+        await tx.floor.create({
+          data: {
+            id: f.id,
+            propertyId: f.propertyId,
+            number: f.number ?? f.floorNumber ?? 1,
+            name: f.name || `الطابق ${f.number || 1}`
+          }
+        });
+      }
+    }
+
+    // Units
+    if (Array.isArray(backupData.units)) {
+      for (const u of backupData.units) {
+        await tx.unit.create({
+          data: {
+            id: u.id,
+            propertyId: u.propertyId,
+            floorId: u.floorId || null,
+            unitNumber: String(u.unitNumber).trim(),
+            title: u.title || '',
+            titleEn: u.titleEn || '',
+            type: u.type || 'apartment',
+            areaSqm: Number(u.areaSqm || 0),
+            floorNumber: Number(u.floorNumber || 1),
+            maxGuests: Number(u.maxGuests || 3),
+            bedroomsCount: Number(u.bedroomsCount || 1),
+            bathroomsCount: Number(u.bathroomsCount || 1),
+            bedsCount: Number(u.bedsCount || 1),
+            furnishingStatus: u.furnishingStatus || 'furnished',
+            allowDaily: u.allowDaily !== false,
+            dailyRate: new Decimal(u.dailyRate || 0),
+            dailySecurityDeposit: new Decimal(u.dailySecurityDeposit || 0),
+            allowMonthly: u.allowMonthly !== false,
+            monthlyRate: new Decimal(u.monthlyRate || 0),
+            monthlySecurityDeposit: new Decimal(u.monthlySecurityDeposit || 0),
+            allowYearly: u.allowYearly !== false,
+            annualRate: new Decimal(u.annualRate || u.yearlyRate || 0),
+            yearlySecurityDeposit: new Decimal(u.yearlySecurityDeposit || 0),
+            yearlyPaymentOptions: Array.isArray(u.yearlyPaymentOptions) ? u.yearlyPaymentOptions : ['single_annual', 'semi_annual'],
+            semiAnnualSurchargePercent: new Decimal(u.semiAnnualSurchargePercent || 0),
+            cleaningFee: new Decimal(u.cleaningFee || 0),
+            securityDeposit: new Decimal(u.securityDeposit || 0),
+            taxPercentage: new Decimal(u.taxPercentage || 15),
+            operationalStatus: u.operationalStatus || 'ready',
+            occupancyStatus: u.occupancyStatus || 'vacant',
+            isClean: u.isClean !== false,
+            publicationStatus: u.publicationStatus || 'published',
+            amenities: Array.isArray(u.amenities) ? u.amenities : [],
+            images: Array.isArray(u.images) ? u.images : [],
+            media: u.media || null,
+            spaces: u.spaces || null,
+            fittings: u.fittings || null,
+            floorPlanUrl: u.floorPlanUrl || null,
+            assignedParkingId: u.assignedParkingId || null,
+            notes: u.notes || null,
+            smartLockPin: u.smartLockPin || null,
+            createdAt: u.createdAt ? new Date(u.createdAt) : new Date()
+          }
+        });
+      }
+    }
+
+    // Allocations
+    if (Array.isArray(backupData.allocations)) {
+      for (const a of backupData.allocations) {
+        await tx.unitAllocation.create({
+          data: {
+            id: a.id,
+            unitId: a.unitId,
+            startDate: new Date(a.startDate),
+            endDate: new Date(a.endDate),
+            rentalType: (a.rentalType || 'daily').toUpperCase() as any,
+            referenceId: a.referenceId || null,
+            purpose: a.purpose || 'booking',
+            status: a.status || 'active',
+            notes: a.notes || null,
+            createdAt: a.createdAt ? new Date(a.createdAt) : new Date()
+          }
+        });
+      }
+    }
+
+    // Bookings
+    if (Array.isArray(backupData.bookings)) {
+      for (const b of backupData.bookings) {
+        await tx.booking.create({
+          data: {
+            id: b.id,
+            bookingNumber: b.bookingNumber || b.id,
+            idempotencyKey: b.idempotencyKey || null,
+            unitId: b.unitId,
+            guestName: b.guestName || 'نزيل',
+            guestPhone: b.guestPhone || '+966500000000',
+            guestEmail: b.guestEmail || null,
+            guestIdNumber: b.guestIdNumber || null,
+            userId: b.userId || null,
+            startDate: new Date(b.startDate || b.checkIn),
+            endDate: new Date(b.endDate || b.checkOut),
+            rentalType: (b.rentalType || 'daily').toUpperCase() as any,
+            totalNights: Number(b.totalNights || 1),
+            guestsCount: Number(b.guestsCount || 1),
+            nightlyRate: new Decimal(b.nightlyRate || 0),
+            subtotal: new Decimal(b.subtotal || 0),
+            cleaningFee: new Decimal(b.cleaningFee || 0),
+            taxes: new Decimal(b.taxes || 0),
+            securityDeposit: new Decimal(b.securityDeposit || 0),
+            totalAmount: new Decimal(b.totalAmount || 0),
+            paidAmount: new Decimal(b.paidAmount || 0),
+            status: (b.status || 'confirmed').toUpperCase() as any,
+            paymentStatus: b.paymentStatus || 'pending',
+            identityStatus: b.identityStatus || 'verified',
+            smartLockPin: b.smartLockPin || null,
+            notes: b.notes || null,
+            createdAt: b.createdAt ? new Date(b.createdAt) : new Date()
+          }
+        });
+      }
+    }
+
+    // Leases
+    if (Array.isArray(backupData.leases)) {
+      for (const l of backupData.leases) {
+        await tx.lease.create({
+          data: {
+            id: l.id,
+            contractNumber: l.contractNumber || l.id,
+            idempotencyKey: l.idempotencyKey || null,
+            unitId: l.unitId,
+            tenantName: l.tenantName || 'مستأجر',
+            tenantPhone: l.tenantPhone || '+966500000000',
+            tenantEmail: l.tenantEmail || null,
+            tenantIdNumber: l.tenantIdNumber || '1000000000',
+            startDate: new Date(l.startDate),
+            endDate: new Date(l.endDate),
+            rentalType: (l.rentalType || 'annual').toUpperCase() as any,
+            annualRent: new Decimal(l.annualRent || 0),
+            paymentOption: l.paymentOption || '1_payment',
+            paymentFrequency: l.paymentFrequency || '1_payment',
+            installmentsCount: Number(l.installmentsCount || 1),
+            securityDeposit: new Decimal(l.securityDeposit || 0),
+            contractServices: l.contractServices || null,
+            includedAmenities: Array.isArray(l.includedAmenities) ? l.includedAmenities : [],
+            termsConditions: l.termsConditions || null,
+            status: (l.status || 'active').toUpperCase() as any,
+            pdfUrl: l.pdfUrl || null,
+            createdAt: l.createdAt ? new Date(l.createdAt) : new Date()
+          }
+        });
+      }
+    }
+
+    // Security Deposits
+    if (Array.isArray(backupData.securityDeposits)) {
+      for (const sd of backupData.securityDeposits) {
+        await tx.securityDepositRecord.create({
+          data: {
+            id: sd.id,
+            leaseId: sd.leaseId || null,
+            bookingId: sd.bookingId || null,
+            amount: new Decimal(sd.amount || 0),
+            status: sd.status || 'held',
+            deductedAmount: new Decimal(sd.deductedAmount || 0),
+            refundedAmount: new Decimal(sd.refundedAmount || 0),
+            deductionReason: sd.deductionReason || null,
+            refundMethod: sd.refundMethod || null,
+            refundReference: sd.refundReference || null,
+            refundType: sd.refundType || null,
+            refundedByUserId: sd.refundedByUserId || null,
+            refundedAt: sd.refundedAt ? new Date(sd.refundedAt) : null,
+            notes: sd.notes || null,
+            createdAt: sd.createdAt ? new Date(sd.createdAt) : new Date()
+          }
+        });
+      }
+    }
+
+    // Expenses
+    if (Array.isArray(backupData.expenses)) {
+      for (const exp of backupData.expenses) {
+        await tx.operationalExpense.create({
+          data: {
+            id: exp.id,
+            expenseNumber: exp.expenseNumber || exp.id,
+            title: exp.title || 'مصروف',
+            amount: new Decimal(exp.amount || 0),
+            costCenterLevel: (exp.costCenterLevel || 'PROPERTY').toUpperCase() as any,
+            propertyId: exp.propertyId || null,
+            unitId: exp.unitId || null,
+            categoryCode: (exp.categoryCode || 'OPERATIONS_OTHER') as any,
+            subcategory: exp.subcategory || null,
+            expenseDate: exp.expenseDate ? new Date(exp.expenseDate) : new Date(),
+            startDate: exp.startDate ? new Date(exp.startDate) : new Date(),
+            endDate: exp.endDate ? new Date(exp.endDate) : new Date(),
+            temporalType: (exp.temporalType || 'NONE').toUpperCase() as any,
+            allocationMethod: (exp.allocationMethod || 'EQUAL_UNITS').toUpperCase() as any,
+            status: exp.status || 'approved',
+            isCapitalAsset: Boolean(exp.isCapitalAsset),
+            notes: exp.notes || null,
+            createdById: exp.createdById || null,
+            createdAt: exp.createdAt ? new Date(exp.createdAt) : new Date()
+          }
+        });
+      }
+    }
+
+    // Document Records
+    if (Array.isArray(backupData.documentRecords)) {
+      for (const d of backupData.documentRecords) {
+        await tx.documentRecord.create({
+          data: {
+            id: d.id,
+            fileName: d.fileName,
+            originalName: d.originalName || d.fileName,
+            fileSize: Number(d.fileSize || 0),
+            mimeType: d.mimeType || null,
+            isPrivate: d.isPrivate !== false,
+            ownerUserId: d.ownerUserId || null,
+            propertyId: d.propertyId || null,
+            unitId: d.unitId || null,
+            bookingId: d.bookingId || null,
+            leaseId: d.leaseId || null,
+            notes: d.notes || null,
+            createdAt: d.createdAt ? new Date(d.createdAt) : new Date()
+          }
+        });
+      }
+    }
+
+    // Audit Logs
+    if (Array.isArray(backupData.auditLogs)) {
+      for (const a of backupData.auditLogs) {
+        await tx.auditLog.create({
+          data: {
+            id: a.id,
+            userId: a.userId || null,
+            userName: a.userName || 'المستخدم',
+            action: a.action || 'إجراء',
+            module: a.module || 'عام',
+            details: a.details || '',
+            ipAddress: a.ipAddress || null,
+            createdAt: a.createdAt ? new Date(a.createdAt) : new Date()
+          }
+        });
+      }
+    }
+
+    return {
+      usersRestored: backupData.users?.length || 0,
+      propertiesRestored: backupData.properties?.length || 0,
+      unitsRestored: backupData.units?.length || 0,
+      bookingsRestored: backupData.bookings?.length || 0,
+      leasesRestored: backupData.leases?.length || 0,
+      expensesRestored: backupData.expenses?.length || 0,
+      auditLogsRestored: backupData.auditLogs?.length || 0
+    };
   });
 }

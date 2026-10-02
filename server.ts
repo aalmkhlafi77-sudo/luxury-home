@@ -19,6 +19,7 @@ import {
   checkDatabaseHealth,
   hasSuperAdminInDb
 } from './src/server/db.js';
+import crypto from 'crypto';
 import {
   serializeDecimals,
   getCompanySettingsFromDb,
@@ -44,13 +45,17 @@ import {
   getAuditLogsFromDb,
   recordAuditLogInDb,
   importDataIntoDb,
-  exportFullDatabase
+  exportFullDatabase,
+  restoreFullDatabaseInDb,
+  saveDocumentRecordInDb,
+  getDocumentRecordFromDb
 } from './src/server/repository.js';
 import {
   processDailyReservation,
   processLeaseContract,
   checkUnitConflict,
-  cancelBooking
+  cancelBooking,
+  processSecurityDepositRefund
 } from './src/server/reservationService.js';
 import {
   computeCostAllocation
@@ -322,14 +327,15 @@ export async function startServer(customPort?: number) {
               throw err;
             }
 
+            const assignedRole = req.body.role || (hasAdmin ? 'PROPERTY_MANAGER' : 'SUPER_ADMIN');
             const newAdmin = await tx.user.create({
               data: {
                 username,
                 email: email || `${username}@luxuryhome.sa`,
                 passwordHash: hashedPassword,
                 name: name || username,
-                role: 'SUPER_ADMIN',
-                allowedProperties: allowedProperties || ['all'],
+                role: assignedRole as any,
+                allowedProperties: Array.isArray(allowedProperties) ? allowedProperties : ['all'],
                 isActive: true
               }
             });
@@ -352,7 +358,7 @@ export async function startServer(customPort?: number) {
             userName: result.username,
             action: 'إنشاء مسؤول نظام',
             module: 'الأمان والمسؤولين',
-            details: `تم إنشاء الحساب الإداري (${result.username}) وإغلاق مسار التهيئة.`,
+            details: `تم إنشاء الحساب الإداري (${result.username}) بصلاحية ${result.role}.`,
             ipAddress: req.ip
           });
 
@@ -365,14 +371,15 @@ export async function startServer(customPort?: number) {
         }
 
         // Fallback memory state
+        const assignedRole = req.body.role || (hasAdmin ? 'PROPERTY_MANAGER' : 'SUPER_ADMIN');
         const newAdmin = {
           id: `usr_${Date.now()}`,
           username,
           email: email || `${username}@luxuryhome.sa`,
           passwordHash: hashedPassword,
           name: name || username,
-          role: 'SUPER_ADMIN',
-          allowedProperties: allowedProperties || ['all'],
+          role: assignedRole,
+          allowedProperties: Array.isArray(allowedProperties) ? allowedProperties : ['all'],
           isActive: true,
           createdAt: new Date().toISOString()
         };
@@ -959,7 +966,8 @@ export async function startServer(customPort?: number) {
           propertyId,
           floorId,
           units,
-          idempotencyKey
+          idempotencyKey,
+          userId: user.userId
         });
 
         await recordAuditLogInDb({
@@ -993,19 +1001,41 @@ export async function startServer(customPort?: number) {
         return res.status(400).json({ success: false, message: 'الطابق المحدد لا ينتمي إلى هذا المبنى.' });
       }
 
-      // Idempotency check in fallback
+      // Idempotency check in fallback with content fingerprint
+      const normalizedPayload = JSON.stringify({
+        propertyId,
+        floorId,
+        units: units.map(u => ({
+          unitNumber: String(u.unitNumber).trim(),
+          type: u.type,
+          areaSqm: Number(u.areaSqm ?? 0),
+          dailyRate: Number(u.dailyRate ?? 0),
+          monthlyRate: Number(u.monthlyRate ?? 0),
+          annualRate: Number(u.annualRate ?? u.yearlyRate ?? 0)
+        }))
+      });
+      const requestHash = crypto.createHash('sha256').update(normalizedPayload).digest('hex');
+
       if (idempotencyKey) {
-        if (!memoryState.processedBatchKeys) memoryState.processedBatchKeys = [];
-        if (memoryState.processedBatchKeys.includes(idempotencyKey)) {
-          const existingBatch = (memoryState?.units || []).filter(
-            (u: any) => u.propertyId === propertyId && unitNumbers.includes(String(u.unitNumber).trim())
-          );
-          return res.json({
-            success: true,
-            count: existingBatch.length,
-            units: existingBatch,
-            message: 'تم استرجاع المجموعة المنفذة مسبقاً (Idempotent).'
-          });
+        if (!memoryState.idempotencyRecords) memoryState.idempotencyRecords = [];
+        const existingRecord = memoryState.idempotencyRecords.find(
+          (r: any) => r.key === idempotencyKey && r.operationType === 'batch_units_create'
+        );
+
+        if (existingRecord) {
+          if (existingRecord.requestHash === requestHash) {
+            return res.json({
+              success: true,
+              count: existingRecord.responseBody.length,
+              units: existingRecord.responseBody,
+              message: 'تم استرجاع المجموعة المنفذة مسبقاً (Idempotent).'
+            });
+          } else {
+            return res.status(409).json({
+              success: false,
+              message: 'تعارض مفتاح منع التكرار: تم استخدام نفس المفتاح مع بيانات حمولة مختلفة.'
+            });
+          }
         }
       }
 
@@ -1081,6 +1111,17 @@ export async function startServer(customPort?: number) {
       if (idempotencyKey) {
         if (!memoryState.processedBatchKeys) memoryState.processedBatchKeys = [];
         memoryState.processedBatchKeys.push(idempotencyKey);
+        if (!memoryState.idempotencyRecords) memoryState.idempotencyRecords = [];
+        memoryState.idempotencyRecords.push({
+          id: `idem_${Date.now()}`,
+          key: idempotencyKey,
+          operationType: 'batch_units_create',
+          userId: user.userId,
+          requestHash,
+          statusCode: 200,
+          responseBody: createdBatch,
+          createdAt: now
+        });
       }
 
       persistFallbackState();
@@ -1303,20 +1344,40 @@ export async function startServer(customPort?: number) {
       const { id } = req.params;
       const user = req.user!;
 
-      // Property Manager Scoping for Expense
+      // Fetch real expense from DB or fallback first
+      let realExpense: any = null;
+      if (process.env.DATABASE_URL) {
+        realExpense = await prisma.operationalExpense.findUnique({ where: { id } });
+      } else {
+        realExpense = (memoryState?.expenses || []).find((e: any) => e.id === id);
+      }
+
+      if (!realExpense) {
+        return res.status(404).json({ success: false, message: 'المصروف غير موجود.' });
+      }
+
+      // Strict Property Manager Scoping based on REAL entity in DB
       if (user.role === 'PROPERTY_MANAGER') {
-        let expPropId = req.body.propertyId;
-        if (!expPropId) {
-          if (process.env.DATABASE_URL) {
-            const existingExp = await prisma.operationalExpense.findUnique({ where: { id } });
-            expPropId = existingExp?.propertyId;
-          } else {
-            const existingExp = (memoryState?.expenses || []).find((e: any) => e.id === id);
-            expPropId = existingExp?.propertyId;
-          }
+        if (!realExpense.propertyId) {
+          return res.status(403).json({
+            success: false,
+            message: 'غير مصرح لمدير العقار بتعديل مصاريف عامة على مستوى الشركة.'
+          });
         }
-        if (expPropId && !user.allowedProperties?.includes(expPropId)) {
-          return res.status(403).json({ success: false, message: 'غير مصرح لك بتعديل مصاريف هذا العقار.' });
+        if (!user.allowedProperties?.includes(realExpense.propertyId)) {
+          return res.status(403).json({
+            success: false,
+            message: 'غير مصرح لك بتعديل مصاريف هذا العقار.'
+          });
+        }
+        // If attempting to transfer to another property, check destination permissions
+        if (req.body.propertyId && req.body.propertyId !== realExpense.propertyId) {
+          if (!user.allowedProperties?.includes(req.body.propertyId)) {
+            return res.status(403).json({
+              success: false,
+              message: 'غير مصرح لك بنقل المصروف إلى هذا العقار الهدف.'
+            });
+          }
         }
       }
 
@@ -1351,17 +1412,30 @@ export async function startServer(customPort?: number) {
       const { id } = req.params;
       const user = req.user!;
 
+      // Fetch real expense from DB or fallback first
+      let realExpense: any = null;
+      if (process.env.DATABASE_URL) {
+        realExpense = await prisma.operationalExpense.findUnique({ where: { id } });
+      } else {
+        realExpense = (memoryState?.expenses || []).find((e: any) => e.id === id);
+      }
+
+      if (!realExpense) {
+        return res.status(404).json({ success: false, message: 'المصروف غير موجود.' });
+      }
+
       if (user.role === 'PROPERTY_MANAGER') {
-        let expPropId: string | null = null;
-        if (process.env.DATABASE_URL) {
-          const existingExp = await prisma.operationalExpense.findUnique({ where: { id } });
-          expPropId = existingExp?.propertyId || null;
-        } else {
-          const existingExp = (memoryState?.expenses || []).find((e: any) => e.id === id);
-          expPropId = existingExp?.propertyId || null;
+        if (!realExpense.propertyId) {
+          return res.status(403).json({
+            success: false,
+            message: 'غير مصرح لمدير العقار بحذف مصاريف عامة على مستوى الشركة.'
+          });
         }
-        if (expPropId && !user.allowedProperties?.includes(expPropId)) {
-          return res.status(403).json({ success: false, message: 'غير مصرح لك بحذف مصاريف هذا العقار.' });
+        if (!user.allowedProperties?.includes(realExpense.propertyId)) {
+          return res.status(403).json({
+            success: false,
+            message: 'غير مصرح لك بحذف مصاريف هذا العقار.'
+          });
         }
       }
 
@@ -1415,9 +1489,16 @@ export async function startServer(customPort?: number) {
   // Media & Documents Upload API
   apiRouter.post('/media/upload', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const { base64Data, fileName, isPrivate } = req.body;
+      const { base64Data, fileName, isPrivate, propertyId } = req.body;
       if (!base64Data || !fileName) {
         return res.status(400).json({ success: false, message: 'بيانات الملف واسم الملف مطلوبان.' });
+      }
+
+      const user = req.user!;
+      if (isPrivate && propertyId && user.role === 'PROPERTY_MANAGER') {
+        if (!user.allowedProperties?.includes(propertyId)) {
+          return res.status(403).json({ success: false, message: 'غير مصرح لك برفع مستندات خاصة لهذا العقار.' });
+        }
       }
 
       const safeName = `${Date.now()}_${path.basename(fileName).replace(/[^a-zA-Z0-9._-]/g, '_')}`;
@@ -1434,11 +1515,28 @@ export async function startServer(customPort?: number) {
       fs.writeFileSync(targetPath, buffer);
 
       if (isPrivate) {
+        if (process.env.DATABASE_URL) {
+          await saveDocumentRecordInDb({
+            fileName: safeName,
+            originalName: fileName,
+            fileSize: buffer.length,
+            mimeType: req.body.mimeType || null,
+            isPrivate: true,
+            ownerUserId: user.userId,
+            propertyId: propertyId || null,
+            unitId: req.body.unitId || null,
+            bookingId: req.body.bookingId || null,
+            leaseId: req.body.leaseId || null,
+            notes: req.body.notes || null
+          });
+        }
         if (!memoryState.privateDocs) memoryState.privateDocs = [];
         memoryState.privateDocs.push({
           fileName: safeName,
-          ownerUserId: req.user?.userId,
-          propertyId: req.body.propertyId || null,
+          originalName: fileName,
+          fileSize: buffer.length,
+          ownerUserId: user.userId,
+          propertyId: propertyId || null,
           createdAt: new Date().toISOString()
         });
         persistFallbackState();
@@ -1654,36 +1752,122 @@ export async function startServer(customPort?: number) {
     }
   });
 
-  // Booking Cancellation Endpoint
+  // Booking Cancellation Endpoint with Strict Multi-Tenant RBAC & Security Validation
   apiRouter.post('/bookings/:id/cancel', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { id } = req.params;
       const user = req.user!;
 
+      // 1. Fetch real booking and associated unit/property from DB or memory
+      let bookingRecord: any = null;
+      let unitPropertyId: string | null = null;
+
+      if (process.env.DATABASE_URL) {
+        bookingRecord = await prisma.booking.findUnique({
+          where: { id },
+          include: { unit: true }
+        });
+        if (bookingRecord?.unit) {
+          unitPropertyId = bookingRecord.unit.propertyId;
+        }
+      } else {
+        bookingRecord = (memoryState?.bookings || []).find((b: any) => b.id === id);
+        if (bookingRecord) {
+          const unit = (memoryState?.units || []).find((u: any) => u.id === bookingRecord.unitId);
+          unitPropertyId = unit?.propertyId || null;
+        }
+      }
+
+      if (!bookingRecord) {
+        return res.status(404).json({ success: false, message: 'الحجز المطلوب إلغاؤه غير موجود.' });
+      }
+
+      // 2. Strict Role & Property Authorization Verification (Never trust client body)
+      if (user.role === 'SUPER_ADMIN') {
+        // Super Admin is always authorized
+      } else if (user.role === 'PROPERTY_MANAGER') {
+        if (!unitPropertyId || !user.allowedProperties?.includes(unitPropertyId)) {
+          return res.status(403).json({
+            success: false,
+            code: 'FORBIDDEN_PROPERTY_ACCESS',
+            message: 'غير مصرح لمدير العقار بإلغاء حجز يتبع مبنى خارج نطاق صلاحياته المعتمدة.'
+          });
+        }
+      } else if (user.role === 'TENANT') {
+        const isOwner = (bookingRecord.userId && bookingRecord.userId === user.userId) ||
+                        (bookingRecord.guestEmail && bookingRecord.guestEmail === user.email) ||
+                        (bookingRecord.guestPhone && bookingRecord.guestPhone === user.phone);
+        if (!isOwner) {
+          return res.status(403).json({
+            success: false,
+            code: 'FORBIDDEN_TENANT_ACCESS',
+            message: 'غير مصرح للمستأجر بإلغاء حجز يخص عميلاً آخر.'
+          });
+        }
+
+        // Validate cancellation policy for tenant (e.g. cannot cancel occupied or past check-in)
+        const checkInTime = new Date(bookingRecord.startDate || bookingRecord.checkIn).getTime();
+        if (Date.now() >= checkInTime) {
+          return res.status(400).json({
+            success: false,
+            message: 'لا يمكن للمستأجر إلغاء الحجز ذاتياً بعد حلول موعد أو بدء فترة الإشغال.'
+          });
+        }
+      } else {
+        return res.status(403).json({
+          success: false,
+          code: 'ROLE_NOT_AUTHORIZED',
+          message: 'ليس لديك الصلاحية لإلغاء الحجوزات في النظام.'
+        });
+      }
+
+      // 3. State machine validation & Idempotency
+      const currentStatus = String(bookingRecord.status).toLowerCase();
+      if (currentStatus === 'cancelled') {
+        return res.json({
+          success: true,
+          booking: bookingRecord,
+          alreadyCancelled: true,
+          message: 'هذا الحجز ملغى بالفعل ومحرر سلفاً.'
+        });
+      }
+
+      if (currentStatus === 'checked_in' || currentStatus === 'checked_out') {
+        return res.status(400).json({
+          success: false,
+          message: 'لا يمكن إلغاء حجز بدأ إشغاله أو مكتمل بالفعل.'
+        });
+      }
+
+      // 4. Execute atomic cancellation & allocation release
       if (process.env.DATABASE_URL) {
         const cancelled = await cancelBooking(id);
         await recordAuditLogInDb({
           userId: user.userId,
-          userName: user.username || 'المسؤول',
-          action: 'إلغاء حجز',
+          userName: `${user.username || 'المستخدم'} (${user.role})`,
+          action: 'إلغاء حجز معتمد',
           module: 'إدارة الحجوزات',
-          details: `إلغاء الحجز رقم ${id} وتحرير الفترة الزمنية للوحدة`,
+          details: `إلغاء الحجز رقم ${id} وتحرير تخصيص الوحدة ونقل التأمين إلى حالة بانتظار الاسترداد`,
           ipAddress: req.ip
         });
         return res.json({ success: true, booking: cancelled, message: 'تم إلغاء الحجز بنجاح وتحرير الفترة للوحدة.' });
       }
 
-      if (!memoryState.bookings) memoryState.bookings = [];
-      const bk = memoryState.bookings.find((b: any) => b.id === id);
-      if (!bk) {
-        return res.status(404).json({ success: false, message: 'الحجز المطلوب إلغاؤه غير موجود.' });
-      }
-
-      bk.status = 'cancelled';
+      // Fallback in-memory cancellation
+      bookingRecord.status = 'cancelled';
       if (memoryState.allocations) {
         memoryState.allocations.forEach((a: any) => {
-          if (a.referenceId === bk.id || a.referenceId === bk.bookingNumber) {
+          if (a.referenceId === bookingRecord.id || a.referenceId === bookingRecord.bookingNumber) {
             a.status = 'cancelled';
+          }
+        });
+      }
+
+      // Move held deposits to pending_refund in fallback (never auto-refund)
+      if (memoryState.securityDeposits) {
+        memoryState.securityDeposits.forEach((sd: any) => {
+          if (sd.bookingId === bookingRecord.id && sd.status === 'held') {
+            sd.status = 'pending_refund';
           }
         });
       }
@@ -1691,16 +1875,113 @@ export async function startServer(customPort?: number) {
 
       await recordAuditLogInDb({
         userId: user.userId,
-        userName: user.username || 'المسؤول',
-        action: 'إلغاء حجز',
+        userName: `${user.username || 'المستخدم'} (${user.role})`,
+        action: 'إلغاء حجز معتمد',
         module: 'إدارة الحجوزات',
-        details: `إلغاء الحجز رقم ${id} وتحرير الفترة الزمنية للوحدة`,
+        details: `إلغاء الحجز رقم ${id} وتحرير تخصيص الوحدة ونقل التأمين إلى حالة بانتظار الاسترداد`,
         ipAddress: req.ip
       });
 
-      return res.json({ success: true, booking: bk, message: 'تم إلغاء الحجز بنجاح وتحرير الفترة للوحدة.' });
+      return res.json({ success: true, booking: bookingRecord, message: 'تم إلغاء الحجز بنجاح وتحرير الفترة للوحدة.' });
     } catch (err: any) {
       return res.status(400).json({ success: false, message: err?.message || 'فشل إلغاء الحجز.' });
+    }
+  });
+
+  // Security Deposit Processing & Refund Endpoint (Explicit Financial Action)
+  apiRouter.post('/security-deposits/:id/refund', authenticateToken, requireRoles(['SUPER_ADMIN', 'ACCOUNTANT', 'PROPERTY_MANAGER']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { refundAmount, deductedAmount, deductionReason, refundMethod, refundReference, refundType } = req.body;
+      const user = req.user!;
+
+      if (!refundMethod) {
+        return res.status(400).json({ success: false, message: 'طريقة الاسترداد (refundMethod) مطلوبة.' });
+      }
+
+      if (process.env.DATABASE_URL) {
+        const updated = await processSecurityDepositRefund({
+          depositId: id,
+          refundAmount: Number(refundAmount || 0),
+          deductedAmount: Number(deductedAmount || 0),
+          deductionReason,
+          refundMethod,
+          refundReference,
+          refundType: refundType || 'actual_payout',
+          userId: user.userId
+        });
+
+        await recordAuditLogInDb({
+          userId: user.userId,
+          userName: user.username || 'المسؤول المالي',
+          action: 'استرداد تأمين مالي',
+          module: 'الإدارة المالية والتأمينات',
+          details: `معالجة استرداد تأمين بقيمة ${refundAmount || 0} ر.س وخصم ${deductedAmount || 0} ر.س بطريقة ${refundMethod}`,
+          ipAddress: req.ip
+        });
+
+        return res.json({
+          success: true,
+          securityDeposit: updated,
+          message: 'تمت معالجة استرداد التأمين وتحديث الأرصدة وسجل التدقيق بنجاح.'
+        });
+      }
+
+      // Memory fallback processing
+      if (!memoryState.securityDeposits) memoryState.securityDeposits = [];
+      const deposit = memoryState.securityDeposits.find((d: any) => d.id === id);
+      if (!deposit) {
+        return res.status(404).json({ success: false, message: 'سجل التأمين غير موجود.' });
+      }
+
+      const totalDeposit = Number(deposit.amount || 0);
+      const currentRefunded = Number(deposit.refundedAmount || 0);
+      const currentDeducted = Number(deposit.deductedAmount || 0);
+      const availableBalance = Math.max(0, totalDeposit - currentRefunded - currentDeducted);
+
+      const reqRefund = Number(refundAmount || 0);
+      const reqDeduct = Number(deductedAmount || 0);
+
+      if (reqRefund + reqDeduct > availableBalance + 0.001) {
+        return res.status(400).json({
+          success: false,
+          message: `المبلغ المطلوب (${reqRefund + reqDeduct} ر.س) يتجاوز الرصيد المتاح من التأمين (${availableBalance} ر.س).`
+        });
+      }
+
+      deposit.refundedAmount = currentRefunded + reqRefund;
+      deposit.deductedAmount = currentDeducted + reqDeduct;
+      deposit.deductionReason = deductionReason || deposit.deductionReason;
+      deposit.refundMethod = refundMethod;
+      deposit.refundReference = refundReference || `REF-${Date.now().toString().slice(-6)}`;
+      deposit.refundType = refundType || 'actual_payout';
+      deposit.refundedByUserId = user.userId;
+      deposit.refundedAt = new Date().toISOString();
+
+      if (deposit.refundedAmount + deposit.deductedAmount >= totalDeposit - 0.001) {
+        deposit.status = deposit.deductedAmount >= totalDeposit - 0.001 ? 'deducted' : 'refunded';
+      } else {
+        deposit.status = 'partially_refunded';
+      }
+
+      persistFallbackState();
+
+      await recordAuditLogInDb({
+        userId: user.userId,
+        userName: user.username || 'المسؤول المالي',
+        action: 'استرداد تأمين مالي',
+        module: 'الإدارة المالية والتأمينات',
+        details: `معالجة استرداد تأمين بقيمة ${reqRefund} ر.س وخصم ${reqDeduct} ر.س بطريقة ${refundMethod}`,
+        ipAddress: req.ip
+      });
+
+      return res.json({
+        success: true,
+        securityDeposit: deposit,
+        message: 'تمت معالجة استرداد التأمين وتحديث الأرصدة وسجل التدقيق بنجاح.'
+      });
+    } catch (err: any) {
+      return res.status(400).json({ success: false, message: err?.message || 'فشل معالجة استرداد التأمين.' });
     }
   });
 
@@ -1935,7 +2216,7 @@ export async function startServer(customPort?: number) {
   });
 
   // 8. Protected Private Documents Endpoint with Path Traversal Defense & Ownership Verification
-  apiRouter.get('/documents/private/:docName', authenticateToken, (req: AuthenticatedRequest, res: Response) => {
+  apiRouter.get('/documents/private/:docName', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
     const safeDocName = path.basename(req.params.docName);
     const docPath = path.join(PRIVATE_DOCS_DIR, safeDocName);
 
@@ -1950,16 +2231,27 @@ export async function startServer(customPort?: number) {
     // Ownership and RBAC Verification: Super Admins access all; others must own the doc or manage its property
     const user = req.user!;
     if (user.role !== 'SUPER_ADMIN') {
-      const docRecord = (memoryState?.privateDocs || []).find((d: any) => d.fileName === safeDocName);
+      let docRecord: any = null;
+      if (process.env.DATABASE_URL) {
+        docRecord = await getDocumentRecordFromDb(safeDocName);
+      } else {
+        docRecord = (memoryState?.privateDocs || []).find((d: any) => d.fileName === safeDocName);
+      }
+
       if (!docRecord) {
         return res.status(403).json({ success: false, message: 'غير مصرح لك بالوصول لهذا المستند الخاص أو غير مسجل.' });
       }
-      if (docRecord.ownerUserId && docRecord.ownerUserId !== user.userId) {
-        if (user.role === 'PROPERTY_MANAGER') {
-          if (!docRecord.propertyId || !user.allowedProperties?.includes(docRecord.propertyId)) {
-            return res.status(403).json({ success: false, message: 'غير مصرح لك بالوصول لمستندات هذا العقار.' });
-          }
-        } else {
+
+      if (user.role === 'PROPERTY_MANAGER') {
+        if (!docRecord.propertyId || !user.allowedProperties?.includes(docRecord.propertyId)) {
+          return res.status(403).json({ success: false, message: 'غير مصرح لك بالوصول لمستندات هذا العقار.' });
+        }
+      } else if (user.role === 'TENANT') {
+        if (!docRecord.ownerUserId || docRecord.ownerUserId !== user.userId) {
+          return res.status(403).json({ success: false, message: 'غير مصرح لك بالوصول لمستند مستأجر آخر.' });
+        }
+      } else {
+        if (!docRecord.ownerUserId || docRecord.ownerUserId !== user.userId) {
           return res.status(403).json({ success: false, message: 'غير مصرح لك بالوصول لهذا المستند الخاص.' });
         }
       }
@@ -2052,7 +2344,7 @@ export async function startServer(customPort?: number) {
       const restored = parsedPackage.data || parsedPackage;
 
       if (process.env.DATABASE_URL) {
-        await importDataIntoDb(restored);
+        await restoreFullDatabaseInDb(restored);
       } else {
         memoryState = restored;
         persistFallbackState();

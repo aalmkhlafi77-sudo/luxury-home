@@ -27,6 +27,7 @@ export interface TokenPayload {
   userId: string;
   username: string;
   email: string;
+  phone?: string;
   role: 'SUPER_ADMIN' | 'PROPERTY_MANAGER' | 'RECEPTIONIST' | 'HOUSEKEEPING' | 'MAINTENANCE' | 'ACCOUNTANT' | 'TENANT';
   allowedProperties: string[];
 }
@@ -177,8 +178,19 @@ export function checkPropertyAccess(req: AuthenticatedRequest, res: Response, ne
   if (!req.user) return res.status(401).json({ success: false, message: 'مطلوب تسجيل الدخول.' });
   if (req.user.role === 'SUPER_ADMIN') return next();
 
-  const propertyId = req.params.propertyId || req.body.propertyId || req.query.propertyId;
-  if (!propertyId) return next();
+  // Route parameter matching: handles :propertyId or :id on /properties/:id
+  const propertyId = req.params.propertyId || req.params.id || req.body.propertyId || req.query.propertyId;
+  
+  if (!propertyId) {
+    // If no specific property is targeted on a property-scoped route:
+    // Only SUPER_ADMIN and ACCOUNTANT can manage unassigned / company-level scope
+    if (req.user.role === 'ACCOUNTANT') return next();
+    return res.status(403).json({
+      success: false,
+      code: 'PROPERTY_ACCESS_DENIED',
+      message: 'غير مصرح لمدير العقار بالوصول لبيانات عامة خارج نطاق المباني المخصصة له.'
+    });
+  }
 
   const allowed = req.user.allowedProperties || [];
   if (allowed.includes('all') || allowed.includes(String(propertyId))) {

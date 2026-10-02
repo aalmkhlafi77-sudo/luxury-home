@@ -491,9 +491,19 @@ export async function cancelBooking(bookingId: string) {
   if (process.env.DATABASE_URL) {
     return await prisma.$transaction(async (tx) => {
       const booking = await tx.booking.findUnique({
-        where: { id: bookingId }
+        where: { id: bookingId },
+        include: { unit: { include: { property: true } } }
       });
       if (!booking) throw new Error('الحجز المطلوب إلغاؤه غير موجود.');
+
+      // Check state machine rules
+      if (booking.status === BookingStatus.CANCELLED) {
+        return serializeDecimals(booking);
+      }
+
+      if (booking.status === BookingStatus.CHECKED_IN || booking.status === BookingStatus.CHECKED_OUT) {
+        throw new Error('لا يمكن إلغاء حجز بدأ إشغاله أو مكتمل بالفعل.');
+      }
 
       const updated = await tx.booking.update({
         where: { id: bookingId },
@@ -510,10 +520,105 @@ export async function cancelBooking(bookingId: string) {
         data: { status: 'cancelled' }
       });
 
-      // Release any held security deposits
+      // Move held security deposits to explicit 'pending_refund' status (never auto-refunded)
       await tx.securityDepositRecord.updateMany({
         where: { bookingId: booking.id, status: 'held' },
-        data: { status: 'refunded', releasedAt: new Date() }
+        data: { status: 'pending_refund' }
+      });
+
+      return serializeDecimals(updated);
+    });
+  }
+
+  return null;
+}
+
+export async function processSecurityDepositRefund(params: {
+  depositId?: string;
+  bookingId?: string;
+  leaseId?: string;
+  refundAmount?: number;
+  deductedAmount?: number;
+  deductionReason?: string;
+  refundMethod: string; // bank_transfer, gateway_reversal, cash, mada
+  refundReference?: string;
+  refundType?: string; // actual_payout, preauth_release
+  userId?: string;
+}) {
+  const {
+    depositId,
+    bookingId,
+    leaseId,
+    refundAmount = 0,
+    deductedAmount = 0,
+    deductionReason,
+    refundMethod,
+    refundReference,
+    refundType = 'actual_payout',
+    userId
+  } = params;
+
+  if (process.env.DATABASE_URL) {
+    return await prisma.$transaction(async (tx) => {
+      // Find the deposit record
+      let deposit = null;
+      if (depositId) {
+        deposit = await tx.securityDepositRecord.findUnique({ where: { id: depositId } });
+      } else if (bookingId) {
+        deposit = await tx.securityDepositRecord.findFirst({
+          where: { bookingId, status: { in: ['held', 'pending_refund', 'partially_refunded'] } },
+          orderBy: { createdAt: 'desc' }
+        });
+      } else if (leaseId) {
+        deposit = await tx.securityDepositRecord.findFirst({
+          where: { leaseId, status: { in: ['held', 'pending_refund', 'partially_refunded'] } },
+          orderBy: { createdAt: 'desc' }
+        });
+      }
+
+      if (!deposit) {
+        throw new Error('سجل التأمين المطلوب استرداده غير موجود أو لا يتطلب إجراء استرداد.');
+      }
+
+      if (deposit.status === 'refunded' || deposit.status === 'deducted') {
+        throw new Error('تم استرداد أو خصم هذا التأمين بالكامل سلفاً.');
+      }
+
+      const totalDeposit = Number(deposit.amount);
+      const currentRefunded = Number(deposit.refundedAmount || 0);
+      const currentDeducted = Number(deposit.deductedAmount || 0);
+      const availableBalance = Math.max(0, totalDeposit - currentRefunded - currentDeducted);
+
+      const requestedRefund = Number(refundAmount);
+      const newDeduction = Number(deductedAmount);
+
+      if (requestedRefund + newDeduction > availableBalance + 0.001) {
+        throw new Error(`المبلغ المطلوب استرداده وخصمه (${requestedRefund + newDeduction} ر.س) يتجاوز الرصيد المتاح من التأمين (${availableBalance} ر.س).`);
+      }
+
+      const updatedRefundedTotal = currentRefunded + requestedRefund;
+      const updatedDeductedTotal = currentDeducted + newDeduction;
+
+      let newStatus = deposit.status;
+      if (updatedRefundedTotal + updatedDeductedTotal >= totalDeposit - 0.001) {
+        newStatus = updatedDeductedTotal >= totalDeposit - 0.001 ? 'deducted' : 'refunded';
+      } else if (updatedRefundedTotal > 0 || updatedDeductedTotal > 0) {
+        newStatus = 'partially_refunded';
+      }
+
+      const updated = await tx.securityDepositRecord.update({
+        where: { id: deposit.id },
+        data: {
+          status: newStatus,
+          refundedAmount: new Decimal(updatedRefundedTotal),
+          deductedAmount: new Decimal(updatedDeductedTotal),
+          deductionReason: deductionReason || deposit.deductionReason,
+          refundMethod,
+          refundReference: refundReference || `REF-${Date.now().toString().slice(-6)}`,
+          refundType,
+          refundedByUserId: userId || null,
+          refundedAt: new Date()
+        }
       });
 
       return serializeDecimals(updated);

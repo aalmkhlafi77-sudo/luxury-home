@@ -146,6 +146,7 @@ model Property {
   units           Unit[]
   parkingSpots    ParkingSpot[]
   expenses        OperationalExpense[]
+  documents       DocumentRecord[]
 }
 
 model Floor {
@@ -209,6 +210,8 @@ model Unit {
   leases            Lease[]
   expenses          OperationalExpense[]
   expenseShares     ExpenseAllocation[]
+
+  @@unique([propertyId, unitNumber])
 }
 
 model Amenity {
@@ -256,6 +259,7 @@ model Booking {
   guestPhone        String
   guestEmail        String?
   guestIdNumber     String?
+  userId            String?
   startDate         DateTime
   endDate           DateTime
   rentalType        RentalType    @default(DAILY)
@@ -341,17 +345,22 @@ model PaymentRecord {
 }
 
 model SecurityDepositRecord {
-  id              String    @id @default(uuid())
-  leaseId         String?
-  lease           Lease?    @relation(fields: [leaseId], references: [id], onDelete: SetNull)
-  bookingId       String?
-  amount          Decimal   @db.Decimal(12, 2)
-  status          String    // held, refunded, deducted
-  deductedAmount  Decimal   @default(0) @db.Decimal(12, 2)
-  refundedAmount  Decimal   @default(0) @db.Decimal(12, 2)
-  deductionReason String?
-  notes           String?
-  createdAt       DateTime  @default(now())
+  id               String    @id @default(uuid())
+  leaseId          String?
+  lease            Lease?    @relation(fields: [leaseId], references: [id], onDelete: SetNull)
+  bookingId        String?
+  amount           Decimal   @db.Decimal(12, 2)
+  status           String    @default("held") // held, pending_refund, refunded, partially_refunded, deducted
+  deductedAmount   Decimal   @default(0) @db.Decimal(12, 2)
+  refundedAmount   Decimal   @default(0) @db.Decimal(12, 2)
+  deductionReason  String?
+  refundMethod     String?   // bank_transfer, gateway_reversal, cash
+  refundReference  String?
+  refundType       String?   // actual_payout, preauth_release
+  refundedByUserId String?
+  refundedAt       DateTime?
+  notes            String?
+  createdAt        DateTime  @default(now())
 }
 
 model OperationalExpense {
@@ -458,4 +467,38 @@ model AuditLog {
   details   String
   ipAddress String?
   createdAt DateTime @default(now())
+}
+
+model IdempotencyRecord {
+  id            String   @id @default(uuid())
+  key           String
+  operationType String   // batch_units_create, booking_create, refund
+  userId        String?
+  requestHash   String   // SHA-256 fingerprint
+  statusCode    Int      @default(200)
+  responseBody  Json
+  createdAt     DateTime @default(now())
+
+  @@unique([key, operationType])
+  @@index([key, operationType, userId])
+}
+
+model DocumentRecord {
+  id           String    @id @default(uuid())
+  fileName     String    @unique
+  originalName String
+  fileSize     Int       @default(0)
+  mimeType     String?
+  isPrivate    Boolean   @default(true)
+  ownerUserId  String?
+  propertyId   String?
+  property     Property? @relation(fields: [propertyId], references: [id], onDelete: SetNull)
+  unitId       String?
+  bookingId    String?
+  leaseId      String?
+  notes        String?
+  createdAt    DateTime  @default(now())
+
+  @@index([propertyId])
+  @@index([ownerUserId])
 }

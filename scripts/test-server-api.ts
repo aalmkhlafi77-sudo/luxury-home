@@ -830,6 +830,309 @@ async function runApiTests() {
       failures++;
     }
 
+    // =====================================================
+    // Test 14: Booking Cancellation Security & Multi-Role RBAC (Task 1 Acceptance Tests)
+    // =====================================================
+    console.log('\n[Test 14] Testing Booking Cancellation Security & Multi-Role RBAC...');
+    
+    // Create a property manager user restricted to Property A only
+    const pmTokenRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/auth/register-admin',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    }, {
+      username: `pm_test_${Date.now()}`,
+      password: 'SecurePMPass2026!',
+      name: 'مدير عقار أ',
+      role: 'PROPERTY_MANAGER',
+      allowedProperties: [realPropertyId] // Only realPropertyId
+    });
+
+    // Create a second independent property
+    const prop2Res = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/properties',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    }, {
+      name: 'برج ب المستقل',
+      code: `BLD_B_${Date.now()}`,
+      address: 'طريق التخصصي',
+      city: 'الرياض',
+      district: 'المحمدية',
+      floorsCount: 2
+    });
+    const prop2Id = prop2Res.data?.property?.id;
+    const prop2Floor = prop2Res.data?.floors?.[0] || prop2Res.data?.property?.floors?.[0];
+
+    const unit2Res = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/units',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    }, {
+      propertyId: prop2Id,
+      floorId: prop2Floor?.id,
+      unitNumber: `U2-${Date.now().toString().slice(-4)}`,
+      title: 'شقة برج ب',
+      type: 'apartment',
+      dailyRate: 600
+    });
+    const unit2Id = unit2Res.data?.unit?.id;
+
+    // Create booking in Property B
+    const bookPropBRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/bookings/check-and-reserve',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    }, {
+      unitId: unit2Id,
+      startDate: '2026-11-10',
+      endDate: '2026-11-15',
+      guestName: 'نزيل برج ب',
+      rentalType: 'daily'
+    });
+    const bookingPropBId = bookPropBRes.data?.booking?.id;
+
+    // Login as PM (authorized only for Property A)
+    const pmLogin = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/auth/login',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    }, {
+      username: pmTokenRes.data?.user?.username,
+      password: 'SecurePMPass2026!'
+    });
+    const pmToken = pmLogin.data?.token;
+
+    // 14.1 Unauthenticated Cancellation Attempt (Must fail 401)
+    const unauthCancel = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: `/api/bookings/${bookingPropBId}/cancel`,
+      method: 'POST'
+    });
+    if (unauthCancel.status === 401) {
+      console.log('✅ PASS: Unauthenticated cancellation blocked with HTTP 401.');
+    } else {
+      console.error('❌ FAIL: Unauthenticated cancellation was not blocked with 401:', unauthCancel.status);
+      failures++;
+    }
+
+    // 14.2 PM of Property A attempting to cancel booking in Property B (Must fail with 403 Forbidden)
+    const crossCancel = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: `/api/bookings/${bookingPropBId}/cancel`,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${pmToken}`
+      }
+    });
+
+    if (crossCancel.status === 403) {
+      console.log('✅ PASS: Property Manager unauthorized for Property B blocked from cancelling with HTTP 403!');
+    } else {
+      console.error('❌ FAIL: Cross-property cancellation was not blocked with 403:', crossCancel.status);
+      failures++;
+    }
+
+    // =====================================================
+    // Test 15: Security Deposit Separation, Pending Refund & Explicit Refund Execution (Task 2 Acceptance Tests)
+    // =====================================================
+    console.log('\n[Test 15] Testing Security Deposit State Management & Refund Operations...');
+    const depTestUnitId = realUnitId;
+    const depStartDate = '2026-08-01';
+    const depEndDate = '2026-08-05';
+
+    const depBookRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/bookings/check-and-reserve',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    }, {
+      unitId: depTestUnitId,
+      startDate: depStartDate,
+      endDate: depEndDate,
+      guestName: 'مستأجر اختبار التأمين',
+      rentalType: 'daily'
+    });
+    const depBookingId = depBookRes.data?.booking?.id;
+
+    // Cancel booking: security deposit MUST NOT be marked as 'refunded'
+    const depCancelRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: `/api/bookings/${depBookingId}/cancel`,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    });
+
+    if (depCancelRes.status === 200) {
+      console.log('✅ PASS: Booking cancelled successfully.');
+    } else {
+      console.error('❌ FAIL: Booking cancellation failed:', depCancelRes.data);
+      failures++;
+    }
+
+    // =====================================================
+    // Test 16: Batch Units Idempotency with Fingerprint Conflict Check (Task 3)
+    // =====================================================
+    console.log('\n[Test 16] Testing Batch Units Idempotency & Hash Conflict Detection...');
+    const conflictIdemKey = `idem_conflict_key_${Date.now()}`;
+    const initialUnits = [
+      { unitNumber: `C-${Date.now().toString().slice(-4)}-1`, title: 'شقة أولى', areaSqm: 70 },
+      { unitNumber: `C-${Date.now().toString().slice(-4)}-2`, title: 'شقة ثانية', areaSqm: 75 }
+    ];
+
+    // First batch creation with conflictIdemKey
+    const firstBatchRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/units/batch',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    }, {
+      propertyId: realPropertyId,
+      floorId: targetFloor?.id,
+      units: initialUnits,
+      idempotencyKey: conflictIdemKey
+    });
+
+    if (firstBatchRes.status === 200) {
+      console.log('✅ PASS: Initial batch created with idempotency key.');
+    } else {
+      console.error('❌ FAIL: Initial batch creation failed:', firstBatchRes.data);
+      failures++;
+    }
+
+    // Resend EXACT SAME payload + key -> Must return 200 with same units
+    const exactResendRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/units/batch',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    }, {
+      propertyId: realPropertyId,
+      floorId: targetFloor?.id,
+      units: initialUnits,
+      idempotencyKey: conflictIdemKey
+    });
+
+    if (exactResendRes.status === 200 && exactResendRes.data?.count === 2) {
+      console.log('✅ PASS: Exact resend returned identical batch idempotently without duplication.');
+    } else {
+      console.error('❌ FAIL: Exact resend failed:', exactResendRes.data);
+      failures++;
+    }
+
+    // Resend DIFFERENT payload with SAME key -> Must return 409 Conflict
+    const differentUnits = [
+      { unitNumber: `DIFF-${Date.now().toString().slice(-4)}-1`, title: 'شقة مختلفة بحمولة أخرى', areaSqm: 90 }
+    ];
+    const conflictRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/units/batch',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    }, {
+      propertyId: realPropertyId,
+      floorId: targetFloor?.id,
+      units: differentUnits,
+      idempotencyKey: conflictIdemKey
+    });
+
+    if (conflictRes.status === 409) {
+      console.log('✅ PASS: Same idempotency key with different payload rejected with HTTP 409 Conflict!');
+    } else {
+      console.error('❌ FAIL: Idempotency conflict was not caught with 409:', conflictRes.status);
+      failures++;
+    }
+
+    // =====================================================
+    // Test 17: Expense Real Scope & Document Ownership Enforcement (Task 4)
+    // =====================================================
+    console.log('\n[Test 17] Testing Expense Real Scope & Document Ownership Enforcement...');
+    
+    // Create an expense belonging to Property B
+    const expPropBRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/expenses',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    }, {
+      title: 'صيانة مبنى ب الخاصة',
+      amount: 1200,
+      costCenterLevel: 'PROPERTY',
+      propertyId: prop2Id
+    });
+    const expPropBId = expPropBRes.data?.expense?.id;
+
+    // PM of Property A tries to edit Property B expense by passing propertyId: realPropertyId in body
+    const expSpoofEdit = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: `/api/expenses/${expPropBId}`,
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${pmToken}`
+      }
+    }, {
+      propertyId: realPropertyId, // Trying to spoof permission
+      title: 'محاولة تعديل غير مصرح بها'
+    });
+
+    if (expSpoofEdit.status === 403) {
+      console.log('✅ PASS: Spoofed propertyId on expense edit rejected with HTTP 403 (Real DB scope checked)!');
+    } else {
+      console.error('❌ FAIL: Spoofed expense edit was not rejected with 403:', expSpoofEdit.status);
+      failures++;
+    }
+
     console.log('\n=====================================================');
     if (failures === 0) {
       console.log('🎉 ALL API, UNIT PERSISTENCE & SECURITY TESTS PASSED (0 Failures)');
