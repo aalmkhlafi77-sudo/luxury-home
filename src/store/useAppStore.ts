@@ -385,6 +385,8 @@ export async function loadAuthoritativeServerState(force: boolean = false) {
           bookings: Array.isArray(s.bookings) ? s.bookings : globalState.bookings,
           leases: Array.isArray(s.leases) ? s.leases : globalState.leases,
           expenses: Array.isArray(s.expenses) ? s.expenses : globalState.expenses,
+          securityDeposits: Array.isArray(s.securityDeposits) ? s.securityDeposits : globalState.securityDeposits,
+          payments: Array.isArray(s.payments) ? s.payments : globalState.payments,
           auditLogs: Array.isArray(s.auditLogs) ? s.auditLogs : globalState.auditLogs
         };
         saveState(globalState);
@@ -3083,106 +3085,43 @@ export function useAppStore() {
    * Settle Security Deposit against Rent Dues or Damages (استقطاع التأمين لتغطية المستحقات)
    * Strictly isolated from routine rent unless formally approved & recorded.
    */
-  const settleSecurityDepositAgainstRent = useCallback((params: {
+  const settleSecurityDepositAgainstRent = useCallback(async (params: {
     depositId: string;
     leaseId: string;
     installmentId: string;
     amount: number;
     reason: string;
     authorizedBy: string;
+    idempotencyKey: string;
   }) => {
-    const deposit = (globalState.securityDeposits || []).find(d => d.id === params.depositId);
-    if (!deposit) throw new Error('مبلغ تأمين العقد المستهدف غير متوفر');
-
-    const totalDeducted = (deposit.deductions || []).reduce((sum, d) => sum + d.amount, 0);
-    const availableDeposit = deposit.amount - totalDeducted;
-
-    if (params.amount <= 0) throw new Error('مبلغ التسوية يجب أن يكون أكبر من الصفر.');
-    if (params.amount > availableDeposit) {
-      throw new Error(`مبلغ التسوية المطلوب (${params.amount} ر.س) يتجاوز رصيد التأمين المحتجز المتاح وهو (${availableDeposit} ر.س)!`);
-    }
-
-    const lease = globalState.leases.find(l => l.id === params.leaseId);
-    if (!lease) throw new Error('عقد الإيجار المحدد غير متوفر');
-
-    const instIndex = lease.installments.findIndex(i => i.id === params.installmentId);
-    if (instIndex === -1) throw new Error('الدفعة المالية غير متوفرة');
-
-    const inst = lease.installments[instIndex];
-    if (params.amount > inst.remainingAmount) {
-      throw new Error(`مبلغ السداد المطلوب من التأمين (${params.amount} ر.س) يتجاوز المستحق على القسط المالي وهو (${inst.remainingAmount} ر.س)!`);
-    }
-
-    const nowIso = new Date().toISOString();
-    const receiptNo = `DEP-SETTLE-${Date.now().toString().slice(-6)}`;
-    const deductionId = `ded-settle-${Date.now()}`;
-
-    // 1. Deduct from Deposit
-    const newDeductions = [
-      ...(deposit.deductions || []),
+    const token = localStorage.getItem('luxury_token') || '';
+    const response = await fetch(
+      `/api/security-deposits/${encodeURIComponent(params.depositId)}/apply-to-rent`,
       {
-        id: deductionId,
-        amount: params.amount,
-        reason: `تسوية جزء من مبلغ التأمين لسداد قسط العقد #${lease.contractNumber} بسبب (${params.reason})`,
-        deductedAt: nowIso,
-        approvedBy: params.authorizedBy,
-      }
-    ];
-
-    const updatedDeposit: SecurityDepositRecord = {
-      ...deposit,
-      deductions: newDeductions,
-      status: (availableDeposit - params.amount === 0) ? 'claimed_for_damage' : deposit.status,
-    };
-
-    // 2. Credit the installment
-    const newPaid = inst.paidAmount + params.amount;
-    const newRemaining = Math.max(0, inst.amount - newPaid);
-    const newStatus: LeaseInstallmentStatus = newRemaining === 0 ? 'paid' : 'partially_paid';
-
-    const updatedInstallment: LeaseInstallment = {
-      ...inst,
-      paidAmount: newPaid,
-      remainingAmount: newRemaining,
-      status: newStatus,
-      paidAt: newRemaining === 0 ? nowIso : inst.paidAt,
-      receiptNumber: receiptNo,
-      payments: [
-        ...(inst.payments || []),
-        {
-          paymentId: deductionId,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          'X-Idempotency-Key': params.idempotencyKey,
+        },
+        body: JSON.stringify({
+          installmentId: params.installmentId,
           amount: params.amount,
-          date: nowIso,
-          method: 'bank_transfer',
-          receiptNo,
-          notes: `سداد من مبلغ تأمين سكن النزيل المحتجز (${params.reason})`,
-        }
-      ]
-    };
+          reason: `${params.reason} (باعتماد: ${params.authorizedBy})`,
+        }),
+      },
+    );
 
-    const updatedInstallments = [...lease.installments];
-    updatedInstallments[instIndex] = updatedInstallment;
+    const result = await response.json().catch(() => null);
 
-    const newLog: AuditLog = {
-      id: `log-${Date.now()}`,
-      action: 'تسوية واقتطاع تأمين لمستحقات إيجارية',
-      entity: 'SecurityDeposit',
-      entityId: deposit.id,
-      performedBy: params.authorizedBy,
-      role: 'Management',
-      details: `تم بنجاح سحب مبلغ قدره ${params.amount} ر.س من تأمين السكن المخصص للنزيل وتوجيهه لسداد قسط الإيجار المالي #${inst.installmentNumber} للعقد رقم ${lease.contractNumber}. مبرر القرار: ${params.reason}`,
-      timestamp: nowIso,
-    };
+    if (!response.ok || result?.success !== true) {
+      const err = new Error(result?.message ?? `خطأ من الخادم (رمز الحالة: ${response.status})`);
+      (err as any).status = response.status;
+      (err as any).result = result;
+      throw err;
+    }
 
-    globalState = {
-      ...globalState,
-      securityDeposits: globalState.securityDeposits.map(d => d.id === deposit.id ? updatedDeposit : d),
-      leases: globalState.leases.map(l => l.id === lease.id ? { ...l, installments: updatedInstallments } : l),
-      auditLogs: [newLog, ...globalState.auditLogs],
-    };
-
-    notify();
-    return { updatedDeposit, updatedInstallment };
+    return result;
   }, []);
 
   // --- Operational Expense Management ---

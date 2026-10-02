@@ -401,3 +401,330 @@ export async function refundDeposit(input: RefundInput) {
     },
   );
 }
+
+type ApplyRentInput = {
+  depositId: unknown;
+  installmentId: unknown;
+  amount: unknown;
+  reason: unknown;
+  actorId: unknown;
+  idempotencyKey?: unknown;
+};
+
+export async function applyDepositToRent(input: ApplyRentInput) {
+  if (!process.env.DATABASE_URL?.trim()) {
+    throw new RefundError(
+      503,
+      'قاعدة البيانات غير متاحة. لم تُسجّل أي عملية مالية.',
+    );
+  }
+
+  const depositId = requiredText(input.depositId, 'معرّف التأمين');
+  const installmentId = requiredText(input.installmentId, 'معرّف القسط المالي المستهدف');
+  const actorId = requiredText(input.actorId, 'معرّف المستخدم');
+  const clientKey = requiredText(
+    input.idempotencyKey,
+    'مفتاح منع تكرار العملية',
+    200,
+  );
+
+  const operationType = 'security_deposit_apply_to_rent_v1';
+  const operationKey = sha256(
+    JSON.stringify([actorId, operationType, clientKey]),
+  );
+
+  const applyAmount = money(input.amount, 'مبلغ التسوية');
+  if (applyAmount.lte(0)) {
+    throw new RefundError(400, 'يجب تحديد مبلغ تسوية موجب أكبر من الصفر.');
+  }
+
+  const reason = requiredText(input.reason, 'سبب ومبرر التسوية المعتمد', 1000);
+
+  const requestHash = sha256(
+    JSON.stringify({
+      depositId,
+      installmentId,
+      amount: applyAmount.toFixed(2),
+      reason,
+    }),
+  );
+
+  return prisma.$transaction(
+    async (tx) => {
+      // 1. Advisory Lock on operationKey
+      await tx.$queryRaw<Array<{ ok: number }>>`
+        SELECT 1 AS ok
+        FROM (
+          SELECT pg_advisory_xact_lock(
+            hashtextextended(${operationKey}, 0)
+          )
+        ) AS operation_lock
+      `;
+
+      // 2. Lock records in a stable deterministic order to prevent deadlock
+      if (depositId < installmentId) {
+        await tx.$queryRaw`SELECT "id" FROM "SecurityDepositRecord" WHERE "id" = ${depositId} FOR UPDATE`;
+        await tx.$queryRaw`SELECT "id" FROM "LeaseInstallment" WHERE "id" = ${installmentId} FOR UPDATE`;
+      } else {
+        await tx.$queryRaw`SELECT "id" FROM "LeaseInstallment" WHERE "id" = ${installmentId} FOR UPDATE`;
+        await tx.$queryRaw`SELECT "id" FROM "SecurityDepositRecord" WHERE "id" = ${depositId} FOR UPDATE`;
+      }
+
+      // 3. Fetch after lock
+      const deposit = await tx.securityDepositRecord.findUnique({
+        where: { id: depositId },
+        include: {
+          booking: {
+            select: { unit: { select: { propertyId: true } } },
+          },
+          lease: {
+            select: { unit: { select: { propertyId: true } } },
+          },
+        },
+      });
+
+      if (!deposit) {
+        throw new RefundError(404, 'سجل التأمين غير موجود.');
+      }
+
+      const installment = await tx.leaseInstallment.findUnique({
+        where: { id: installmentId },
+        include: {
+          lease: true,
+        },
+      });
+
+      if (!installment) {
+        throw new RefundError(404, 'الدفعة المالية / القسط المستهدف غير موجود.');
+      }
+
+      // 4. Verify Authorization & Roles
+      const actor = await tx.user.findUnique({
+        where: { id: actorId },
+        select: {
+          id: true,
+          username: true,
+          role: true,
+          isActive: true,
+          allowedProperties: true,
+        },
+      });
+
+      if (!actor?.isActive) {
+        throw new RefundError(401, 'المستخدم غير موجود أو غير نشط.');
+      }
+
+      if (
+        !['SUPER_ADMIN', 'ACCOUNTANT', 'PROPERTY_MANAGER']
+          .includes(actor.role)
+      ) {
+        throw new RefundError(403, 'غير مخول بتنفيذ العملية.');
+      }
+
+      const propertyId =
+        deposit.booking?.unit?.propertyId ??
+        deposit.lease?.unit?.propertyId;
+
+      if (!propertyId) {
+        throw new RefundError(409, 'تعذر تحديد المبنى المرتبط بالتأمين.');
+      }
+
+      if (
+        actor.role !== 'SUPER_ADMIN' &&
+        !actor.allowedProperties.includes('all') &&
+        !actor.allowedProperties.includes(propertyId)
+      ) {
+        throw new RefundError(403, 'التأمين خارج نطاق صلاحياتك.');
+      }
+
+      // 5. Check Idempotency Record
+      const previous = await tx.idempotencyRecord.findUnique({
+        where: {
+          key_operationType: {
+            key: operationKey,
+            operationType,
+          },
+        },
+      });
+
+      if (previous) {
+        if (previous.userId !== actor.id) {
+          throw new RefundError(403, 'مفتاح العملية لا يخص المستخدم.');
+        }
+
+        if (previous.requestHash !== requestHash) {
+          throw new RefundError(
+            409,
+            'استُخدم مفتاح العملية نفسه مع بيانات مختلفة للطلب المالي.',
+          );
+        }
+
+        return previous.responseBody;
+      }
+
+      // 6. Validate Collection Status
+      if (
+        !deposit.collectionVerifiedAt ||
+        !deposit.collectionReference?.trim()
+      ) {
+        throw new RefundError(
+          409,
+          'لم يُوثّق تحصيل هذا التأمين. لا يمكن استرداده أو تسويته.',
+        );
+      }
+
+      if (
+        !['held', 'pending_refund', 'partially_refunded']
+          .includes(deposit.status)
+      ) {
+        throw new RefundError(409, 'حالة التأمين لا تسمح بإجراء تسوية.');
+      }
+
+      // 7. Match lease constraints
+      if (deposit.leaseId && installment.leaseId !== deposit.leaseId) {
+        throw new RefundError(
+          409,
+          'القسط المالي المستهدف لا يخص عقد الإيجار المرتبط بهذه الوديعة.',
+        );
+      }
+
+      // 8. Reconcile Balances
+      const collected = new Prisma.Decimal(deposit.collectedAmount);
+      const spent = deposit.refundedAmount.plus(deposit.deductedAmount);
+
+      if (
+        collected.lte(0) ||
+        deposit.refundedAmount.lt(0) ||
+        deposit.deductedAmount.lt(0) ||
+        spent.gt(collected)
+      ) {
+        throw new RefundError(409, 'رصيد التأمين يحتاج مراجعة موثقة.');
+      }
+
+      const available = collected.minus(spent);
+      if (applyAmount.gt(available)) {
+        throw new RefundError(
+          400,
+          `المبلغ المطلوب يتجاوز الرصيد المتاح للتأمين وهو ${available.toFixed(2)} ر.س.`,
+        );
+      }
+
+      const remInstallment = new Prisma.Decimal(installment.remainingAmount);
+      if (applyAmount.gt(remInstallment)) {
+        throw new RefundError(
+          400,
+          `مبلغ التسوية المطلوب يتجاوز المبلغ المتبقي على القسط وهو ${remInstallment.toFixed(2)} ر.س.`,
+        );
+      }
+
+      // 9. Execute Updates
+      const refundedTotal = deposit.refundedAmount;
+      const deductedTotal = deposit.deductedAmount.plus(applyAmount);
+      const remaining = collected.minus(refundedTotal).minus(deductedTotal);
+
+      const depositStatus = remaining.eq(0)
+        ? (refundedTotal.eq(0) ? 'claimed_for_damage' : 'fully_refunded')
+        : 'partially_refunded';
+
+      const updatedDeposit = await tx.securityDepositRecord.update({
+        where: { id: deposit.id },
+        data: {
+          deductedAmount: deductedTotal,
+          status: depositStatus,
+          deductionReason: reason,
+        },
+      });
+
+      // Credit the installment
+      const installmentPaid = new Prisma.Decimal(installment.paidAmount).plus(applyAmount);
+      const installmentRemaining = new Prisma.Decimal(installment.amount).minus(installmentPaid);
+      const installmentStatus = installmentRemaining.eq(0) ? 'PAID' : 'PARTIALLY_PAID';
+
+      await tx.leaseInstallment.update({
+        where: { id: installment.id },
+        data: {
+          paidAmount: installmentPaid,
+          remainingAmount: installmentRemaining,
+          status: installmentStatus as any,
+          paidAt: installmentRemaining.eq(0) ? new Date() : installment.paidAt,
+        },
+      });
+
+      // 10. Record SecurityDepositTransaction of type 'rent_application'
+      const movement = await tx.securityDepositTransaction.create({
+        data: {
+          depositId: deposit.id,
+          type: 'rent_application',
+          amount: applyAmount,
+          method: 'deduction',
+          reference: `SETTLE-LEASE-${installment.lease.contractNumber}`,
+          reason,
+          executedByUserId: actor.id,
+          status: 'completed',
+          idempotencyKey: sha256(`${operationKey}:rent_apply`),
+        },
+      });
+
+      // Record rent payment record too so it shows up in general payments as settled from deposit
+      const paymentRec = await tx.paymentRecord.create({
+        data: {
+          leaseId: installment.leaseId,
+          amount: applyAmount,
+          paymentMethod: 'bank_transfer',
+          referenceNo: `SETTLE-DEP-${deposit.id}`,
+          receiptNo: `DEP-SETTLE-${Date.now()}`,
+          status: 'completed',
+          isVerified: true,
+          paidAt: new Date(),
+          notes: `تسوية جزء من مبلغ التأمين لسداد قسط العقد #${installment.lease.contractNumber} بسبب (${reason})`,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          userId: actor.id,
+          userName: actor.username,
+          action: 'تسوية تأمين مقابل قسط إيجاري',
+          module: 'التأمينات',
+          details: JSON.stringify({
+            depositId: deposit.id,
+            propertyId,
+            installmentId: installment.id,
+            leaseId: installment.leaseId,
+            amount: applyAmount.toFixed(2),
+            reason,
+            transactionId: movement.id,
+            paymentRecordId: paymentRec.id,
+          }),
+        },
+      });
+
+      const responsePayload = {
+        success: true,
+        depositId: deposit.id,
+        installmentId: installment.id,
+        status: updatedDeposit.status,
+        deductedAmount: deductedTotal.toFixed(2),
+        availableBalance: remaining.toFixed(2),
+        transactionIds: [movement.id],
+      };
+
+      await tx.idempotencyRecord.create({
+        data: {
+          key: operationKey,
+          operationType,
+          userId: actor.id,
+          requestHash,
+          responseBody: responsePayload,
+        },
+      });
+
+      return responsePayload;
+    },
+    {
+      isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+      maxWait: 5000,
+      timeout: 15000,
+    },
+  );
+}

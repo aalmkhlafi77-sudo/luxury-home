@@ -731,7 +731,12 @@ export async function getBookingsFromDb(allowedPropertyIds?: string[]) {
     where: isUniversal ? {} : { unit: { propertyId: { in: allowedPropertyIds } } },
     include: {
       unit: { include: { property: true } },
-      payments: true
+      payments: true,
+      securityDeposits: {
+        include: {
+          transactions: true
+        }
+      }
     },
     orderBy: { createdAt: 'desc' }
   });
@@ -746,7 +751,11 @@ export async function getLeasesFromDb(allowedPropertyIds?: string[]) {
     include: {
       unit: { include: { property: true } },
       installments: { orderBy: { number: 'asc' } },
-      securityDeposits: true,
+      securityDeposits: {
+        include: {
+          transactions: true
+        }
+      },
       payments: true
     },
     orderBy: { createdAt: 'desc' }

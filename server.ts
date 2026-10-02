@@ -61,6 +61,7 @@ import {
 } from './src/server/reservationService.js';
 import {
   refundDeposit,
+  applyDepositToRent,
   RefundError
 } from './src/server/depositRefundService.js';
 import {
@@ -1636,6 +1637,72 @@ export async function startServer(customPort?: number) {
 
         const floors = properties.flatMap((p: any) => p.floors || []);
 
+        const securityDeposits = [
+          ...bookings.flatMap((b: any) => (b.securityDeposits || []).map((sd: any) => ({
+            id: sd.id,
+            bookingId: b.id,
+            leaseId: null,
+            guestName: b.guestName,
+            bookingOrLeaseId: b.id,
+            amount: Number(sd.amount),
+            collectedAmount: Number(sd.collectedAmount),
+            collectionReference: sd.collectionReference,
+            collectionVerifiedAt: sd.collectionVerifiedAt,
+            status: sd.status,
+            heldType: b.paymentStatus === 'paid_online' ? 'authorized_hold' : 'cash_or_transfer',
+            deductions: (sd.transactions || []).filter((t: any) => t.type === 'deduction' || t.type === 'rent_application').map((t: any) => ({
+              id: t.id,
+              amount: Number(t.amount),
+              reason: t.reason,
+              deductedAt: t.executedAt,
+              approvedBy: t.executedByUserId || 'النظام',
+            })),
+            createdAt: sd.createdAt
+          }))),
+          ...leases.flatMap((l: any) => (l.securityDeposits || []).map((sd: any) => ({
+            id: sd.id,
+            bookingId: null,
+            leaseId: l.id,
+            guestName: l.tenantName,
+            bookingOrLeaseId: l.id,
+            amount: Number(sd.amount),
+            collectedAmount: Number(sd.collectedAmount),
+            collectionReference: sd.collectionReference,
+            collectionVerifiedAt: sd.collectionVerifiedAt,
+            status: sd.status,
+            heldType: 'cash_or_transfer',
+            deductions: (sd.transactions || []).filter((t: any) => t.type === 'deduction' || t.type === 'rent_application').map((t: any) => ({
+              id: t.id,
+              amount: Number(t.amount),
+              reason: t.reason,
+              deductedAt: t.executedAt,
+              approvedBy: t.executedByUserId || 'النظام',
+            })),
+            createdAt: sd.createdAt
+          })))
+        ];
+
+        const payments = [
+          ...leases.flatMap((l: any) => (l.payments || []).map((p: any) => ({
+            id: p.id,
+            receiptNumber: p.receiptNo || `REC-${p.id.slice(-6)}`,
+            referenceId: l.id,
+            amount: Number(p.amount),
+            method: p.paymentMethod,
+            notes: p.notes,
+            createdAt: p.paidAt,
+          }))),
+          ...bookings.flatMap((b: any) => (b.payments || []).map((p: any) => ({
+            id: p.id,
+            receiptNumber: p.receiptNo || `REC-${p.id.slice(-6)}`,
+            referenceId: b.id,
+            amount: Number(p.amount),
+            method: p.paymentMethod,
+            notes: p.notes,
+            createdAt: p.paidAt,
+          })))
+        ];
+
         return res.json({
           success: true,
           state: {
@@ -1646,6 +1713,8 @@ export async function startServer(customPort?: number) {
             bookings,
             leases,
             expenses,
+            securityDeposits,
+            payments,
             auditLogs,
             users: undefined // Never return user list with hashes
           },
@@ -2020,6 +2089,62 @@ export async function startServer(customPort?: number) {
         }
 
         console.error('[Deposit refund failed]', {
+          errorType: error instanceof Error
+            ? error.name
+            : 'UnknownError',
+        });
+
+        return res.status(503).json({
+          success: false,
+          message:
+            'تعذر إتمام العملية. أعد المحاولة بمفتاح العملية نفسه.',
+        });
+      }
+    },
+  );
+
+  // Security Deposit Settle against Lease Rent Endpoint (Explicit Financial Action)
+  apiRouter.post(
+    '/security-deposits/:id/apply-to-rent',
+    authenticateToken,
+    requireRoles(['SUPER_ADMIN', 'ACCOUNTANT', 'PROPERTY_MANAGER']),
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        if (!req.user) {
+          return res.status(401).json({
+            success: false,
+            message: 'تسجيل الدخول مطلوب.',
+          });
+        }
+
+        const body = req.body;
+
+        if (!body || typeof body !== 'object' || Array.isArray(body)) {
+          return res.status(400).json({
+            success: false,
+            message: 'صيغة الطلب غير صالحة.',
+          });
+        }
+
+        const result = await applyDepositToRent({
+          depositId: req.params.id,
+          installmentId: body.installmentId,
+          amount: body.amount,
+          reason: body.reason,
+          actorId: req.user.userId,
+          idempotencyKey: req.get('X-Idempotency-Key') || body?.idempotencyKey,
+        });
+
+        return res.status(200).json(result);
+      } catch (error: unknown) {
+        if (error instanceof RefundError) {
+          return res.status(error.statusCode).json({
+            success: false,
+            message: error.message,
+          });
+        }
+
+        console.error('[Apply deposit to rent failed]', {
           errorType: error instanceof Error
             ? error.name
             : 'UnknownError',
