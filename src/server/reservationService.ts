@@ -1,5 +1,6 @@
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from './db.js';
+import crypto from 'crypto';
 import { RentalType, BookingStatus, LeaseStatus, InstallmentStatus } from '@prisma/client';
 import { serializeDecimals } from './repository.js';
 
@@ -533,95 +534,319 @@ export async function cancelBooking(bookingId: string) {
   return null;
 }
 
+// Canonical deterministic fingerprint hash for deposit refund operations
+export function computeRefundFingerprint(params: {
+  depositId?: string;
+  bookingId?: string;
+  leaseId?: string;
+  refundAmount: string;
+  deductedAmount: string;
+  deductionReason?: string;
+  refundMethod: string;
+  refundReference?: string;
+  refundType?: string;
+}): string {
+  const canonical = JSON.stringify({
+    depositId: params.depositId || '',
+    bookingId: params.bookingId || '',
+    leaseId: params.leaseId || '',
+    refundAmount: params.refundAmount,
+    deductedAmount: params.deductedAmount,
+    deductionReason: (params.deductionReason || '').trim(),
+    refundMethod: params.refundMethod,
+    refundReference: (params.refundReference || '').trim(),
+    refundType: params.refundType || 'actual_payout'
+  });
+  return crypto.createHash('sha256').update(canonical).digest('hex');
+}
+
 export async function processSecurityDepositRefund(params: {
   depositId?: string;
   bookingId?: string;
   leaseId?: string;
-  refundAmount?: number;
-  deductedAmount?: number;
+  refundAmount?: number | string | Decimal;
+  deductedAmount?: number | string | Decimal;
   deductionReason?: string;
-  refundMethod: string; // bank_transfer, gateway_reversal, cash, mada
+  refundMethod: string; // bank_transfer, gateway_reversal, cash, mada, card_refund
   refundReference?: string;
   refundType?: string; // actual_payout, preauth_release
   userId?: string;
+  userRole?: string;
+  userAllowedProperties?: string[];
+  idempotencyKey?: string;
+  providerConfirmation?: any;
 }) {
   const {
     depositId,
     bookingId,
     leaseId,
-    refundAmount = 0,
-    deductedAmount = 0,
     deductionReason,
     refundMethod,
     refundReference,
     refundType = 'actual_payout',
-    userId
+    userId,
+    userRole = 'SUPER_ADMIN',
+    userAllowedProperties = ['all'],
+    idempotencyKey,
+    providerConfirmation
   } = params;
+
+  // 1. Strict Numeric Validation (Reject NaN, negative, non-finite amounts)
+  const rawRefund = params.refundAmount !== undefined && params.refundAmount !== null ? Number(params.refundAmount) : 0;
+  const rawDeduct = params.deductedAmount !== undefined && params.deductedAmount !== null ? Number(params.deductedAmount) : 0;
+
+  if (isNaN(rawRefund) || !isFinite(rawRefund) || rawRefund < 0) {
+    const err: any = new Error('مبلغ الاسترداد المالي غير صالح أو يحتوي على قيمة سالبة.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  if (isNaN(rawDeduct) || !isFinite(rawDeduct) || rawDeduct < 0) {
+    const err: any = new Error('مبلغ الخصم من التأمين غير صالح أو يحتوي على قيمة سالبة.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const refDec = new Decimal(rawRefund.toFixed(2));
+  const dedDec = new Decimal(rawDeduct.toFixed(2));
+  const totalOperation = refDec.plus(dedDec);
+
+  if (totalOperation.lte(0)) {
+    const err: any = new Error('يجب تحديد مبلغ استرداد أو مبلغ خصم موجب أكبر من الصفر.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  // 2. Deduction Reason Validation
+  if (dedDec.gt(0) && (!deductionReason || !deductionReason.trim())) {
+    const err: any = new Error('سبب الخصم إلزامي عند تنفيذ أي خصم من رصيد التأمين.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  // 3. Payment Method & Reference Validation (Never generate random dummy references)
+  if (!refundMethod || !refundMethod.trim()) {
+    const err: any = new Error('طريقة الاسترداد (refundMethod) إلزامية.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const isManual = ['bank_transfer', 'cash', 'mada', 'cheque', 'manual'].includes(refundMethod.toLowerCase());
+  const isElectronic = ['gateway_reversal', 'online_gateway', 'card_refund'].includes(refundMethod.toLowerCase());
+
+  if (isManual && (!refundReference || !refundReference.trim())) {
+    const err: any = new Error('مرجع الإثبات البنكي / الإيصال مطلوب صراحة للاسترداد اليدوي.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  if (isElectronic && (!providerConfirmation || !providerConfirmation.confirmed)) {
+    const err: any = new Error('لا يمكن تسجيل استرداد إلكتروني ناجح دون تأكيد موثوق من بوابة الدفع أو مزود الخدمة.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  // 4. Idempotency Key Pre-Check
+  const requestHash = computeRefundFingerprint({
+    depositId,
+    bookingId,
+    leaseId,
+    refundAmount: refDec.toFixed(2),
+    deductedAmount: dedDec.toFixed(2),
+    deductionReason,
+    refundMethod,
+    refundReference,
+    refundType
+  });
+
+  if (idempotencyKey && process.env.DATABASE_URL) {
+    const existingKey = await prisma.idempotencyRecord.findUnique({
+      where: {
+        key_operationType: {
+          key: idempotencyKey,
+          operationType: 'security_deposit_refund'
+        }
+      }
+    });
+
+    if (existingKey) {
+      if (existingKey.userId && userId && existingKey.userId !== userId && userRole !== 'SUPER_ADMIN') {
+        const err: any = new Error('غير مصرح لك بالوصول إلى نتيجة مفتاح عملية يخص مستخدماً آخر.');
+        err.statusCode = 403;
+        throw err;
+      }
+
+      if (existingKey.requestHash === requestHash) {
+        return existingKey.responseBody;
+      } else {
+        const err: any = new Error('تعارض مفتاح منع التكرار: تم استخدام نفس المفتاح مع بيانات استرداد مختلفة.');
+        err.statusCode = 409;
+        throw err;
+      }
+    }
+  }
 
   if (process.env.DATABASE_URL) {
     return await prisma.$transaction(async (tx) => {
-      // Find the deposit record
-      let deposit = null;
+      // Re-check idempotency record inside transaction to handle concurrency race
+      if (idempotencyKey) {
+        const txRecord = await tx.idempotencyRecord.findUnique({
+          where: {
+            key_operationType: {
+              key: idempotencyKey,
+              operationType: 'security_deposit_refund'
+            }
+          }
+        });
+        if (txRecord) {
+          if (txRecord.requestHash === requestHash) {
+            return txRecord.responseBody;
+          } else {
+            const err: any = new Error('تعارض مفتاح منع التكرار: تم استخدام نفس المفتاح مع بيانات استرداد مختلفة.');
+            err.statusCode = 409;
+            throw err;
+          }
+        }
+      }
+
+      // Find the deposit record with full relation tree (Booking -> Unit -> Property OR Lease -> Unit -> Property)
+      let deposit: any = null;
       if (depositId) {
-        deposit = await tx.securityDepositRecord.findUnique({ where: { id: depositId } });
+        deposit = await tx.securityDepositRecord.findUnique({
+          where: { id: depositId },
+          include: {
+            booking: { include: { unit: true } },
+            lease: { include: { unit: true } }
+          }
+        });
       } else if (bookingId) {
         deposit = await tx.securityDepositRecord.findFirst({
           where: { bookingId, status: { in: ['held', 'pending_refund', 'partially_refunded'] } },
+          include: {
+            booking: { include: { unit: true } },
+            lease: { include: { unit: true } }
+          },
           orderBy: { createdAt: 'desc' }
         });
       } else if (leaseId) {
         deposit = await tx.securityDepositRecord.findFirst({
           where: { leaseId, status: { in: ['held', 'pending_refund', 'partially_refunded'] } },
+          include: {
+            booking: { include: { unit: true } },
+            lease: { include: { unit: true } }
+          },
           orderBy: { createdAt: 'desc' }
         });
       }
 
       if (!deposit) {
-        throw new Error('سجل التأمين المطلوب استرداده غير موجود أو لا يتطلب إجراء استرداد.');
+        const err: any = new Error('سجل التأمين المطلوب استرداده غير موجود أو لا يتطلب إجراء استرداد.');
+        err.statusCode = 404;
+        throw err;
       }
 
+      // 5. Strict Real Property Scope Verification (Never trust client body)
+      const realPropertyId = deposit.booking?.unit?.propertyId || deposit.lease?.unit?.propertyId || null;
+      if (userRole !== 'SUPER_ADMIN') {
+        const isAllowed = realPropertyId && Array.isArray(userAllowedProperties) && (
+          userAllowedProperties.includes('all') || userAllowedProperties.includes(realPropertyId)
+        );
+        if (!isAllowed) {
+          const err: any = new Error('غير مصرح لك بإجراء استرداد تأمين يتبع مبنى خارج نطاق صلاحياتك المعتمدة.');
+          err.statusCode = 403;
+          throw err;
+        }
+      }
+
+      // 6. Check Deposit Status & Balance
       if (deposit.status === 'refunded' || deposit.status === 'deducted') {
-        throw new Error('تم استرداد أو خصم هذا التأمين بالكامل سلفاً.');
+        const err: any = new Error('تم استرداد أو خصم هذا التأمين بالكامل سلفاً.');
+        err.statusCode = 400;
+        throw err;
       }
 
-      const totalDeposit = Number(deposit.amount);
-      const currentRefunded = Number(deposit.refundedAmount || 0);
-      const currentDeducted = Number(deposit.deductedAmount || 0);
-      const availableBalance = Math.max(0, totalDeposit - currentRefunded - currentDeducted);
+      const totalHeld = new Decimal(deposit.amount);
+      const alreadyRefunded = new Decimal(deposit.refundedAmount || 0);
+      const alreadyDeducted = new Decimal(deposit.deductedAmount || 0);
+      const availableBalance = totalHeld.minus(alreadyRefunded).minus(alreadyDeducted);
 
-      const requestedRefund = Number(refundAmount);
-      const newDeduction = Number(deductedAmount);
-
-      if (requestedRefund + newDeduction > availableBalance + 0.001) {
-        throw new Error(`المبلغ المطلوب استرداده وخصمه (${requestedRefund + newDeduction} ر.س) يتجاوز الرصيد المتاح من التأمين (${availableBalance} ر.س).`);
+      if (totalOperation.gt(availableBalance)) {
+        const err: any = new Error(`المبلغ المطلوب استرداده وخصمه (${totalOperation.toFixed(2)} ر.س) يتجاوز الرصيد المتاح من التأمين (${availableBalance.toFixed(2)} ر.س).`);
+        err.statusCode = 400;
+        throw err;
       }
 
-      const updatedRefundedTotal = currentRefunded + requestedRefund;
-      const updatedDeductedTotal = currentDeducted + newDeduction;
+      const newRefundedTotal = alreadyRefunded.plus(refDec);
+      const newDeductedTotal = alreadyDeducted.plus(dedDec);
 
       let newStatus = deposit.status;
-      if (updatedRefundedTotal + updatedDeductedTotal >= totalDeposit - 0.001) {
-        newStatus = updatedDeductedTotal >= totalDeposit - 0.001 ? 'deducted' : 'refunded';
-      } else if (updatedRefundedTotal > 0 || updatedDeductedTotal > 0) {
+      if (newRefundedTotal.plus(newDeductedTotal).gte(totalHeld)) {
+        newStatus = newDeductedTotal.gte(totalHeld) ? 'deducted' : 'refunded';
+      } else {
         newStatus = 'partially_refunded';
       }
 
-      const updated = await tx.securityDepositRecord.update({
+      // Update SecurityDepositRecord
+      const updatedDeposit = await tx.securityDepositRecord.update({
         where: { id: deposit.id },
         data: {
           status: newStatus,
-          refundedAmount: new Decimal(updatedRefundedTotal),
-          deductedAmount: new Decimal(updatedDeductedTotal),
-          deductionReason: deductionReason || deposit.deductionReason,
+          refundedAmount: newRefundedTotal,
+          deductedAmount: newDeductedTotal,
+          deductionReason: deductionReason ? deductionReason.trim() : deposit.deductionReason,
           refundMethod,
-          refundReference: refundReference || `REF-${Date.now().toString().slice(-6)}`,
+          refundReference: refundReference ? refundReference.trim() : deposit.refundReference,
           refundType,
           refundedByUserId: userId || null,
           refundedAt: new Date()
         }
       });
 
-      return serializeDecimals(updated);
+      // 7. Insert Itemized Transaction Ledger Record
+      const transactionType = dedDec.gt(0) && refDec.eq(0)
+        ? 'deduction'
+        : (refundType === 'preauth_release' ? 'preauth_release' : 'refund');
+
+      const transAmount = refDec.gt(0) ? refDec : dedDec;
+
+      const transactionRecord = await tx.securityDepositTransaction.create({
+        data: {
+          depositId: deposit.id,
+          type: transactionType,
+          amount: transAmount,
+          method: refundMethod,
+          reference: refundReference ? refundReference.trim() : (refundType === 'preauth_release' ? 'PREAUTH-RELEASE' : 'REF-LEDGER'),
+          reason: deductionReason ? deductionReason.trim() : null,
+          executedByUserId: userId || null,
+          executedAt: new Date(),
+          status: 'completed',
+          idempotencyKey: idempotencyKey || null,
+          notes: refDec.gt(0) && dedDec.gt(0) ? `استرداد بقيمة ${refDec.toFixed(2)} ر.س مع خصم بقيمة ${dedDec.toFixed(2)} ر.س` : null
+        }
+      });
+
+      const responsePayload = {
+        securityDeposit: serializeDecimals(updatedDeposit),
+        transaction: serializeDecimals(transactionRecord),
+        availableBalance: totalHeld.minus(newRefundedTotal).minus(newDeductedTotal).toNumber(),
+        message: 'تمت معالجة استرداد التأمين وتوثيق الحركة المستقلة في سجل الحركات بنجاح.'
+      };
+
+      // 8. Atomically Record Idempotency Record
+      if (idempotencyKey) {
+        await tx.idempotencyRecord.create({
+          data: {
+            key: idempotencyKey,
+            operationType: 'security_deposit_refund',
+            userId: userId || null,
+            requestHash,
+            statusCode: 200,
+            responseBody: responsePayload as any
+          }
+        });
+      }
+
+      return responsePayload;
     });
   }
 

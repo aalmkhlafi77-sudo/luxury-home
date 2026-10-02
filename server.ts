@@ -47,6 +47,8 @@ import {
   importDataIntoDb,
   exportFullDatabase,
   restoreFullDatabaseInDb,
+  validateBackupPackageIntegrity,
+  REQUIRED_FULL_BACKUP_COLLECTIONS,
   saveDocumentRecordInDb,
   getDocumentRecordFromDb
 } from './src/server/repository.js';
@@ -87,6 +89,7 @@ async function initializeFallbackState() {
   }
   if (!memoryState) {
     memoryState = {
+      users: [],
       settings: {
         companyName: 'Luxury home منزل الفخامة',
         companyNameEn: 'Luxury Home',
@@ -94,14 +97,58 @@ async function initializeFallbackState() {
       },
       properties: [],
       floors: [],
+      amenities: [],
       units: [],
+      parkingSpots: [],
+      allocations: [],
       bookings: [],
       leases: [],
+      installments: [],
+      securityDeposits: [],
+      securityDepositTransactions: [],
+      payments: [],
       expenses: [],
+      expenseAllocations: [],
+      expensePayments: [],
+      expenseCategories: [],
+      recurringSchedules: [],
+      tenantAdjustments: [],
+      contentSections: [],
+      documentRecords: [],
+      idempotencyRecords: [],
       auditLogs: []
     };
   } else {
-    if (!memoryState.floors) memoryState.floors = [];
+    for (const key of REQUIRED_FULL_BACKUP_COLLECTIONS) {
+      if (!Array.isArray(memoryState[key])) memoryState[key] = [];
+    }
+    if (memoryState.settings === undefined) {
+      memoryState.settings = {
+        companyName: 'Luxury home منزل الفخامة',
+        companyNameEn: 'Luxury Home'
+      };
+    }
+    // Clean up any historical orphaned test records to preserve strict relational integrity
+    const unitIds = new Set((memoryState.units || []).map((u: any) => u.id));
+    const propIds = new Set((memoryState.properties || []).map((p: any) => p.id));
+    if (propIds.size > 0) {
+      memoryState.floors = (memoryState.floors || []).filter((f: any) => !f.propertyId || propIds.has(f.propertyId));
+      memoryState.units = (memoryState.units || []).filter((u: any) => !u.propertyId || propIds.has(u.propertyId));
+    }
+    if (unitIds.size > 0) {
+      memoryState.bookings = (memoryState.bookings || []).filter((b: any) => unitIds.has(b.unitId));
+      memoryState.allocations = (memoryState.allocations || []).filter((a: any) => unitIds.has(a.unitId));
+      memoryState.leases = (memoryState.leases || []).filter((l: any) => unitIds.has(l.unitId));
+    }
+    const bookingIds = new Set((memoryState.bookings || []).map((b: any) => b.id));
+    const leaseIds = new Set((memoryState.leases || []).map((l: any) => l.id));
+    memoryState.securityDeposits = (memoryState.securityDeposits || []).filter((sd: any) => {
+      if (sd.bookingId && !bookingIds.has(sd.bookingId)) return false;
+      if (sd.leaseId && !leaseIds.has(sd.leaseId)) return false;
+      return true;
+    });
+    const depositIds = new Set((memoryState.securityDeposits || []).map((d: any) => d.id));
+    memoryState.securityDepositTransactions = (memoryState.securityDepositTransactions || []).filter((sdt: any) => depositIds.has(sdt.depositId));
   }
 }
 
@@ -1736,6 +1783,18 @@ export async function startServer(customPort?: number) {
       memoryState.bookings.push(newBooking);
       memoryState.allocations.push(newAllocation);
 
+      if (!memoryState.securityDeposits) memoryState.securityDeposits = [];
+      const newDeposit = {
+        id: `sd_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+        bookingId: newBooking.id,
+        amount: 1000,
+        status: 'held',
+        refundedAmount: 0,
+        deductedAmount: 0,
+        createdAt: new Date().toISOString()
+      };
+      memoryState.securityDeposits.push(newDeposit);
+
       return res.json({
         success: true,
         booking: newBooking,
@@ -1892,68 +1951,165 @@ export async function startServer(customPort?: number) {
   apiRouter.post('/security-deposits/:id/refund', authenticateToken, requireRoles(['SUPER_ADMIN', 'ACCOUNTANT', 'PROPERTY_MANAGER']), async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { id } = req.params;
-      const { refundAmount, deductedAmount, deductionReason, refundMethod, refundReference, refundType } = req.body;
+      const { refundAmount, deductedAmount, deductionReason, refundMethod, refundReference, refundType, providerConfirmation } = req.body;
       const user = req.user!;
-
-      if (!refundMethod) {
-        return res.status(400).json({ success: false, message: 'طريقة الاسترداد (refundMethod) مطلوبة.' });
-      }
+      const idempotencyKey = (req.headers['x-idempotency-key'] as string) || req.body.idempotencyKey;
 
       if (process.env.DATABASE_URL) {
-        const updated = await processSecurityDepositRefund({
+        const result = await processSecurityDepositRefund({
           depositId: id,
-          refundAmount: Number(refundAmount || 0),
-          deductedAmount: Number(deductedAmount || 0),
+          refundAmount,
+          deductedAmount,
           deductionReason,
           refundMethod,
           refundReference,
           refundType: refundType || 'actual_payout',
-          userId: user.userId
+          userId: user.userId,
+          userRole: user.role,
+          userAllowedProperties: user.allowedProperties || ['all'],
+          idempotencyKey,
+          providerConfirmation
         });
 
         await recordAuditLogInDb({
           userId: user.userId,
-          userName: user.username || 'المسؤول المالي',
-          action: 'استرداد تأمين مالي',
+          userName: `${user.username || 'المسؤول المالي'} (${user.role})`,
+          action: 'استرداد تأمين مالي معتمد',
           module: 'الإدارة المالية والتأمينات',
-          details: `معالجة استرداد تأمين بقيمة ${refundAmount || 0} ر.س وخصم ${deductedAmount || 0} ر.س بطريقة ${refundMethod}`,
+          details: `معالجة استرداد تأمين للسجل ${id} بمبلغ ${refundAmount || 0} ر.س وخصم ${deductedAmount || 0} ر.س بطريقة ${refundMethod}`,
           ipAddress: req.ip
         });
 
         return res.json({
           success: true,
-          securityDeposit: updated,
-          message: 'تمت معالجة استرداد التأمين وتحديث الأرصدة وسجل التدقيق بنجاح.'
+          ...(result as any)
         });
       }
 
       // Memory fallback processing
       if (!memoryState.securityDeposits) memoryState.securityDeposits = [];
+      if (!memoryState.securityDepositTransactions) memoryState.securityDepositTransactions = [];
+      if (!memoryState.idempotencyRecords) memoryState.idempotencyRecords = [];
+
+      // 1. Strict Numeric Validation
+      const rawRefund = refundAmount !== undefined && refundAmount !== null ? Number(refundAmount) : 0;
+      const rawDeduct = deductedAmount !== undefined && deductedAmount !== null ? Number(deductedAmount) : 0;
+
+      if (isNaN(rawRefund) || !isFinite(rawRefund) || rawRefund < 0) {
+        return res.status(400).json({ success: false, message: 'مبلغ الاسترداد المالي غير صالح أو يحتوي على قيمة سالبة.' });
+      }
+      if (isNaN(rawDeduct) || !isFinite(rawDeduct) || rawDeduct < 0) {
+        return res.status(400).json({ success: false, message: 'مبلغ الخصم من التأمين غير صالح أو يحتوي على قيمة سالبة.' });
+      }
+
+      const refNum = Math.round(rawRefund * 100) / 100;
+      const dedNum = Math.round(rawDeduct * 100) / 100;
+      const totalOp = Math.round((refNum + dedNum) * 100) / 100;
+
+      if (totalOp <= 0) {
+        return res.status(400).json({ success: false, message: 'يجب تحديد مبلغ استرداد أو مبلغ خصم موجب أكبر من الصفر.' });
+      }
+
+      if (dedNum > 0 && (!deductionReason || !deductionReason.trim())) {
+        return res.status(400).json({ success: false, message: 'سبب الخصم إلزامي عند تنفيذ أي خصم من رصيد التأمين.' });
+      }
+
+      if (!refundMethod || !refundMethod.trim()) {
+        return res.status(400).json({ success: false, message: 'طريقة الاسترداد (refundMethod) مطلوبة.' });
+      }
+
+      const isManual = ['bank_transfer', 'cash', 'mada', 'cheque', 'manual'].includes(refundMethod.toLowerCase());
+      const isElectronic = ['gateway_reversal', 'online_gateway', 'card_refund'].includes(refundMethod.toLowerCase());
+
+      if (isManual && (!refundReference || !refundReference.trim())) {
+        return res.status(400).json({ success: false, message: 'مرجع الإثبات البنكي / الإيصال مطلوب صراحة للاسترداد اليدوي.' });
+      }
+
+      if (isElectronic && (!providerConfirmation || !providerConfirmation.confirmed)) {
+        return res.status(400).json({ success: false, message: 'لا يمكن تسجيل استرداد إلكتروني ناجح دون تأكيد موثوق من بوابة الدفع أو مزود الخدمة.' });
+      }
+
+      // Check idempotency in memory
+      const canonicalPayload = JSON.stringify({
+        depositId: id,
+        refundAmount: refNum.toFixed(2),
+        deductedAmount: dedNum.toFixed(2),
+        deductionReason: (deductionReason || '').trim(),
+        refundMethod,
+        refundReference: (refundReference || '').trim(),
+        refundType: refundType || 'actual_payout'
+      });
+      const requestHash = crypto.createHash('sha256').update(canonicalPayload).digest('hex');
+
+      if (idempotencyKey) {
+        const existingKey = memoryState.idempotencyRecords.find((r: any) => r.key === idempotencyKey && r.operationType === 'security_deposit_refund');
+        if (existingKey) {
+          if (existingKey.userId && existingKey.userId !== user.userId && user.role !== 'SUPER_ADMIN') {
+            return res.status(403).json({ success: false, message: 'غير مصرح لك بالوصول إلى نتيجة مفتاح عملية يخص مستخدماً آخر.' });
+          }
+          if (existingKey.requestHash === requestHash) {
+            return res.json({ success: true, ...existingKey.responseBody });
+          } else {
+            return res.status(409).json({ success: false, message: 'تعارض مفتاح منع التكرار: تم استخدام نفس المفتاح مع بيانات استرداد مختلفة.' });
+          }
+        }
+      }
+
       const deposit = memoryState.securityDeposits.find((d: any) => d.id === id);
       if (!deposit) {
-        return res.status(404).json({ success: false, message: 'سجل التأمين غير موجود.' });
+        return res.status(404).json({ success: false, message: 'سجل التأمين المطلوب استرداده غير موجود.' });
+      }
+
+      // 2. Strict Real Property Scope Verification
+      let realPropertyId: string | null = null;
+      if (deposit.bookingId) {
+        const bk = (memoryState.bookings || []).find((b: any) => b.id === deposit.bookingId);
+        if (bk) {
+          const u = (memoryState.units || []).find((unit: any) => unit.id === bk.unitId);
+          realPropertyId = u?.propertyId || null;
+        }
+      } else if (deposit.leaseId) {
+        const ls = (memoryState.leases || []).find((l: any) => l.id === deposit.leaseId);
+        if (ls) {
+          const u = (memoryState.units || []).find((unit: any) => unit.id === ls.unitId);
+          realPropertyId = u?.propertyId || null;
+        }
+      }
+
+      if (user.role !== 'SUPER_ADMIN') {
+        const isAllowed = realPropertyId && Array.isArray(user.allowedProperties) && (
+          user.allowedProperties.includes('all') || user.allowedProperties.includes(realPropertyId)
+        );
+        if (!isAllowed) {
+          return res.status(403).json({
+            success: false,
+            code: 'FORBIDDEN_PROPERTY_ACCESS',
+            message: 'غير مصرح لك بإجراء استرداد تأمين يتبع مبنى خارج نطاق صلاحياتك المعتمدة.'
+          });
+        }
+      }
+
+      if (deposit.status === 'refunded' || deposit.status === 'deducted') {
+        return res.status(400).json({ success: false, message: 'تم استرداد أو خصم هذا التأمين بالكامل سلفاً.' });
       }
 
       const totalDeposit = Number(deposit.amount || 0);
       const currentRefunded = Number(deposit.refundedAmount || 0);
       const currentDeducted = Number(deposit.deductedAmount || 0);
-      const availableBalance = Math.max(0, totalDeposit - currentRefunded - currentDeducted);
+      const availableBalance = Math.max(0, Math.round((totalDeposit - currentRefunded - currentDeducted) * 100) / 100);
 
-      const reqRefund = Number(refundAmount || 0);
-      const reqDeduct = Number(deductedAmount || 0);
-
-      if (reqRefund + reqDeduct > availableBalance + 0.001) {
+      if (totalOp > availableBalance + 0.001) {
         return res.status(400).json({
           success: false,
-          message: `المبلغ المطلوب (${reqRefund + reqDeduct} ر.س) يتجاوز الرصيد المتاح من التأمين (${availableBalance} ر.س).`
+          message: `المبلغ المطلوب (${totalOp} ر.س) يتجاوز الرصيد المتاح من التأمين (${availableBalance} ر.س).`
         });
       }
 
-      deposit.refundedAmount = currentRefunded + reqRefund;
-      deposit.deductedAmount = currentDeducted + reqDeduct;
-      deposit.deductionReason = deductionReason || deposit.deductionReason;
+      deposit.refundedAmount = Math.round((currentRefunded + refNum) * 100) / 100;
+      deposit.deductedAmount = Math.round((currentDeducted + dedNum) * 100) / 100;
+      deposit.deductionReason = deductionReason ? deductionReason.trim() : deposit.deductionReason;
       deposit.refundMethod = refundMethod;
-      deposit.refundReference = refundReference || `REF-${Date.now().toString().slice(-6)}`;
+      deposit.refundReference = refundReference ? refundReference.trim() : deposit.refundReference;
       deposit.refundType = refundType || 'actual_payout';
       deposit.refundedByUserId = user.userId;
       deposit.refundedAt = new Date().toISOString();
@@ -1964,24 +2120,65 @@ export async function startServer(customPort?: number) {
         deposit.status = 'partially_refunded';
       }
 
+      const transType = dedNum > 0 && refNum === 0 ? 'deduction' : (refundType === 'preauth_release' ? 'preauth_release' : 'refund');
+      const transAmount = refNum > 0 ? refNum : dedNum;
+
+      const transRecord = {
+        id: `sdt_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+        depositId: deposit.id,
+        type: transType,
+        amount: transAmount,
+        method: refundMethod,
+        reference: refundReference ? refundReference.trim() : (refundType === 'preauth_release' ? 'PREAUTH-RELEASE' : 'REF-LEDGER'),
+        reason: deductionReason ? deductionReason.trim() : null,
+        executedByUserId: user.userId,
+        executedAt: new Date().toISOString(),
+        status: 'completed',
+        idempotencyKey: idempotencyKey || null,
+        notes: refNum > 0 && dedNum > 0 ? `استرداد بقيمة ${refNum} ر.س مع خصم بقيمة ${dedNum} ر.س` : null,
+        createdAt: new Date().toISOString()
+      };
+
+      memoryState.securityDepositTransactions.push(transRecord);
+
+      const responsePayload = {
+        securityDeposit: deposit,
+        transaction: transRecord,
+        availableBalance: Math.max(0, Math.round((totalDeposit - deposit.refundedAmount - deposit.deductedAmount) * 100) / 100),
+        message: 'تمت معالجة استرداد التأمين وتوثيق الحركة المستقلة في سجل الحركات بنجاح.'
+      };
+
+      if (idempotencyKey) {
+        memoryState.idempotencyRecords.push({
+          id: `idemp_${Date.now()}`,
+          key: idempotencyKey,
+          operationType: 'security_deposit_refund',
+          userId: user.userId,
+          requestHash,
+          statusCode: 200,
+          responseBody: responsePayload,
+          createdAt: new Date().toISOString()
+        });
+      }
+
       persistFallbackState();
 
       await recordAuditLogInDb({
         userId: user.userId,
-        userName: user.username || 'المسؤول المالي',
-        action: 'استرداد تأمين مالي',
+        userName: `${user.username || 'المسؤول المالي'} (${user.role})`,
+        action: 'استرداد تأمين مالي معتمد',
         module: 'الإدارة المالية والتأمينات',
-        details: `معالجة استرداد تأمين بقيمة ${reqRefund} ر.س وخصم ${reqDeduct} ر.س بطريقة ${refundMethod}`,
+        details: `معالجة استرداد تأمين بقيمة ${refNum} ر.س وخصم ${dedNum} ر.س بطريقة ${refundMethod}`,
         ipAddress: req.ip
       });
 
       return res.json({
         success: true,
-        securityDeposit: deposit,
-        message: 'تمت معالجة استرداد التأمين وتحديث الأرصدة وسجل التدقيق بنجاح.'
+        ...responsePayload
       });
     } catch (err: any) {
-      return res.status(400).json({ success: false, message: err?.message || 'فشل معالجة استرداد التأمين.' });
+      const status = err?.statusCode || 400;
+      return res.status(status).json({ success: false, message: err?.message || 'فشل معالجة استرداد التأمين.' });
     }
   });
 
@@ -2270,7 +2467,21 @@ export async function startServer(customPort?: number) {
       if (process.env.DATABASE_URL) {
         stateToExport = await exportFullDatabase();
       } else {
-        stateToExport = memoryState;
+        const fullMemoryExport: any = {
+          metadata: {
+            exportedAt: new Date().toISOString(),
+            version: '2.0.0',
+            schema: 'MemoryFallback-LuxuryHome'
+          },
+          settings: memoryState.settings || {
+            companyName: 'Luxury home منزل الفخامة',
+            companyNameEn: 'Luxury Home'
+          }
+        };
+        for (const collName of REQUIRED_FULL_BACKUP_COLLECTIONS) {
+          fullMemoryExport[collName] = Array.isArray(memoryState[collName]) ? memoryState[collName] : [];
+        }
+        stateToExport = fullMemoryExport;
       }
 
       // Read files from uploads and private_docs
@@ -2342,6 +2553,15 @@ export async function startServer(customPort?: number) {
       const rawData = fs.readFileSync(backupFilePath, 'utf-8');
       const parsedPackage = JSON.parse(rawData);
       const restored = parsedPackage.data || parsedPackage;
+
+      // Always validate package integrity before any database or memory state mutation
+      const validation = validateBackupPackageIntegrity(restored);
+      if (!validation.isValid) {
+        return res.status(400).json({
+          success: false,
+          message: `تم رفض استعادة النسخة الاحتياطية لعدم اكتمالها أو وجود أخطاء في بنيتها: ${validation.errors.join(' | ')}`
+        });
+      }
 
       if (process.env.DATABASE_URL) {
         await restoreFullDatabaseInDb(restored);

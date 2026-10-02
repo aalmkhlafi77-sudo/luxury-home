@@ -1,5 +1,7 @@
 import { startServer } from '../server.js';
 import http from 'http';
+import path from 'path';
+import fs from 'fs';
 
 function makeRequest(options: http.RequestOptions, body?: any): Promise<{ status: number; data: any }> {
   return new Promise((resolve, reject) => {
@@ -143,7 +145,45 @@ async function runApiTests() {
 
     // Test 6: Booking Concurrency Check (Atomic double-booking prevention)
     console.log('\n[Test 6] Testing Booking Concurrency Check (/api/bookings/check-and-reserve)...');
-    const testUnitId = `unit_concurrency_test_${Date.now()}`;
+    
+    // Create dedicated property & unit for concurrency test
+    const propConcRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/properties',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    }, {
+      name: 'مبنى اختبار التزامن',
+      code: `BLD_CONC_${Date.now()}`,
+      address: 'شارع التزامن',
+      city: 'الرياض',
+      district: 'العليا',
+      floorsCount: 1
+    });
+    const propConcId = propConcRes.data?.property?.id;
+    const propConcFloor = propConcRes.data?.floors?.[0] || propConcRes.data?.property?.floors?.[0];
+
+    const unitConcRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/units',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    }, {
+      propertyId: propConcId,
+      floorId: propConcFloor?.id,
+      unitNumber: `CONC-${Date.now().toString().slice(-4)}`,
+      title: 'شقة اختبار التزامن',
+      dailyRate: 500
+    });
+    const testUnitId = unitConcRes.data?.unit?.id;
     
     const req1 = makeRequest({
       hostname: '127.0.0.1',
@@ -793,9 +833,9 @@ async function runApiTests() {
     }
 
     // =====================================================
-    // Test 13: Full Backup Package Export & Restore with Static Files (Task 5)
+    // Test 13: Full Backup Package Export & Restore Protection Tests
     // =====================================================
-    console.log('\n[Test 13] Testing Comprehensive Backup Export & Restore (Data + Files)...');
+    console.log('\n[Test 13] Testing Comprehensive Backup Export & Strict Restore Incomplete Package Protection...');
     const backupExport = await makeRequest({
       hostname: '127.0.0.1',
       port: PORT,
@@ -812,6 +852,7 @@ async function runApiTests() {
       failures++;
     }
 
+    // 13.1 Test restoring complete valid backup
     const backupRestore = await makeRequest({
       hostname: '127.0.0.1',
       port: PORT,
@@ -824,10 +865,41 @@ async function runApiTests() {
     }, { backupFileName: exportedFile });
 
     if (backupRestore.status === 200) {
-      console.log('✅ PASS: Backup restored successfully into database and static files environment.');
+      console.log('✅ PASS: Complete backup restored successfully into database and static files environment.');
     } else {
       console.error('❌ FAIL: Backup restore failed:', backupRestore.data);
       failures++;
+    }
+
+    // 13.2 Mandatory Incomplete Backup Rejection Tests:
+    // Create corrupted/incomplete backup copies missing essential sections
+    const backupDir = path.resolve(process.cwd(), 'backups');
+    const validRaw = JSON.parse(fs.readFileSync(path.join(backupDir, exportedFile), 'utf-8'));
+
+    const testIncompleteSections = ['payments', 'installments', 'securityDeposits', 'securityDepositTransactions', 'documentRecords'];
+    for (const missingSec of testIncompleteSections) {
+      const corruptedData = JSON.parse(JSON.stringify(validRaw));
+      delete corruptedData.data[missingSec];
+      const corruptedFileName = `corrupted_missing_${missingSec}_${Date.now()}.json`;
+      fs.writeFileSync(path.join(backupDir, corruptedFileName), JSON.stringify(corruptedData), 'utf-8');
+
+      const corruptedRestoreRes = await makeRequest({
+        hostname: '127.0.0.1',
+        port: PORT,
+        path: '/api/backup/restore',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      }, { backupFileName: corruptedFileName });
+
+      if (corruptedRestoreRes.status === 400 && corruptedRestoreRes.data?.message?.includes(missingSec)) {
+        console.log(`✅ PASS: Incomplete backup missing '${missingSec}' rejected before deletion with HTTP 400!`);
+      } else {
+        console.error(`❌ FAIL: Incomplete backup missing '${missingSec}' was not rejected properly. Status: ${corruptedRestoreRes.status}`);
+        failures++;
+      }
     }
 
     // =====================================================
@@ -997,9 +1069,219 @@ async function runApiTests() {
     });
 
     if (depCancelRes.status === 200) {
-      console.log('✅ PASS: Booking cancelled successfully.');
+      console.log('✅ PASS: Booking cancelled successfully without auto-refunding deposit.');
     } else {
       console.error('❌ FAIL: Booking cancellation failed:', depCancelRes.data);
+      failures++;
+    }
+
+    // Get current state to locate deposit ID
+    const stateAfterCancel = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/state',
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+
+    const allDeposits = stateAfterCancel.data?.state?.securityDeposits || stateAfterCancel.data?.securityDeposits || [];
+    let testDeposit = allDeposits.find((sd: any) => sd.bookingId === depBookingId);
+    if (!testDeposit) {
+      testDeposit = allDeposits[0];
+    }
+
+    const testDepositId = testDeposit?.id;
+
+    // 15.1 PM of Property A tries to refund deposit belonging to Property B (Must be blocked 403)
+    let depPropB = allDeposits.find((sd: any) => sd.bookingId === bookingPropBId);
+    const depPropBId = depPropB?.id;
+
+    const crossDepositRefund = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: `/api/security-deposits/${depPropBId}/refund`,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${pmToken}`
+      }
+    }, {
+      refundAmount: 500,
+      refundMethod: 'bank_transfer',
+      refundReference: 'BANK-TRX-CROSS-01'
+    });
+
+    if (crossDepositRefund.status === 403) {
+      console.log('✅ PASS: PM blocked with HTTP 403 from refunding deposit of another building!');
+    } else {
+      console.error('❌ FAIL: Cross-building deposit refund was not blocked with 403:', crossDepositRefund.status, crossDepositRefund.data);
+      failures++;
+    }
+
+    // 15.2 Reject negative and zero amounts (Must fail 400)
+    const negRefund = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: `/api/security-deposits/${testDepositId}/refund`,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    }, {
+      refundAmount: -200,
+      refundMethod: 'bank_transfer',
+      refundReference: 'BANK-NEG-01'
+    });
+
+    if (negRefund.status === 400) {
+      console.log('✅ PASS: Negative refund amount rejected with HTTP 400.');
+    } else {
+      console.error('❌ FAIL: Negative refund amount was not rejected:', negRefund.status);
+      failures++;
+    }
+
+    // 15.3 Reject over-balance amount (Must fail 400)
+    const overBalanceRefund = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: `/api/security-deposits/${testDepositId}/refund`,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    }, {
+      refundAmount: 2500, // Deposit is only 1000
+      refundMethod: 'bank_transfer',
+      refundReference: 'BANK-OVER-01'
+    });
+
+    if (overBalanceRefund.status === 400) {
+      console.log('✅ PASS: Over-balance refund amount rejected with HTTP 400.');
+    } else {
+      console.error('❌ FAIL: Over-balance refund amount was not rejected:', overBalanceRefund.status);
+      failures++;
+    }
+
+    // 15.4 Reject manual refund without reference (Must fail 400)
+    const noRefRefund = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: `/api/security-deposits/${testDepositId}/refund`,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    }, {
+      refundAmount: 300,
+      refundMethod: 'bank_transfer'
+      // No refundReference provided
+    });
+
+    if (noRefRefund.status === 400) {
+      console.log('✅ PASS: Manual refund without required proof reference rejected with HTTP 400.');
+    } else {
+      console.error('❌ FAIL: Manual refund without reference was not rejected:', noRefRefund.status);
+      failures++;
+    }
+
+    // 15.5 Valid Partial Refund with Ledger Tracking & Idempotency
+    const refundIdemKey = `refund_idem_key_${Date.now()}`;
+    const partialRefundRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: `/api/security-deposits/${testDepositId}/refund`,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    }, {
+      refundAmount: 400,
+      refundMethod: 'bank_transfer',
+      refundReference: 'BANK-REF-REAL-8899',
+      idempotencyKey: refundIdemKey
+    });
+
+    if (partialRefundRes.status === 200 && partialRefundRes.data?.transaction?.id) {
+      console.log('✅ PASS: Partial refund executed successfully and recorded in SecurityDepositTransaction!');
+    } else {
+      console.error('❌ FAIL: Partial refund failed:', partialRefundRes.data);
+      failures++;
+    }
+
+    // 15.6 Re-send same partial refund with same idempotency key (Must return previous result without duplicating)
+    const duplicateRefundRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: `/api/security-deposits/${testDepositId}/refund`,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    }, {
+      refundAmount: 400,
+      refundMethod: 'bank_transfer',
+      refundReference: 'BANK-REF-REAL-8899',
+      idempotencyKey: refundIdemKey
+    });
+
+    if (duplicateRefundRes.status === 200 && duplicateRefundRes.data?.transaction?.id === partialRefundRes.data?.transaction?.id) {
+      console.log('✅ PASS: Duplicate refund request returned identical transaction idempotently!');
+    } else {
+      console.error('❌ FAIL: Duplicate refund was not handled idempotently:', duplicateRefundRes.data);
+      failures++;
+    }
+
+    // 15.7 Send different payload with same idempotency key (Must return 409 Conflict)
+    const conflictRefundRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: `/api/security-deposits/${testDepositId}/refund`,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    }, {
+      refundAmount: 500, // Different amount
+      refundMethod: 'bank_transfer',
+      refundReference: 'BANK-REF-DIFFERENT',
+      idempotencyKey: refundIdemKey
+    });
+
+    if (conflictRefundRes.status === 409) {
+      console.log('✅ PASS: Conflicting payload on same refund idempotency key rejected with HTTP 409 Conflict!');
+    } else {
+      console.error('❌ FAIL: Conflicting refund payload was not rejected with 409:', conflictRefundRes.status);
+      failures++;
+    }
+
+    // 15.8 Execute Deduction with Reason and Final Balance Clearance
+    const deductRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: `/api/security-deposits/${testDepositId}/refund`,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    }, {
+      refundAmount: 300,
+      deductedAmount: 300,
+      deductionReason: 'تعويض تلفيات باب الشقة مع استرداد المتبقي',
+      refundMethod: 'cash',
+      refundReference: 'CASH-VOUCHER-5521'
+    });
+
+    if (deductRes.status === 200 && deductRes.data?.securityDeposit?.status === 'refunded') {
+      console.log('✅ PASS: Security deposit fully cleared (refunded + deducted) and balances reconciled perfectly!');
+    } else {
+      console.error('❌ FAIL: Deduction and final refund failed:', deductRes.data);
       failures++;
     }
 

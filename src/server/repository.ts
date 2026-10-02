@@ -1305,26 +1305,145 @@ export async function exportFullDatabase() {
   });
 }
 
-export async function restoreFullDatabaseInDb(backupData: any) {
-  if (!process.env.DATABASE_URL) return null;
+export const REQUIRED_FULL_BACKUP_COLLECTIONS = [
+  'users',
+  'properties',
+  'floors',
+  'amenities',
+  'units',
+  'parkingSpots',
+  'allocations',
+  'bookings',
+  'leases',
+  'installments',
+  'securityDeposits',
+  'securityDepositTransactions',
+  'payments',
+  'expenses',
+  'expenseAllocations',
+  'expensePayments',
+  'expenseCategories',
+  'recurringSchedules',
+  'tenantAdjustments',
+  'contentSections',
+  'documentRecords',
+  'idempotencyRecords',
+  'auditLogs'
+];
+
+export function validateBackupPackageIntegrity(backupData: any): { isValid: boolean; errors: string[] } {
+  const errors: string[] = [];
+
   if (!backupData || typeof backupData !== 'object') {
-    throw new Error('بيانات النسخة الاحتياطية غير صالحة.');
+    return { isValid: false, errors: ['هيكل بيانات النسخة الاحتياطية غير صالح أو فارغ.'] };
   }
 
-  // Pre-restoration integrity validation (Reject incomplete backups before any deletions)
-  const requiredCollections = [
-    'properties',
-    'floors',
-    'units',
-    'allocations',
-    'bookings',
-    'leases',
-    'expenses'
-  ];
+  // 1. Validate All Mandatory Collections (Distinguish between empty array [] vs missing/undefined)
+  const missingCollections: string[] = [];
+  for (const collName of REQUIRED_FULL_BACKUP_COLLECTIONS) {
+    if (!Array.isArray(backupData[collName])) {
+      missingCollections.push(collName);
+    }
+  }
 
-  const missingCollections = requiredCollections.filter(key => !Array.isArray(backupData[key]));
   if (missingCollections.length > 0) {
-    throw new Error(`فشل التحقق من بنية النسخة الاحتياطية: النسخة ناقصة وتفتقر للأقسام الإلزامية التالية: (${missingCollections.join(', ')}). تم رفض الاستعادة لمنع فقدان البيانات.`);
+    errors.push(`فشل التحقق من اكتمال النسخة: النسخة الاحتياطية ناقصة وتفتقر للأقسام التالية: (${missingCollections.join(', ')}).`);
+  }
+
+  if (backupData.settings === undefined) {
+    errors.push('فشل التحقق من اكتمال النسخة: إعدادات المنشأة (settings) مفقودة من حزمة النسخ الاحتياطي.');
+  }
+
+  // If missing collections found, abort early with exact list
+  if (errors.length > 0) {
+    return { isValid: false, errors };
+  }
+
+  // 2. Validate Relational Consistency Across Entities Before Any Deletion
+  const propIdSet = new Set<string>((backupData.properties || []).map((p: any) => String(p.id)));
+  const unitIdSet = new Set<string>((backupData.units || []).map((u: any) => String(u.id)));
+  const bookingIdSet = new Set<string>((backupData.bookings || []).map((b: any) => String(b.id)));
+  const leaseIdSet = new Set<string>((backupData.leases || []).map((l: any) => String(l.id)));
+  const depositIdSet = new Set<string>((backupData.securityDeposits || []).map((d: any) => String(d.id)));
+  const expenseIdSet = new Set<string>((backupData.expenses || []).map((e: any) => String(e.id)));
+
+  for (const f of backupData.floors || []) {
+    if (f.propertyId && !propIdSet.has(String(f.propertyId))) {
+      errors.push(`علاقة غير متطابقة: الطابق ${f.id} يشير إلى مبنى غير موجود (${f.propertyId}).`);
+    }
+  }
+
+  for (const u of backupData.units || []) {
+    if (u.propertyId && !propIdSet.has(String(u.propertyId))) {
+      errors.push(`علاقة غير متطابقة: الوحدة ${u.id} تشير إلى مبنى غير موجود (${u.propertyId}).`);
+    }
+  }
+
+  for (const b of backupData.bookings || []) {
+    if (b.unitId && !unitIdSet.has(String(b.unitId))) {
+      errors.push(`علاقة غير متطابقة: الحجز ${b.id} يشير إلى وحدة غير موجودة (${b.unitId}).`);
+    }
+  }
+
+  for (const l of backupData.leases || []) {
+    if (l.unitId && !unitIdSet.has(String(l.unitId))) {
+      errors.push(`علاقة غير متطابقة: العقد ${l.id} يشير إلى وحدة غير موجودة (${l.unitId}).`);
+    }
+  }
+
+  for (const inst of backupData.installments || []) {
+    if (inst.leaseId && !leaseIdSet.has(String(inst.leaseId))) {
+      errors.push(`علاقة غير متطابقة: القسط ${inst.id} يشير إلى عقد غير موجود (${inst.leaseId}).`);
+    }
+  }
+
+  for (const sd of backupData.securityDeposits || []) {
+    if (sd.bookingId && !bookingIdSet.has(String(sd.bookingId))) {
+      errors.push(`علاقة غير متطابقة: التأمين ${sd.id} يشير إلى حجز غير موجود (${sd.bookingId}).`);
+    }
+    if (sd.leaseId && !leaseIdSet.has(String(sd.leaseId))) {
+      errors.push(`علاقة غير متطابقة: التأمين ${sd.id} يشير إلى عقد غير موجود (${sd.leaseId}).`);
+    }
+  }
+
+  for (const sdt of backupData.securityDepositTransactions || []) {
+    if (sdt.depositId && !depositIdSet.has(String(sdt.depositId))) {
+      errors.push(`علاقة غير متطابقة: حركة التأمين ${sdt.id} تشير إلى سجل تأمين غير موجود (${sdt.depositId}).`);
+    }
+  }
+
+  for (const pay of backupData.payments || []) {
+    if (pay.bookingId && !bookingIdSet.has(String(pay.bookingId))) {
+      errors.push(`علاقة غير متطابقة: الدفعة ${pay.id} تشير إلى حجز غير موجود (${pay.bookingId}).`);
+    }
+    if (pay.leaseId && !leaseIdSet.has(String(pay.leaseId))) {
+      errors.push(`علاقة غير متطابقة: الدفعة ${pay.id} تشير إلى عقد غير موجود (${pay.leaseId}).`);
+    }
+  }
+
+  for (const ea of backupData.expenseAllocations || []) {
+    if (ea.expenseId && !expenseIdSet.has(String(ea.expenseId))) {
+      errors.push(`علاقة غير متطابقة: توزيع المصروف ${ea.id} يشير إلى مصروف غير موجود (${ea.expenseId}).`);
+    }
+  }
+
+  for (const ep of backupData.expensePayments || []) {
+    if (ep.expenseId && !expenseIdSet.has(String(ep.expenseId))) {
+      errors.push(`علاقة غير متطابقة: سداد المصروف ${ep.id} يشير إلى مصروف غير موجود (${ep.expenseId}).`);
+    }
+  }
+
+  return { isValid: errors.length === 0, errors };
+}
+
+export async function restoreFullDatabaseInDb(backupData: any) {
+  if (!process.env.DATABASE_URL) return null;
+
+  // Pre-restoration strict validation across all collections and relations
+  const validation = validateBackupPackageIntegrity(backupData);
+  if (!validation.isValid) {
+    const combinedMessage = validation.errors.join(' | ');
+    throw new Error(`تم رفض استعادة النسخة الاحتياطية قبل بدء أي حذف حفاظاً على البيانات: ${combinedMessage}`);
   }
 
   return await prisma.$transaction(async (tx) => {
