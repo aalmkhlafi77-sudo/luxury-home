@@ -279,6 +279,7 @@ model Booking {
   updatedAt         DateTime      @updatedAt
 
   payments          PaymentRecord[]
+  securityDeposits  SecurityDepositRecord[]
 }
 
 model Lease {
@@ -343,14 +344,18 @@ model PaymentRecord {
 }
 
 model SecurityDepositRecord {
-  id               String    @id @default(uuid())
-  leaseId          String?
-  lease            Lease?    @relation(fields: [leaseId], references: [id], onDelete: SetNull)
-  bookingId        String?
-  amount           Decimal   @db.Decimal(12, 2)
-  status           String    @default("held") // held, pending_refund, refunded, partially_refunded, deducted
-  deductedAmount   Decimal   @default(0) @db.Decimal(12, 2)
-  refundedAmount   Decimal   @default(0) @db.Decimal(12, 2)
+  id                   String    @id @default(uuid())
+  leaseId              String?
+  lease                Lease?    @relation(fields: [leaseId], references: [id], onDelete: SetNull)
+  bookingId            String?
+  booking              Booking?  @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  amount               Decimal   @db.Decimal(12, 2)
+  collectedAmount      Decimal   @default(0) @db.Decimal(12, 2)
+  collectionReference  String?
+  collectionVerifiedAt DateTime?
+  status               String    @default("held") // held, pending_refund, refunded, partially_refunded, deducted
+  deductedAmount       Decimal   @default(0) @db.Decimal(12, 2)
+  refundedAmount       Decimal   @default(0) @db.Decimal(12, 2)
   deductionReason  String?
   refundMethod     String?   // bank_transfer, gateway_reversal, cash
   refundReference  String?

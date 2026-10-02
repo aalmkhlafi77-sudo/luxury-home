@@ -60,6 +60,10 @@ import {
   processSecurityDepositRefund
 } from './src/server/reservationService.js';
 import {
+  refundDeposit,
+  RefundError
+} from './src/server/depositRefundService.js';
+import {
   computeCostAllocation
 } from './src/server/financialEngine.js';
 
@@ -77,6 +81,10 @@ if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR, { recursive: true });
 
 // Standalone in-memory fallback cache only if DATABASE_URL is not set
 let memoryState: any = null;
+
+export function getMemoryState() {
+  return memoryState;
+}
 
 async function initializeFallbackState() {
   if (fs.existsSync(SERVER_DB_FILE)) {
@@ -178,7 +186,7 @@ export async function startServer(customPort?: number) {
   app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-admin-setup-secret');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-admin-setup-secret, X-Idempotency-Key, x-idempotency-key');
     if (req.method === 'OPTIONS') return res.sendStatus(200);
     next();
   });
@@ -1948,239 +1956,73 @@ export async function startServer(customPort?: number) {
   });
 
   // Security Deposit Processing & Refund Endpoint (Explicit Financial Action)
-  apiRouter.post('/security-deposits/:id/refund', authenticateToken, requireRoles(['SUPER_ADMIN', 'ACCOUNTANT', 'PROPERTY_MANAGER']), async (req: AuthenticatedRequest, res: Response) => {
-    try {
-      const { id } = req.params;
-      const { refundAmount, deductedAmount, deductionReason, refundMethod, refundReference, refundType, providerConfirmation } = req.body;
-      const user = req.user!;
-      const idempotencyKey = (req.headers['x-idempotency-key'] as string) || req.body.idempotencyKey;
-
-      if (process.env.DATABASE_URL) {
-        const result = await processSecurityDepositRefund({
-          depositId: id,
-          refundAmount,
-          deductedAmount,
-          deductionReason,
-          refundMethod,
-          refundReference,
-          refundType: refundType || 'actual_payout',
-          userId: user.userId,
-          userRole: user.role,
-          userAllowedProperties: user.allowedProperties || ['all'],
-          idempotencyKey,
-          providerConfirmation
-        });
-
-        await recordAuditLogInDb({
-          userId: user.userId,
-          userName: `${user.username || 'المسؤول المالي'} (${user.role})`,
-          action: 'استرداد تأمين مالي معتمد',
-          module: 'الإدارة المالية والتأمينات',
-          details: `معالجة استرداد تأمين للسجل ${id} بمبلغ ${refundAmount || 0} ر.س وخصم ${deductedAmount || 0} ر.س بطريقة ${refundMethod}`,
-          ipAddress: req.ip
-        });
-
-        return res.json({
-          success: true,
-          ...(result as any)
-        });
-      }
-
-      // Memory fallback processing
-      if (!memoryState.securityDeposits) memoryState.securityDeposits = [];
-      if (!memoryState.securityDepositTransactions) memoryState.securityDepositTransactions = [];
-      if (!memoryState.idempotencyRecords) memoryState.idempotencyRecords = [];
-
-      // 1. Strict Numeric Validation
-      const rawRefund = refundAmount !== undefined && refundAmount !== null ? Number(refundAmount) : 0;
-      const rawDeduct = deductedAmount !== undefined && deductedAmount !== null ? Number(deductedAmount) : 0;
-
-      if (isNaN(rawRefund) || !isFinite(rawRefund) || rawRefund < 0) {
-        return res.status(400).json({ success: false, message: 'مبلغ الاسترداد المالي غير صالح أو يحتوي على قيمة سالبة.' });
-      }
-      if (isNaN(rawDeduct) || !isFinite(rawDeduct) || rawDeduct < 0) {
-        return res.status(400).json({ success: false, message: 'مبلغ الخصم من التأمين غير صالح أو يحتوي على قيمة سالبة.' });
-      }
-
-      const refNum = Math.round(rawRefund * 100) / 100;
-      const dedNum = Math.round(rawDeduct * 100) / 100;
-      const totalOp = Math.round((refNum + dedNum) * 100) / 100;
-
-      if (totalOp <= 0) {
-        return res.status(400).json({ success: false, message: 'يجب تحديد مبلغ استرداد أو مبلغ خصم موجب أكبر من الصفر.' });
-      }
-
-      if (dedNum > 0 && (!deductionReason || !deductionReason.trim())) {
-        return res.status(400).json({ success: false, message: 'سبب الخصم إلزامي عند تنفيذ أي خصم من رصيد التأمين.' });
-      }
-
-      if (!refundMethod || !refundMethod.trim()) {
-        return res.status(400).json({ success: false, message: 'طريقة الاسترداد (refundMethod) مطلوبة.' });
-      }
-
-      const isManual = ['bank_transfer', 'cash', 'mada', 'cheque', 'manual'].includes(refundMethod.toLowerCase());
-      const isElectronic = ['gateway_reversal', 'online_gateway', 'card_refund'].includes(refundMethod.toLowerCase());
-
-      if (isManual && (!refundReference || !refundReference.trim())) {
-        return res.status(400).json({ success: false, message: 'مرجع الإثبات البنكي / الإيصال مطلوب صراحة للاسترداد اليدوي.' });
-      }
-
-      if (isElectronic && (!providerConfirmation || !providerConfirmation.confirmed)) {
-        return res.status(400).json({ success: false, message: 'لا يمكن تسجيل استرداد إلكتروني ناجح دون تأكيد موثوق من بوابة الدفع أو مزود الخدمة.' });
-      }
-
-      // Check idempotency in memory
-      const canonicalPayload = JSON.stringify({
-        depositId: id,
-        refundAmount: refNum.toFixed(2),
-        deductedAmount: dedNum.toFixed(2),
-        deductionReason: (deductionReason || '').trim(),
-        refundMethod,
-        refundReference: (refundReference || '').trim(),
-        refundType: refundType || 'actual_payout'
-      });
-      const requestHash = crypto.createHash('sha256').update(canonicalPayload).digest('hex');
-
-      if (idempotencyKey) {
-        const existingKey = memoryState.idempotencyRecords.find((r: any) => r.key === idempotencyKey && r.operationType === 'security_deposit_refund');
-        if (existingKey) {
-          if (existingKey.userId && existingKey.userId !== user.userId && user.role !== 'SUPER_ADMIN') {
-            return res.status(403).json({ success: false, message: 'غير مصرح لك بالوصول إلى نتيجة مفتاح عملية يخص مستخدماً آخر.' });
-          }
-          if (existingKey.requestHash === requestHash) {
-            return res.json({ success: true, ...existingKey.responseBody });
-          } else {
-            return res.status(409).json({ success: false, message: 'تعارض مفتاح منع التكرار: تم استخدام نفس المفتاح مع بيانات استرداد مختلفة.' });
-          }
-        }
-      }
-
-      const deposit = memoryState.securityDeposits.find((d: any) => d.id === id);
-      if (!deposit) {
-        return res.status(404).json({ success: false, message: 'سجل التأمين المطلوب استرداده غير موجود.' });
-      }
-
-      // 2. Strict Real Property Scope Verification
-      let realPropertyId: string | null = null;
-      if (deposit.bookingId) {
-        const bk = (memoryState.bookings || []).find((b: any) => b.id === deposit.bookingId);
-        if (bk) {
-          const u = (memoryState.units || []).find((unit: any) => unit.id === bk.unitId);
-          realPropertyId = u?.propertyId || null;
-        }
-      } else if (deposit.leaseId) {
-        const ls = (memoryState.leases || []).find((l: any) => l.id === deposit.leaseId);
-        if (ls) {
-          const u = (memoryState.units || []).find((unit: any) => unit.id === ls.unitId);
-          realPropertyId = u?.propertyId || null;
-        }
-      }
-
-      if (user.role !== 'SUPER_ADMIN') {
-        const isAllowed = realPropertyId && Array.isArray(user.allowedProperties) && (
-          user.allowedProperties.includes('all') || user.allowedProperties.includes(realPropertyId)
-        );
-        if (!isAllowed) {
-          return res.status(403).json({
+  apiRouter.post(
+    '/security-deposits/:id/refund',
+    authenticateToken,
+    requireRoles(['SUPER_ADMIN', 'ACCOUNTANT', 'PROPERTY_MANAGER']),
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        if (!req.user) {
+          return res.status(401).json({
             success: false,
-            code: 'FORBIDDEN_PROPERTY_ACCESS',
-            message: 'غير مصرح لك بإجراء استرداد تأمين يتبع مبنى خارج نطاق صلاحياتك المعتمدة.'
+            message: 'تسجيل الدخول مطلوب.',
           });
         }
-      }
 
-      if (deposit.status === 'refunded' || deposit.status === 'deducted') {
-        return res.status(400).json({ success: false, message: 'تم استرداد أو خصم هذا التأمين بالكامل سلفاً.' });
-      }
+        const body = req.body;
 
-      const totalDeposit = Number(deposit.amount || 0);
-      const currentRefunded = Number(deposit.refundedAmount || 0);
-      const currentDeducted = Number(deposit.deductedAmount || 0);
-      const availableBalance = Math.max(0, Math.round((totalDeposit - currentRefunded - currentDeducted) * 100) / 100);
+        if (!body || typeof body !== 'object' || Array.isArray(body)) {
+          return res.status(400).json({
+            success: false,
+            message: 'صيغة الطلب غير صالحة.',
+          });
+        }
 
-      if (totalOp > availableBalance + 0.001) {
-        return res.status(400).json({
+        if (Object.prototype.hasOwnProperty.call(
+          body,
+          'providerConfirmation',
+        )) {
+          return res.status(400).json({
+            success: false,
+            message: 'لا يُقبل تأكيد مزود الدفع من المتصفح.',
+          });
+        }
+
+        const result = await refundDeposit({
+          depositId: req.params.id,
+          actorId: req.user.userId,
+          idempotencyKey: req.get('X-Idempotency-Key') || body?.idempotencyKey,
+          refundAmount: body.refundAmount,
+          deductedAmount: body.deductedAmount,
+          deductionReason: body.deductionReason,
+          refundMethod: body.refundMethod,
+          refundReference: body.refundReference,
+          refundType: body.refundType,
+        });
+
+        return res.status(200).json(result);
+      } catch (error: unknown) {
+        if (error instanceof RefundError) {
+          return res.status(error.statusCode).json({
+            success: false,
+            message: error.message,
+          });
+        }
+
+        console.error('[Deposit refund failed]', {
+          errorType: error instanceof Error
+            ? error.name
+            : 'UnknownError',
+        });
+
+        return res.status(503).json({
           success: false,
-          message: `المبلغ المطلوب (${totalOp} ر.س) يتجاوز الرصيد المتاح من التأمين (${availableBalance} ر.س).`
+          message:
+            'تعذر إتمام العملية. أعد المحاولة بمفتاح العملية نفسه.',
         });
       }
-
-      deposit.refundedAmount = Math.round((currentRefunded + refNum) * 100) / 100;
-      deposit.deductedAmount = Math.round((currentDeducted + dedNum) * 100) / 100;
-      deposit.deductionReason = deductionReason ? deductionReason.trim() : deposit.deductionReason;
-      deposit.refundMethod = refundMethod;
-      deposit.refundReference = refundReference ? refundReference.trim() : deposit.refundReference;
-      deposit.refundType = refundType || 'actual_payout';
-      deposit.refundedByUserId = user.userId;
-      deposit.refundedAt = new Date().toISOString();
-
-      if (deposit.refundedAmount + deposit.deductedAmount >= totalDeposit - 0.001) {
-        deposit.status = deposit.deductedAmount >= totalDeposit - 0.001 ? 'deducted' : 'refunded';
-      } else {
-        deposit.status = 'partially_refunded';
-      }
-
-      const transType = dedNum > 0 && refNum === 0 ? 'deduction' : (refundType === 'preauth_release' ? 'preauth_release' : 'refund');
-      const transAmount = refNum > 0 ? refNum : dedNum;
-
-      const transRecord = {
-        id: `sdt_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-        depositId: deposit.id,
-        type: transType,
-        amount: transAmount,
-        method: refundMethod,
-        reference: refundReference ? refundReference.trim() : (refundType === 'preauth_release' ? 'PREAUTH-RELEASE' : 'REF-LEDGER'),
-        reason: deductionReason ? deductionReason.trim() : null,
-        executedByUserId: user.userId,
-        executedAt: new Date().toISOString(),
-        status: 'completed',
-        idempotencyKey: idempotencyKey || null,
-        notes: refNum > 0 && dedNum > 0 ? `استرداد بقيمة ${refNum} ر.س مع خصم بقيمة ${dedNum} ر.س` : null,
-        createdAt: new Date().toISOString()
-      };
-
-      memoryState.securityDepositTransactions.push(transRecord);
-
-      const responsePayload = {
-        securityDeposit: deposit,
-        transaction: transRecord,
-        availableBalance: Math.max(0, Math.round((totalDeposit - deposit.refundedAmount - deposit.deductedAmount) * 100) / 100),
-        message: 'تمت معالجة استرداد التأمين وتوثيق الحركة المستقلة في سجل الحركات بنجاح.'
-      };
-
-      if (idempotencyKey) {
-        memoryState.idempotencyRecords.push({
-          id: `idemp_${Date.now()}`,
-          key: idempotencyKey,
-          operationType: 'security_deposit_refund',
-          userId: user.userId,
-          requestHash,
-          statusCode: 200,
-          responseBody: responsePayload,
-          createdAt: new Date().toISOString()
-        });
-      }
-
-      persistFallbackState();
-
-      await recordAuditLogInDb({
-        userId: user.userId,
-        userName: `${user.username || 'المسؤول المالي'} (${user.role})`,
-        action: 'استرداد تأمين مالي معتمد',
-        module: 'الإدارة المالية والتأمينات',
-        details: `معالجة استرداد تأمين بقيمة ${refNum} ر.س وخصم ${dedNum} ر.س بطريقة ${refundMethod}`,
-        ipAddress: req.ip
-      });
-
-      return res.json({
-        success: true,
-        ...responsePayload
-      });
-    } catch (err: any) {
-      const status = err?.statusCode || 400;
-      return res.status(status).json({ success: false, message: err?.message || 'فشل معالجة استرداد التأمين.' });
-    }
-  });
+    },
+  );
 
   // 6. Cost Allocation & Financial Distribution Engine Endpoint
   apiRouter.post('/financials/allocate', (req: Request, res: Response) => {
