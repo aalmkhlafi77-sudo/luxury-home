@@ -472,30 +472,71 @@ export async function updateUnitInDb(id: string, data: any) {
   return serializeDecimals(updated);
 }
 
+// Canonical deterministic fingerprint hash computation for batch unit creations
+export function computeBatchFingerprint(propertyId: string, floorId: string, units: any[]): string {
+  const canonicalUnits = units.map(u => ({
+    unitNumber: String(u.unitNumber ?? '').trim(),
+    title: String(u.title ?? ''),
+    titleEn: String(u.titleEn ?? ''),
+    type: String(u.type ?? 'apartment'),
+    areaSqm: Number(u.areaSqm ?? 0),
+    floorNumber: Number(u.floorNumber ?? 1),
+    maxGuests: Number(u.maxGuests ?? 3),
+    bedroomsCount: Number(u.bedroomsCount ?? 1),
+    bathroomsCount: Number(u.bathroomsCount ?? 1),
+    bedsCount: Number(u.bedsCount ?? 1),
+    furnishingStatus: String(u.furnishingStatus ?? 'furnished'),
+    allowDaily: Boolean(u.allowDaily !== false),
+    dailyRate: Number(u.dailyRate ?? 0),
+    dailySecurityDeposit: Number(u.dailySecurityDeposit ?? 0),
+    allowMonthly: Boolean(u.allowMonthly !== false),
+    monthlyRate: Number(u.monthlyRate ?? 0),
+    monthlySecurityDeposit: Number(u.monthlySecurityDeposit ?? 0),
+    allowYearly: Boolean(u.allowYearly !== false),
+    annualRate: Number(u.annualRate ?? u.yearlyRate ?? 0),
+    yearlySecurityDeposit: Number(u.yearlySecurityDeposit ?? 0),
+    yearlyPaymentOptions: Array.isArray(u.yearlyPaymentOptions) ? [...u.yearlyPaymentOptions].sort() : ['single_annual', 'semi_annual'],
+    semiAnnualSurchargePercent: Number(u.semiAnnualSurchargePercent ?? 0),
+    cleaningFee: Number(u.cleaningFee ?? 0),
+    securityDeposit: Number(u.securityDeposit ?? 0),
+    taxPercentage: Number(u.taxPercentage ?? 15),
+    operationalStatus: String(u.operationalStatus ?? 'ready'),
+    occupancyStatus: String(u.occupancyStatus ?? 'vacant'),
+    isClean: Boolean(u.isClean !== false),
+    publicationStatus: String(u.publicationStatus ?? 'published'),
+    amenities: Array.isArray(u.amenities) ? [...u.amenities].sort() : [],
+    images: Array.isArray(u.images) ? [...u.images] : [],
+    media: u.media ?? null,
+    spaces: u.spaces ?? null,
+    fittings: u.fittings ?? null,
+    floorPlanUrl: u.floorPlanUrl ?? null,
+    assignedParkingId: u.assignedParkingId ?? null,
+    notes: u.notes ?? null,
+    smartLockPin: u.smartLockPin ?? null
+  }));
+
+  const canonicalPayload = JSON.stringify({
+    propertyId: String(propertyId),
+    floorId: String(floorId),
+    units: canonicalUnits
+  });
+
+  return crypto.createHash('sha256').update(canonicalPayload).digest('hex');
+}
+
 export async function createBatchUnitsInDb(params: {
   propertyId: string;
   floorId: string;
   units: any[];
   idempotencyKey?: string;
   userId?: string;
+  userRole?: string;
 }) {
   if (!process.env.DATABASE_URL) return null;
-  const { propertyId, floorId, units, idempotencyKey, userId } = params;
+  const { propertyId, floorId, units, idempotencyKey, userId, userRole } = params;
 
-  // Calculate payload fingerprint hash for idempotency verification
-  const normalizedPayload = JSON.stringify({
-    propertyId,
-    floorId,
-    units: units.map(u => ({
-      unitNumber: String(u.unitNumber).trim(),
-      type: u.type,
-      areaSqm: Number(u.areaSqm ?? 0),
-      dailyRate: Number(u.dailyRate ?? 0),
-      monthlyRate: Number(u.monthlyRate ?? 0),
-      annualRate: Number(u.annualRate ?? u.yearlyRate ?? 0)
-    }))
-  });
-  const requestHash = crypto.createHash('sha256').update(normalizedPayload).digest('hex');
+  // Calculate comprehensive payload fingerprint hash for idempotency verification
+  const requestHash = computeBatchFingerprint(propertyId, floorId, units);
 
   // If idempotencyKey provided, check existing record
   if (idempotencyKey) {
@@ -509,6 +550,13 @@ export async function createBatchUnitsInDb(params: {
     });
 
     if (existingRecord) {
+      // Verify user scope: must match creator or be SUPER_ADMIN
+      if (existingRecord.userId && userId && existingRecord.userId !== userId && userRole !== 'SUPER_ADMIN') {
+        const err: any = new Error('غير مصرح لك بالوصول إلى مفتاح عملية يخص مستخدماً آخر.');
+        err.statusCode = 403;
+        throw err;
+      }
+
       if (existingRecord.requestHash === requestHash) {
         return existingRecord.responseBody as any[];
       } else {
@@ -537,7 +585,7 @@ export async function createBatchUnitsInDb(params: {
     throw new Error('تحتوي المجموعة على أرقام وحدات مكررة ضمن نفس الطلب.');
   }
 
-  // 4. Check duplicates against existing DB units for this property
+  // 4. Check duplicates against existing DB units for this property (unarchived)
   const existing = await prisma.unit.findMany({
     where: {
       propertyId,
@@ -566,7 +614,13 @@ export async function createBatchUnitsInDb(params: {
         }
       });
       if (concurrentRecord) {
-        return concurrentRecord.responseBody as any[];
+        if (concurrentRecord.requestHash === requestHash) {
+          return concurrentRecord.responseBody as any[];
+        } else {
+          const err: any = new Error('تعارض مفتاح منع التكرار: تم استخدام نفس المفتاح مع بيانات حمولة مختلفة.');
+          err.statusCode = 409;
+          throw err;
+        }
       }
     }
 
@@ -580,12 +634,12 @@ export async function createBatchUnitsInDb(params: {
           title: u.title || `شقة منزل الفخامة رقم #${u.unitNumber}`,
           titleEn: u.titleEn || `Unit #${u.unitNumber}`,
           type: u.type || 'apartment',
-          areaSqm: u.areaSqm !== undefined ? Number(u.areaSqm) : 0,
+          areaSqm: u.areaSqm !== undefined && u.areaSqm !== null ? Number(u.areaSqm) : 0,
           floorNumber: floor.number,
-          maxGuests: u.maxGuests !== undefined ? Number(u.maxGuests) : 3,
-          bedroomsCount: u.bedroomsCount !== undefined ? Number(u.bedroomsCount) : 1,
-          bathroomsCount: u.bathroomsCount !== undefined ? Number(u.bathroomsCount) : 1,
-          bedsCount: u.bedsCount !== undefined ? Number(u.bedsCount) : 1,
+          maxGuests: u.maxGuests !== undefined && u.maxGuests !== null ? Number(u.maxGuests) : 3,
+          bedroomsCount: u.bedroomsCount !== undefined && u.bedroomsCount !== null ? Number(u.bedroomsCount) : 1,
+          bathroomsCount: u.bathroomsCount !== undefined && u.bathroomsCount !== null ? Number(u.bathroomsCount) : 1,
+          bedsCount: u.bedsCount !== undefined && u.bedsCount !== null ? Number(u.bedsCount) : 1,
           furnishingStatus: u.furnishingStatus || 'furnished',
           allowDaily: u.allowDaily !== false,
           dailyRate: new Decimal(u.dailyRate ?? 0),
@@ -1171,15 +1225,16 @@ export async function exportFullDatabase() {
     settings,
     properties,
     floors,
-    units,
     amenities,
+    units,
     parkingSpots,
     allocations,
     bookings,
     leases,
     installments,
-    payments,
     securityDeposits,
+    securityDepositTransactions,
+    payments,
     expenses,
     expenseAllocations,
     expensePayments,
@@ -1195,15 +1250,16 @@ export async function exportFullDatabase() {
     prisma.companySettings.findUnique({ where: { id: 'default' } }),
     prisma.property.findMany(),
     prisma.floor.findMany(),
-    prisma.unit.findMany(),
     prisma.amenity.findMany(),
+    prisma.unit.findMany(),
     prisma.parkingSpot.findMany(),
     prisma.unitAllocation.findMany(),
     prisma.booking.findMany(),
     prisma.lease.findMany(),
     prisma.leaseInstallment.findMany(),
-    prisma.paymentRecord.findMany(),
     prisma.securityDepositRecord.findMany(),
+    prisma.securityDepositTransaction.findMany(),
+    prisma.paymentRecord.findMany(),
     prisma.operationalExpense.findMany(),
     prisma.expenseAllocation.findMany(),
     prisma.expensePaymentEntry.findMany(),
@@ -1226,15 +1282,16 @@ export async function exportFullDatabase() {
     settings,
     properties,
     floors,
-    units,
     amenities,
+    units,
     parkingSpots,
     allocations,
     bookings,
     leases,
     installments,
-    payments,
     securityDeposits,
+    securityDepositTransactions,
+    payments,
     expenses,
     expenseAllocations,
     expensePayments,
@@ -1254,19 +1311,36 @@ export async function restoreFullDatabaseInDb(backupData: any) {
     throw new Error('بيانات النسخة الاحتياطية غير صالحة.');
   }
 
+  // Pre-restoration integrity validation (Reject incomplete backups before any deletions)
+  const requiredCollections = [
+    'properties',
+    'floors',
+    'units',
+    'allocations',
+    'bookings',
+    'leases',
+    'expenses'
+  ];
+
+  const missingCollections = requiredCollections.filter(key => !Array.isArray(backupData[key]));
+  if (missingCollections.length > 0) {
+    throw new Error(`فشل التحقق من بنية النسخة الاحتياطية: النسخة ناقصة وتفتقر للأقسام الإلزامية التالية: (${missingCollections.join(', ')}). تم رفض الاستعادة لمنع فقدان البيانات.`);
+  }
+
   return await prisma.$transaction(async (tx) => {
     // 1. Clean existing records in reverse dependency order
     await tx.idempotencyRecord.deleteMany();
     await tx.documentRecord.deleteMany();
+    await tx.securityDepositTransaction.deleteMany();
+    await tx.paymentRecord.deleteMany();
+    await tx.securityDepositRecord.deleteMany();
+    await tx.leaseInstallment.deleteMany();
     await tx.expensePaymentEntry.deleteMany();
     await tx.expenseAllocation.deleteMany();
     await tx.operationalExpense.deleteMany();
     await tx.recurringExpenseSchedule.deleteMany();
     await tx.expenseCategoryConfig.deleteMany();
     await tx.tenantAdjustment.deleteMany();
-    await tx.paymentRecord.deleteMany();
-    await tx.securityDepositRecord.deleteMany();
-    await tx.leaseInstallment.deleteMany();
     await tx.lease.deleteMany();
     await tx.booking.deleteMany();
     await tx.unitAllocation.deleteMany();
@@ -1281,8 +1355,9 @@ export async function restoreFullDatabaseInDb(backupData: any) {
       await tx.user.deleteMany();
     }
 
-    // 2. Restore in dependency order
-    // Users
+    // 2. Restore in strict dependency order
+
+    // 2.1 Users
     if (Array.isArray(backupData.users)) {
       for (const u of backupData.users) {
         await tx.user.create({
@@ -1292,7 +1367,7 @@ export async function restoreFullDatabaseInDb(backupData: any) {
             email: u.email,
             passwordHash: u.passwordHash,
             name: u.name,
-            phone: u.phone || null,
+            phone: u.phone ?? null,
             role: u.role as any,
             allowedProperties: Array.isArray(u.allowedProperties) ? u.allowedProperties : ['all'],
             isActive: u.isActive !== false,
@@ -1302,7 +1377,7 @@ export async function restoreFullDatabaseInDb(backupData: any) {
       }
     }
 
-    // Settings
+    // 2.2 Company Settings
     if (backupData.settings) {
       const s = backupData.settings;
       await tx.companySettings.upsert({
@@ -1320,8 +1395,8 @@ export async function restoreFullDatabaseInDb(backupData: any) {
           nationalAddress: s.nationalAddress,
           checkInTime: s.checkInTime,
           checkOutTime: s.checkOutTime,
-          navigation: s.navigation || null,
-          themeConfig: s.themeConfig || null
+          navigation: s.navigation ?? null,
+          themeConfig: s.themeConfig ?? null
         },
         create: {
           id: s.id || 'default',
@@ -1337,13 +1412,13 @@ export async function restoreFullDatabaseInDb(backupData: any) {
           nationalAddress: s.nationalAddress || '',
           checkInTime: s.checkInTime || '15:00',
           checkOutTime: s.checkOutTime || '12:00',
-          navigation: s.navigation || null,
-          themeConfig: s.themeConfig || null
+          navigation: s.navigation ?? null,
+          themeConfig: s.themeConfig ?? null
         }
       });
     }
 
-    // Properties
+    // 2.3 Properties
     if (Array.isArray(backupData.properties)) {
       for (const p of backupData.properties) {
         await tx.property.create({
@@ -1354,11 +1429,11 @@ export async function restoreFullDatabaseInDb(backupData: any) {
             address: p.address,
             city: p.city || 'الرياض',
             district: p.district,
-            floorsCount: p.floorsCount || 1,
-            unitsCount: p.unitsCount || 0,
-            totalAreaSqm: Number(p.totalAreaSqm || 0),
-            rooftopPayment: new Decimal(p.rooftopPayment || 0),
-            description: p.description || null,
+            floorsCount: p.floorsCount !== undefined ? Number(p.floorsCount) : 1,
+            unitsCount: p.unitsCount !== undefined ? Number(p.unitsCount) : 0,
+            totalAreaSqm: p.totalAreaSqm !== undefined ? Number(p.totalAreaSqm) : 0,
+            rooftopPayment: new Decimal(p.rooftopPayment ?? 0),
+            description: p.description ?? null,
             images: Array.isArray(p.images) ? p.images : [],
             isActive: p.isActive !== false,
             createdAt: p.createdAt ? new Date(p.createdAt) : new Date()
@@ -1367,7 +1442,7 @@ export async function restoreFullDatabaseInDb(backupData: any) {
       }
     }
 
-    // Floors
+    // 2.4 Floors
     if (Array.isArray(backupData.floors)) {
       for (const f of backupData.floors) {
         await tx.floor.create({
@@ -1381,59 +1456,91 @@ export async function restoreFullDatabaseInDb(backupData: any) {
       }
     }
 
-    // Units
+    // 2.5 Amenities
+    if (Array.isArray(backupData.amenities)) {
+      for (const a of backupData.amenities) {
+        await tx.amenity.create({
+          data: {
+            id: a.id,
+            name: a.name,
+            nameEn: a.nameEn || a.name,
+            icon: a.icon || 'star',
+            category: a.category || 'general'
+          }
+        });
+      }
+    }
+
+    // 2.6 Units
     if (Array.isArray(backupData.units)) {
       for (const u of backupData.units) {
         await tx.unit.create({
           data: {
             id: u.id,
             propertyId: u.propertyId,
-            floorId: u.floorId || null,
+            floorId: u.floorId ?? null,
             unitNumber: String(u.unitNumber).trim(),
             title: u.title || '',
             titleEn: u.titleEn || '',
             type: u.type || 'apartment',
-            areaSqm: Number(u.areaSqm || 0),
-            floorNumber: Number(u.floorNumber || 1),
-            maxGuests: Number(u.maxGuests || 3),
-            bedroomsCount: Number(u.bedroomsCount || 1),
-            bathroomsCount: Number(u.bathroomsCount || 1),
-            bedsCount: Number(u.bedsCount || 1),
+            areaSqm: u.areaSqm !== undefined && u.areaSqm !== null ? Number(u.areaSqm) : 0,
+            floorNumber: u.floorNumber !== undefined && u.floorNumber !== null ? Number(u.floorNumber) : 1,
+            maxGuests: u.maxGuests !== undefined && u.maxGuests !== null ? Number(u.maxGuests) : 3,
+            bedroomsCount: u.bedroomsCount !== undefined && u.bedroomsCount !== null ? Number(u.bedroomsCount) : 1,
+            bathroomsCount: u.bathroomsCount !== undefined && u.bathroomsCount !== null ? Number(u.bathroomsCount) : 1,
+            bedsCount: u.bedsCount !== undefined && u.bedsCount !== null ? Number(u.bedsCount) : 1,
             furnishingStatus: u.furnishingStatus || 'furnished',
             allowDaily: u.allowDaily !== false,
-            dailyRate: new Decimal(u.dailyRate || 0),
-            dailySecurityDeposit: new Decimal(u.dailySecurityDeposit || 0),
+            dailyRate: new Decimal(u.dailyRate ?? 0),
+            dailySecurityDeposit: new Decimal(u.dailySecurityDeposit ?? 0),
             allowMonthly: u.allowMonthly !== false,
-            monthlyRate: new Decimal(u.monthlyRate || 0),
-            monthlySecurityDeposit: new Decimal(u.monthlySecurityDeposit || 0),
+            monthlyRate: new Decimal(u.monthlyRate ?? 0),
+            monthlySecurityDeposit: new Decimal(u.monthlySecurityDeposit ?? 0),
             allowYearly: u.allowYearly !== false,
-            annualRate: new Decimal(u.annualRate || u.yearlyRate || 0),
-            yearlySecurityDeposit: new Decimal(u.yearlySecurityDeposit || 0),
+            annualRate: new Decimal(u.annualRate ?? u.yearlyRate ?? 0),
+            yearlySecurityDeposit: new Decimal(u.yearlySecurityDeposit ?? 0),
             yearlyPaymentOptions: Array.isArray(u.yearlyPaymentOptions) ? u.yearlyPaymentOptions : ['single_annual', 'semi_annual'],
-            semiAnnualSurchargePercent: new Decimal(u.semiAnnualSurchargePercent || 0),
-            cleaningFee: new Decimal(u.cleaningFee || 0),
-            securityDeposit: new Decimal(u.securityDeposit || 0),
-            taxPercentage: new Decimal(u.taxPercentage || 15),
+            semiAnnualSurchargePercent: new Decimal(u.semiAnnualSurchargePercent ?? 0),
+            cleaningFee: new Decimal(u.cleaningFee ?? 0),
+            securityDeposit: new Decimal(u.securityDeposit ?? 0),
+            taxPercentage: new Decimal(u.taxPercentage ?? 15),
             operationalStatus: u.operationalStatus || 'ready',
             occupancyStatus: u.occupancyStatus || 'vacant',
             isClean: u.isClean !== false,
             publicationStatus: u.publicationStatus || 'published',
             amenities: Array.isArray(u.amenities) ? u.amenities : [],
             images: Array.isArray(u.images) ? u.images : [],
-            media: u.media || null,
-            spaces: u.spaces || null,
-            fittings: u.fittings || null,
-            floorPlanUrl: u.floorPlanUrl || null,
-            assignedParkingId: u.assignedParkingId || null,
-            notes: u.notes || null,
-            smartLockPin: u.smartLockPin || null,
+            media: u.media ?? null,
+            spaces: u.spaces ?? null,
+            fittings: u.fittings ?? null,
+            floorPlanUrl: u.floorPlanUrl ?? null,
+            assignedParkingId: u.assignedParkingId ?? null,
+            notes: u.notes ?? null,
+            smartLockPin: u.smartLockPin ?? null,
             createdAt: u.createdAt ? new Date(u.createdAt) : new Date()
           }
         });
       }
     }
 
-    // Allocations
+    // 2.7 Parking Spots
+    if (Array.isArray(backupData.parkingSpots)) {
+      for (const ps of backupData.parkingSpots) {
+        await tx.parkingSpot.create({
+          data: {
+            id: ps.id,
+            propertyId: ps.propertyId,
+            spotNumber: ps.spotNumber,
+            floor: ps.floor || 'G',
+            hasEVCharger: Boolean(ps.hasEVCharger),
+            status: ps.status || 'vacant',
+            assignedUnitId: ps.assignedUnitId ?? null
+          }
+        });
+      }
+    }
+
+    // 2.8 Allocations
     if (Array.isArray(backupData.allocations)) {
       for (const a of backupData.allocations) {
         await tx.unitAllocation.create({
@@ -1443,111 +1550,194 @@ export async function restoreFullDatabaseInDb(backupData: any) {
             startDate: new Date(a.startDate),
             endDate: new Date(a.endDate),
             rentalType: (a.rentalType || 'daily').toUpperCase() as any,
-            referenceId: a.referenceId || null,
+            referenceId: a.referenceId ?? null,
             purpose: a.purpose || 'booking',
             status: a.status || 'active',
-            notes: a.notes || null,
+            notes: a.notes ?? null,
             createdAt: a.createdAt ? new Date(a.createdAt) : new Date()
           }
         });
       }
     }
 
-    // Bookings
+    // 2.9 Bookings
     if (Array.isArray(backupData.bookings)) {
       for (const b of backupData.bookings) {
         await tx.booking.create({
           data: {
             id: b.id,
             bookingNumber: b.bookingNumber || b.id,
-            idempotencyKey: b.idempotencyKey || null,
+            idempotencyKey: b.idempotencyKey ?? null,
             unitId: b.unitId,
             guestName: b.guestName || 'نزيل',
             guestPhone: b.guestPhone || '+966500000000',
-            guestEmail: b.guestEmail || null,
-            guestIdNumber: b.guestIdNumber || null,
-            userId: b.userId || null,
+            guestEmail: b.guestEmail ?? null,
+            guestIdNumber: b.guestIdNumber ?? null,
+            userId: b.userId ?? null,
             startDate: new Date(b.startDate || b.checkIn),
             endDate: new Date(b.endDate || b.checkOut),
             rentalType: (b.rentalType || 'daily').toUpperCase() as any,
-            totalNights: Number(b.totalNights || 1),
-            guestsCount: Number(b.guestsCount || 1),
-            nightlyRate: new Decimal(b.nightlyRate || 0),
-            subtotal: new Decimal(b.subtotal || 0),
-            cleaningFee: new Decimal(b.cleaningFee || 0),
-            taxes: new Decimal(b.taxes || 0),
-            securityDeposit: new Decimal(b.securityDeposit || 0),
-            totalAmount: new Decimal(b.totalAmount || 0),
-            paidAmount: new Decimal(b.paidAmount || 0),
+            totalNights: b.totalNights !== undefined ? Number(b.totalNights) : 1,
+            guestsCount: b.guestsCount !== undefined ? Number(b.guestsCount) : 1,
+            nightlyRate: new Decimal(b.nightlyRate ?? 0),
+            subtotal: new Decimal(b.subtotal ?? 0),
+            cleaningFee: new Decimal(b.cleaningFee ?? 0),
+            taxes: new Decimal(b.taxes ?? 0),
+            securityDeposit: new Decimal(b.securityDeposit ?? 0),
+            totalAmount: new Decimal(b.totalAmount ?? 0),
+            paidAmount: new Decimal(b.paidAmount ?? 0),
             status: (b.status || 'confirmed').toUpperCase() as any,
             paymentStatus: b.paymentStatus || 'pending',
             identityStatus: b.identityStatus || 'verified',
-            smartLockPin: b.smartLockPin || null,
-            notes: b.notes || null,
+            smartLockPin: b.smartLockPin ?? null,
+            notes: b.notes ?? null,
             createdAt: b.createdAt ? new Date(b.createdAt) : new Date()
           }
         });
       }
     }
 
-    // Leases
+    // 2.10 Leases
     if (Array.isArray(backupData.leases)) {
       for (const l of backupData.leases) {
         await tx.lease.create({
           data: {
             id: l.id,
             contractNumber: l.contractNumber || l.id,
-            idempotencyKey: l.idempotencyKey || null,
+            idempotencyKey: l.idempotencyKey ?? null,
             unitId: l.unitId,
             tenantName: l.tenantName || 'مستأجر',
             tenantPhone: l.tenantPhone || '+966500000000',
-            tenantEmail: l.tenantEmail || null,
+            tenantEmail: l.tenantEmail ?? null,
             tenantIdNumber: l.tenantIdNumber || '1000000000',
             startDate: new Date(l.startDate),
             endDate: new Date(l.endDate),
             rentalType: (l.rentalType || 'annual').toUpperCase() as any,
-            annualRent: new Decimal(l.annualRent || 0),
+            annualRent: new Decimal(l.annualRent ?? 0),
             paymentOption: l.paymentOption || '1_payment',
             paymentFrequency: l.paymentFrequency || '1_payment',
-            installmentsCount: Number(l.installmentsCount || 1),
-            securityDeposit: new Decimal(l.securityDeposit || 0),
-            contractServices: l.contractServices || null,
+            installmentsCount: l.installmentsCount !== undefined ? Number(l.installmentsCount) : 1,
+            securityDeposit: new Decimal(l.securityDeposit ?? 0),
+            contractServices: l.contractServices ?? null,
             includedAmenities: Array.isArray(l.includedAmenities) ? l.includedAmenities : [],
-            termsConditions: l.termsConditions || null,
+            termsConditions: l.termsConditions ?? null,
             status: (l.status || 'active').toUpperCase() as any,
-            pdfUrl: l.pdfUrl || null,
+            pdfUrl: l.pdfUrl ?? null,
             createdAt: l.createdAt ? new Date(l.createdAt) : new Date()
           }
         });
       }
     }
 
-    // Security Deposits
+    // 2.11 Lease Installments
+    if (Array.isArray(backupData.installments)) {
+      for (const inst of backupData.installments) {
+        await tx.leaseInstallment.create({
+          data: {
+            id: inst.id,
+            leaseId: inst.leaseId,
+            number: Number(inst.number || 1),
+            label: inst.label ?? null,
+            dueDate: new Date(inst.dueDate),
+            amount: new Decimal(inst.amount ?? 0),
+            paidAmount: new Decimal(inst.paidAmount ?? 0),
+            remainingAmount: new Decimal(inst.remainingAmount ?? inst.amount ?? 0),
+            status: (inst.status || 'UPCOMING').toUpperCase() as any,
+            paidAt: inst.paidAt ? new Date(inst.paidAt) : null
+          }
+        });
+      }
+    }
+
+    // 2.12 Security Deposits
     if (Array.isArray(backupData.securityDeposits)) {
       for (const sd of backupData.securityDeposits) {
         await tx.securityDepositRecord.create({
           data: {
             id: sd.id,
-            leaseId: sd.leaseId || null,
-            bookingId: sd.bookingId || null,
-            amount: new Decimal(sd.amount || 0),
+            leaseId: sd.leaseId ?? null,
+            bookingId: sd.bookingId ?? null,
+            amount: new Decimal(sd.amount ?? 0),
             status: sd.status || 'held',
-            deductedAmount: new Decimal(sd.deductedAmount || 0),
-            refundedAmount: new Decimal(sd.refundedAmount || 0),
-            deductionReason: sd.deductionReason || null,
-            refundMethod: sd.refundMethod || null,
-            refundReference: sd.refundReference || null,
-            refundType: sd.refundType || null,
-            refundedByUserId: sd.refundedByUserId || null,
+            deductedAmount: new Decimal(sd.deductedAmount ?? 0),
+            refundedAmount: new Decimal(sd.refundedAmount ?? 0),
+            deductionReason: sd.deductionReason ?? null,
+            refundMethod: sd.refundMethod ?? null,
+            refundReference: sd.refundReference ?? null,
+            refundType: sd.refundType ?? null,
+            refundedByUserId: sd.refundedByUserId ?? null,
             refundedAt: sd.refundedAt ? new Date(sd.refundedAt) : null,
-            notes: sd.notes || null,
+            notes: sd.notes ?? null,
             createdAt: sd.createdAt ? new Date(sd.createdAt) : new Date()
           }
         });
       }
     }
 
-    // Expenses
+    // 2.13 Security Deposit Transactions (Itemized Ledger)
+    if (Array.isArray(backupData.securityDepositTransactions)) {
+      for (const sdt of backupData.securityDepositTransactions) {
+        await tx.securityDepositTransaction.create({
+          data: {
+            id: sdt.id,
+            depositId: sdt.depositId,
+            type: sdt.type || 'refund',
+            amount: new Decimal(sdt.amount ?? 0),
+            method: sdt.method || 'bank_transfer',
+            reference: sdt.reference || `REF-${Date.now()}`,
+            reason: sdt.reason ?? null,
+            executedByUserId: sdt.executedByUserId ?? null,
+            executedAt: sdt.executedAt ? new Date(sdt.executedAt) : new Date(),
+            status: sdt.status || 'completed',
+            idempotencyKey: sdt.idempotencyKey ?? null,
+            notes: sdt.notes ?? null,
+            createdAt: sdt.createdAt ? new Date(sdt.createdAt) : new Date()
+          }
+        });
+      }
+    }
+
+    // 2.14 Payment Records
+    if (Array.isArray(backupData.payments)) {
+      for (const pay of backupData.payments) {
+        await tx.paymentRecord.create({
+          data: {
+            id: pay.id,
+            bookingId: pay.bookingId ?? null,
+            leaseId: pay.leaseId ?? null,
+            amount: new Decimal(pay.amount ?? 0),
+            paymentMethod: pay.paymentMethod || 'mada',
+            receiptNo: pay.receiptNo ?? null,
+            referenceNo: pay.referenceNo ?? null,
+            status: pay.status || 'completed',
+            isVerified: pay.isVerified !== false,
+            paidAt: pay.paidAt ? new Date(pay.paidAt) : new Date(),
+            notes: pay.notes ?? null
+          }
+        });
+      }
+    }
+
+    // 2.15 Category Configs
+    if (Array.isArray(backupData.expenseCategories)) {
+      for (const ec of backupData.expenseCategories) {
+        await tx.expenseCategoryConfig.create({
+          data: {
+            id: ec.id,
+            code: ec.code,
+            nameAr: ec.nameAr,
+            nameEn: ec.nameEn || ec.nameAr,
+            costCenterLevel: (ec.costCenterLevel || 'PROPERTY').toUpperCase() as any,
+            temporalDistribution: (ec.temporalDistribution || 'NONE').toUpperCase() as any,
+            defaultAllocationMethod: (ec.defaultAllocationMethod || 'EQUAL_UNITS').toUpperCase() as any,
+            subcategories: Array.isArray(ec.subcategories) ? ec.subcategories : [],
+            isActive: ec.isActive !== false
+          }
+        });
+      }
+    }
+
+    // 2.16 Expenses
     if (Array.isArray(backupData.expenses)) {
       for (const exp of backupData.expenses) {
         await tx.operationalExpense.create({
@@ -1555,12 +1745,12 @@ export async function restoreFullDatabaseInDb(backupData: any) {
             id: exp.id,
             expenseNumber: exp.expenseNumber || exp.id,
             title: exp.title || 'مصروف',
-            amount: new Decimal(exp.amount || 0),
+            amount: new Decimal(exp.amount ?? 0),
             costCenterLevel: (exp.costCenterLevel || 'PROPERTY').toUpperCase() as any,
-            propertyId: exp.propertyId || null,
-            unitId: exp.unitId || null,
+            propertyId: exp.propertyId ?? null,
+            unitId: exp.unitId ?? null,
             categoryCode: (exp.categoryCode || 'OPERATIONS_OTHER') as any,
-            subcategory: exp.subcategory || null,
+            subcategory: exp.subcategory ?? null,
             expenseDate: exp.expenseDate ? new Date(exp.expenseDate) : new Date(),
             startDate: exp.startDate ? new Date(exp.startDate) : new Date(),
             endDate: exp.endDate ? new Date(exp.endDate) : new Date(),
@@ -1568,15 +1758,101 @@ export async function restoreFullDatabaseInDb(backupData: any) {
             allocationMethod: (exp.allocationMethod || 'EQUAL_UNITS').toUpperCase() as any,
             status: exp.status || 'approved',
             isCapitalAsset: Boolean(exp.isCapitalAsset),
-            notes: exp.notes || null,
-            createdById: exp.createdById || null,
+            notes: exp.notes ?? null,
+            createdById: exp.createdById ?? null,
             createdAt: exp.createdAt ? new Date(exp.createdAt) : new Date()
           }
         });
       }
     }
 
-    // Document Records
+    // 2.17 Expense Allocations
+    if (Array.isArray(backupData.expenseAllocations)) {
+      for (const ea of backupData.expenseAllocations) {
+        await tx.expenseAllocation.create({
+          data: {
+            id: ea.id,
+            expenseId: ea.expenseId,
+            unitId: ea.unitId,
+            shareAmount: new Decimal(ea.shareAmount ?? 0),
+            percentage: Number(ea.percentage ?? 0),
+            monthPeriod: ea.monthPeriod || '2026-10'
+          }
+        });
+      }
+    }
+
+    // 2.18 Expense Payment Entries
+    if (Array.isArray(backupData.expensePayments)) {
+      for (const ep of backupData.expensePayments) {
+        await tx.expensePaymentEntry.create({
+          data: {
+            id: ep.id,
+            expenseId: ep.expenseId,
+            amount: new Decimal(ep.amount ?? 0),
+            paymentDate: ep.paymentDate ? new Date(ep.paymentDate) : new Date(),
+            paymentMethod: ep.paymentMethod || 'bank_transfer',
+            referenceNo: ep.referenceNo ?? null,
+            notes: ep.notes ?? null
+          }
+        });
+      }
+    }
+
+    // 2.19 Recurring Schedules
+    if (Array.isArray(backupData.recurringSchedules)) {
+      for (const rs of backupData.recurringSchedules) {
+        await tx.recurringExpenseSchedule.create({
+          data: {
+            id: rs.id,
+            title: rs.title,
+            categoryCode: rs.categoryCode as any,
+            amount: new Decimal(rs.amount ?? 0),
+            propertyId: rs.propertyId ?? null,
+            unitId: rs.unitId ?? null,
+            frequency: rs.frequency || 'monthly',
+            nextDueDate: new Date(rs.nextDueDate),
+            isActive: rs.isActive !== false
+          }
+        });
+      }
+    }
+
+    // 2.20 Tenant Adjustments
+    if (Array.isArray(backupData.tenantAdjustments)) {
+      for (const ta of backupData.tenantAdjustments) {
+        await tx.tenantAdjustment.create({
+          data: {
+            id: ta.id,
+            tenantName: ta.tenantName,
+            unitNumber: ta.unitNumber,
+            type: ta.type || 'discount',
+            amount: new Decimal(ta.amount ?? 0),
+            reason: ta.reason || 'تسوية',
+            date: ta.date ? new Date(ta.date) : new Date(),
+            approvedBy: ta.approvedBy || 'المسؤول'
+          }
+        });
+      }
+    }
+
+    // 2.21 Content Sections
+    if (Array.isArray(backupData.contentSections)) {
+      for (const cs of backupData.contentSections) {
+        await tx.contentSection.create({
+          data: {
+            id: cs.id,
+            title: cs.title,
+            subtitle: cs.subtitle ?? null,
+            enabled: cs.enabled !== false,
+            order: Number(cs.order || 0),
+            config: cs.config ?? null
+          }
+        });
+      }
+    }
+
+    // 2.22 Document Records
     if (Array.isArray(backupData.documentRecords)) {
       for (const d of backupData.documentRecords) {
         await tx.documentRecord.create({
@@ -1585,32 +1861,50 @@ export async function restoreFullDatabaseInDb(backupData: any) {
             fileName: d.fileName,
             originalName: d.originalName || d.fileName,
             fileSize: Number(d.fileSize || 0),
-            mimeType: d.mimeType || null,
+            mimeType: d.mimeType ?? null,
             isPrivate: d.isPrivate !== false,
-            ownerUserId: d.ownerUserId || null,
-            propertyId: d.propertyId || null,
-            unitId: d.unitId || null,
-            bookingId: d.bookingId || null,
-            leaseId: d.leaseId || null,
-            notes: d.notes || null,
+            ownerUserId: d.ownerUserId ?? null,
+            propertyId: d.propertyId ?? null,
+            unitId: d.unitId ?? null,
+            bookingId: d.bookingId ?? null,
+            leaseId: d.leaseId ?? null,
+            notes: d.notes ?? null,
             createdAt: d.createdAt ? new Date(d.createdAt) : new Date()
           }
         });
       }
     }
 
-    // Audit Logs
+    // 2.23 Idempotency Records
+    if (Array.isArray(backupData.idempotencyRecords)) {
+      for (const ir of backupData.idempotencyRecords) {
+        await tx.idempotencyRecord.create({
+          data: {
+            id: ir.id,
+            key: ir.key,
+            operationType: ir.operationType,
+            userId: ir.userId ?? null,
+            requestHash: ir.requestHash,
+            statusCode: Number(ir.statusCode || 200),
+            responseBody: ir.responseBody,
+            createdAt: ir.createdAt ? new Date(ir.createdAt) : new Date()
+          }
+        });
+      }
+    }
+
+    // 2.24 Audit Logs
     if (Array.isArray(backupData.auditLogs)) {
       for (const a of backupData.auditLogs) {
         await tx.auditLog.create({
           data: {
             id: a.id,
-            userId: a.userId || null,
+            userId: a.userId ?? null,
             userName: a.userName || 'المستخدم',
             action: a.action || 'إجراء',
             module: a.module || 'عام',
             details: a.details || '',
-            ipAddress: a.ipAddress || null,
+            ipAddress: a.ipAddress ?? null,
             createdAt: a.createdAt ? new Date(a.createdAt) : new Date()
           }
         });
@@ -1620,10 +1914,22 @@ export async function restoreFullDatabaseInDb(backupData: any) {
     return {
       usersRestored: backupData.users?.length || 0,
       propertiesRestored: backupData.properties?.length || 0,
+      floorsRestored: backupData.floors?.length || 0,
+      amenitiesRestored: backupData.amenities?.length || 0,
       unitsRestored: backupData.units?.length || 0,
+      parkingSpotsRestored: backupData.parkingSpots?.length || 0,
+      allocationsRestored: backupData.allocations?.length || 0,
       bookingsRestored: backupData.bookings?.length || 0,
       leasesRestored: backupData.leases?.length || 0,
+      installmentsRestored: backupData.installments?.length || 0,
+      securityDepositsRestored: backupData.securityDeposits?.length || 0,
+      securityDepositTransactionsRestored: backupData.securityDepositTransactions?.length || 0,
+      paymentsRestored: backupData.payments?.length || 0,
       expensesRestored: backupData.expenses?.length || 0,
+      expenseAllocationsRestored: backupData.expenseAllocations?.length || 0,
+      expensePaymentsRestored: backupData.expensePayments?.length || 0,
+      documentRecordsRestored: backupData.documentRecords?.length || 0,
+      idempotencyRecordsRestored: backupData.idempotencyRecords?.length || 0,
       auditLogsRestored: backupData.auditLogs?.length || 0
     };
   });
