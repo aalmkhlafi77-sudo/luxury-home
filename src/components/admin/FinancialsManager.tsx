@@ -38,9 +38,9 @@ export const FinancialsManager: React.FC = () => {
 
   // Deposit deduction modal state
   const [deductModalDepositId, setDeductModalDepositId] = useState<string | null>(null);
-  const [deductAmount, setDeductAmount] = useState<number>(200);
-  const [deductReason, setDeductReason] = useState<string>('تعويض خدش الحوائط وتلف المفتاح');
-  const [deductReference, setDeductReference] = useState<string>('DOC-DEDUCT-01');
+  const [deductAmount, setDeductAmount] = useState<string>('');
+  const [deductReason, setDeductReason] = useState<string>('');
+  const [deductReference, setDeductReference] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -61,6 +61,19 @@ export const FinancialsManager: React.FC = () => {
   const submitting = React.useRef(false);
 
   const selectedDeposit = state.securityDeposits.find(d => d.id === deductModalDepositId);
+
+  const openDeductionModal = (depositId: string) => {
+    if (pendingOperation.current && pendingOperation.current.depositId !== depositId) {
+      alert('يوجد عملية معلّقة لتأمين آخر. يرجى إكمالها أو حلها أولاً.');
+      return;
+    }
+    setDeductAmount('');
+    setDeductReason('');
+    setDeductReference('');
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    setDeductModalDepositId(depositId);
+  };
 
   async function submitDepositOp(payload: {
     depositId: string;
@@ -93,37 +106,59 @@ export const FinancialsManager: React.FC = () => {
     setErrorMsg(null);
     setSuccessMsg(null);
 
+    let isConfirmedRejection = false;
     try {
       const op = pendingOperation.current;
       const token = localStorage.getItem('luxury_token') || '';
 
-      const response = await fetch(
-        `/api/security-deposits/${encodeURIComponent(op.depositId)}/refund`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-            'X-Idempotency-Key': op.key,
+      let response;
+      try {
+        response = await fetch(
+          `/api/security-deposits/${encodeURIComponent(op.depositId)}/refund`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+              'X-Idempotency-Key': op.key,
+            },
+            body: JSON.stringify(op.payload),
           },
-          body: JSON.stringify(op.payload),
-        },
-      );
+        );
+      } catch (netErr) {
+        throw new Error('فشل في الاتصال بالخادم. يرجى المحاولة مرة أخرى لإرسال نفس مفتاح العملية بأمان.');
+      }
+
+      if (response.status >= 400 && response.status < 500) {
+        isConfirmedRejection = true;
+      }
 
       const result = await response.json().catch(() => null);
 
       if (!response.ok || result?.success !== true) {
-        throw new Error(result?.message ?? 'تعذر تأكيد تنفيذ العملية.');
+        throw new Error(result?.message ?? `خطأ من الخادم (رمز الحالة: ${response.status})`);
       }
 
       pendingOperation.current = null;
       setDeductModalDepositId(null);
       setSuccessMsg('تم تسجيل العملية في الخادم وتحديث البيانات المعتمدة.');
-      await loadAuthoritativeServerState(true);
+
+      try {
+        await loadAuthoritativeServerState(true);
+      } catch (stateErr) {
+        console.error('فشل تحديث الشاشة بعد نجاح العملية المالية:', stateErr);
+      }
     } catch (error) {
-      setErrorMsg(
-        error instanceof Error ? error.message : 'تعذر تنفيذ العملية.',
-      );
+      if (isConfirmedRejection) {
+        pendingOperation.current = null;
+        setErrorMsg(
+          error instanceof Error ? error.message : 'تم رفض العملية من الخادم.',
+        );
+      } else {
+        setErrorMsg(
+          `${error instanceof Error ? error.message : 'تعذر الاتصال بالخادم.'} تم الاحتفاظ بمفتاح العملية الأصلي لإعادة المحاولة بأمان.`
+        );
+      }
     } finally {
       submitting.current = false;
       setSaving(false);
@@ -133,20 +168,47 @@ export const FinancialsManager: React.FC = () => {
   const handleDeductSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!deductModalDepositId) return;
+
+    const parsedAmount = parseFloat(deductAmount);
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      setErrorMsg('الرجاء إدخال مبلغ اقتطاع صحيح أكبر من الصفر.');
+      return;
+    }
+
+    if (!deductReason.trim()) {
+      setErrorMsg('الرجاء إدخال وصف مبرر الاقتطاع.');
+      return;
+    }
+
+    if (!deductReference.trim()) {
+      setErrorMsg('الرجاء إدخال مرجع إثبات الصرف أو مستند الخصم.');
+      return;
+    }
+
     await submitDepositOp({
       depositId: deductModalDepositId,
       refundAmount: '0.00',
-      deductedAmount: deductAmount.toFixed(2),
-      deductionReason: deductReason,
+      deductedAmount: parsedAmount.toFixed(2),
+      deductionReason: deductReason.trim(),
       refundMethod: 'deduction',
-      refundReference: deductReference || 'DEDUCTION-REF-01',
+      refundReference: deductReference.trim(),
       refundType: 'actual_payout',
     });
   };
 
   const handleRefundFull = async (depositId: string, fullAmount: number) => {
-    const ref = prompt('أدخل رقم مرجع الإثبات البنكي أو سند الصرف:', `BANK-REF-${Date.now().toString().slice(-4)}`);
-    if (!ref || !ref.trim()) return;
+    if (pendingOperation.current && pendingOperation.current.depositId !== depositId) {
+      alert('يوجد عملية معلّقة لتأمين آخر. يرجى إكمالها أو حلها أولاً.');
+      return;
+    }
+
+    const ref = prompt('أدخل رقم مرجع الإثبات البنكي أو سند الصرف:', '');
+    if (ref === null) return; // User cancelled prompt
+    
+    if (!ref.trim()) {
+      alert('مرجع إثبات الصرف مطلوب لإتمام تسوية وإرجاع الوديعة.');
+      return;
+    }
 
     if (confirm(`هل أنت متأكد من تسوية وإعادة كامل وديعة التأمين وقدرها ${fullAmount} ر.س للعميل؟`)) {
       await submitDepositOp({
@@ -376,7 +438,7 @@ export const FinancialsManager: React.FC = () => {
                             سداد إيجاري
                           </button>
                           <button
-                            onClick={() => setDeductModalDepositId(dep.id)}
+                            onClick={() => openDeductionModal(dep.id)}
                             className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-lg font-semibold cursor-pointer"
                             title="اقتطاع تعويض مالي للتلفيات"
                           >
@@ -483,11 +545,13 @@ export const FinancialsManager: React.FC = () => {
                 <input
                   type="number"
                   required
-                  min="1"
+                  min="0.01"
+                  step="0.01"
                   max={selectedDeposit.amount}
                   value={deductAmount}
-                  onChange={(e) => setDeductAmount(Number(e.target.value))}
+                  onChange={(e) => setDeductAmount(e.target.value)}
                   className="w-full p-2.5 bg-white border border-[#E3DCCD] rounded-xl font-bold tabular-nums text-left focus:outline-none"
+                  placeholder="0.00"
                 />
               </div>
               <div>
@@ -498,6 +562,18 @@ export const FinancialsManager: React.FC = () => {
                   value={deductReason}
                   onChange={(e) => setDeductReason(e.target.value)}
                   className="w-full p-2.5 bg-white border border-[#E3DCCD] rounded-xl text-right focus:outline-none focus:border-[#B69A68]"
+                  placeholder="أدخل مبرر الاقتطاع بالتفصيل..."
+                />
+              </div>
+              <div>
+                <label className="block text-[#68675F] font-semibold mb-1">مرجع إثبات الصرف أو مستند الخصم *</label>
+                <input
+                  type="text"
+                  required
+                  value={deductReference}
+                  onChange={(e) => setDeductReference(e.target.value)}
+                  className="w-full p-2.5 bg-white border border-[#E3DCCD] rounded-xl text-right focus:outline-none focus:border-[#B69A68]"
+                  placeholder="مثال: DOC-DAMAGE-101"
                 />
               </div>
               <div className="flex justify-end gap-2 pt-2 border-t border-[#E3DCCD]/60">

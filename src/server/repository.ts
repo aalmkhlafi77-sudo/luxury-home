@@ -1828,12 +1828,9 @@ export async function restoreFullDatabaseInDb(backupData: any) {
             leaseId: sd.leaseId ?? null,
             bookingId: sd.bookingId ?? null,
             amount: new Decimal(sd.amount ?? 0),
-    collectedAmount: new Decimal(sd.collectedAmount),
-    collectionReference: sd.collectionReference,
-    collectionVerifiedAt:
-      sd.collectionVerifiedAt === null
-        ? null
-        : new Date(sd.collectionVerifiedAt),
+            collectedAmount: new Decimal(sd.collectedAmount ?? 0),
+            collectionReference: sd.collectionReference ?? null,
+            collectionVerifiedAt: sd.collectionVerifiedAt ? new Date(sd.collectionVerifiedAt) : null,
             status: sd.status || 'held',
             deductedAmount: new Decimal(sd.deductedAmount ?? 0),
             refundedAmount: new Decimal(sd.refundedAmount ?? 0),
