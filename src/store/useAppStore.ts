@@ -19,6 +19,7 @@ import {
   ParkingSpot,
   UnitSpace,
   SpaceFitting,
+  MediaAsset,
   AnnualPaymentOption,
   ContractServiceItem,
   ContractInclusionType,
@@ -243,50 +244,64 @@ export function normalizeFloorFromServer(f: any): Floor {
 }
 
 export function normalizeUnitFromServer(u: any): Unit {
+  const safeNum = (v: any, fallback: number): number => {
+    if (v === null || v === undefined || v === '') return fallback;
+    const n = Number(v);
+    return isNaN(n) ? fallback : n;
+  };
+
+  const images: string[] = Array.isArray(u.images) ? u.images : [];
+  let media: MediaAsset[] = [];
+  if (Array.isArray(u.media) && u.media.length > 0) {
+    media = u.media;
+  } else if (images.length > 0) {
+    media = images.map((url: string, i: number) => ({
+      id: `med-u-${u.id}-${i}`,
+      url,
+      title: String(u.unitNumber || ''),
+      type: 'image' as const,
+      category: 'living' as const
+    }));
+  }
+
   return {
-    id: u.id,
-    propertyId: u.propertyId,
-    floorId: u.floorId || '',
-    unitNumber: String(u.unitNumber || ''),
-    title: u.title || `شقة منزل الفخامة رقم #${u.unitNumber}`,
-    titleEn: u.titleEn || `Unit #${u.unitNumber}`,
+    id: String(u.id),
+    propertyId: String(u.propertyId || ''),
+    floorId: u.floorId ? String(u.floorId) : '',
+    unitNumber: String(u.unitNumber ?? ''),
+    title: u.title !== undefined && u.title !== null ? String(u.title) : `شقة منزل الفخامة رقم #${u.unitNumber ?? ''}`,
+    titleEn: u.titleEn !== undefined && u.titleEn !== null ? String(u.titleEn) : `Unit #${u.unitNumber ?? ''}`,
     type: (u.type || 'apartment') as any,
-    areaSqm: Number(u.areaSqm) || 80,
-    floorNumber: u.floorNumber !== undefined ? u.floorNumber : (u.floor?.number ?? 1),
-    maxGuests: u.maxGuests || 3,
-    bedroomsCount: u.bedroomsCount || 1,
-    bathroomsCount: u.bathroomsCount || 1,
-    bedsCount: u.bedsCount || 1,
+    areaSqm: safeNum(u.areaSqm, 0),
+    floorNumber: safeNum(u.floorNumber !== undefined ? u.floorNumber : (u.floor?.number ?? 1), 1),
+    maxGuests: safeNum(u.maxGuests, 1),
+    bedroomsCount: safeNum(u.bedroomsCount, 0),
+    bathroomsCount: safeNum(u.bathroomsCount, 0),
+    bedsCount: safeNum(u.bedsCount, 0),
     spaces: Array.isArray(u.spaces) ? u.spaces : [],
-    amenities: Array.isArray(u.amenities) ? u.amenities : ['smart_lock', 'wifi', 'cleaning'],
-    media: Array.isArray(u.media) && u.media.length > 0 ? u.media : (
-      Array.isArray(u.images) ? u.images.map((url: string, i: number) => ({
-        id: `med-u-${u.id}-${i}`,
-        url,
-        title: u.unitNumber,
-        type: 'image' as const,
-        category: 'living' as const
-      })) : []
-    ),
-    floorPlanUrl: u.floorPlanUrl,
-    furnishingStatus: u.furnishingStatus || 'furnished',
-    allowDaily: u.allowDaily !== false,
-    dailyRate: Number(u.dailyRate) || 0,
-    dailySecurityDeposit: Number(u.dailySecurityDeposit) || 800,
-    allowMonthly: u.allowMonthly !== false,
-    monthlyRate: Number(u.monthlyRate) || 0,
-    monthlySecurityDeposit: Number(u.monthlySecurityDeposit) || 3000,
-    allowYearly: u.allowYearly !== false,
-    yearlyRate: Number(u.annualRate || u.yearlyRate) || 0,
-    yearlySecurityDeposit: Number(u.yearlySecurityDeposit) || 5000,
+    amenities: Array.isArray(u.amenities) ? u.amenities : [],
+    media,
+    floorPlanUrl: u.floorPlanUrl || undefined,
+    furnishingStatus: (u.furnishingStatus || 'furnished') as any,
+    allowDaily: typeof u.allowDaily === 'boolean' ? u.allowDaily : true,
+    dailyRate: safeNum(u.dailyRate, 0),
+    dailySecurityDeposit: safeNum(u.dailySecurityDeposit, 0),
+    allowMonthly: typeof u.allowMonthly === 'boolean' ? u.allowMonthly : true,
+    monthlyRate: safeNum(u.monthlyRate, 0),
+    monthlySecurityDeposit: safeNum(u.monthlySecurityDeposit, 0),
+    allowYearly: typeof u.allowYearly === 'boolean' ? u.allowYearly : true,
+    yearlyRate: safeNum(u.annualRate !== undefined ? u.annualRate : u.yearlyRate, 0),
+    yearlySecurityDeposit: safeNum(u.yearlySecurityDeposit, 0),
     yearlyPaymentOptions: Array.isArray(u.yearlyPaymentOptions) ? u.yearlyPaymentOptions : ['single_annual', 'semi_annual'],
-    cleaningFee: Number(u.cleaningFee) || 100,
-    securityDeposit: Number(u.securityDeposit) || 800,
-    taxPercentage: Number(u.taxPercentage) || 15,
+    semiAnnualSurchargePercent: safeNum(u.semiAnnualSurchargePercent, 0),
+    cleaningFee: safeNum(u.cleaningFee, 0),
+    securityDeposit: safeNum(u.securityDeposit, 0),
+    taxPercentage: safeNum(u.taxPercentage, 0),
     operationalStatus: (u.operationalStatus || 'ready') as any,
     occupancyStatus: (u.occupancyStatus || 'vacant') as any,
     publicationStatus: (u.publicationStatus || 'published') as any,
-    notes: u.notes || ''
+    assignedParkingId: u.assignedParkingId || undefined,
+    notes: u.notes !== undefined && u.notes !== null ? String(u.notes) : ''
   };
 }
 
@@ -2146,24 +2161,36 @@ export function useAppStore() {
     const res = await apiCall('/api/units', 'POST', {
       propertyId: payload.propertyId,
       floorId: payload.floorId,
-      unitNumber: payload.unitNumber,
+      unitNumber: payload.unitNumber.trim(),
       title: payload.title,
       titleEn: payload.titleEn,
       type: payload.type,
       areaSqm: payload.areaSqm,
       floorNumber: payload.floorNumber,
       maxGuests: payload.maxGuests,
+      bedroomsCount: metrics.bedroomsCount,
+      bathroomsCount: metrics.bathroomsCount,
+      bedsCount: metrics.bedsCount,
       dailyRate: payload.dailyRate,
       dailySecurityDeposit: payload.dailySecurityDeposit,
       monthlyRate: payload.monthlyRate,
       monthlySecurityDeposit: payload.monthlySecurityDeposit,
       annualRate: payload.yearlyRate,
+      yearlyRate: payload.yearlyRate,
       yearlySecurityDeposit: payload.yearlySecurityDeposit,
+      yearlyPaymentOptions: payload.yearlyPaymentOptions,
+      semiAnnualSurchargePercent: payload.semiAnnualSurchargePercent,
       occupancyStatus: payload.occupancyStatus || 'vacant',
       publicationStatus: payload.publicationStatus || 'published',
       operationalStatus: payload.operationalStatus || 'ready',
+      isClean: true,
       images: payload.media?.map(m => m.url) || [],
+      media: payload.media,
       spaces,
+      fittings: (payload as any).fittings,
+      floorPlanUrl: payload.floorPlanUrl,
+      assignedParkingId: payload.assignedParkingId,
+      notes: payload.notes,
       amenities: payload.amenities,
       furnishingStatus: payload.furnishingStatus,
       allowDaily: payload.allowDaily,
@@ -2180,9 +2207,8 @@ export function useAppStore() {
     }
 
     const savedUnit: Unit = {
-      ...payload,
       ...normalizeUnitFromServer(res.unit),
-      spaces,
+      spaces: Array.isArray(res.unit.spaces) && res.unit.spaces.length > 0 ? res.unit.spaces : spaces,
       bedroomsCount: metrics.bedroomsCount,
       bathroomsCount: metrics.bathroomsCount,
       bedsCount: metrics.bedsCount,
@@ -2213,7 +2239,7 @@ export function useAppStore() {
   }, []);
 
   /**
-   * Batch create multiple units with numbering range
+   * Batch create multiple units with numbering range within a single transactional request
    */
   const batchCreateUnits = useCallback(async (params: {
     propertyId: string;
@@ -2232,95 +2258,101 @@ export function useAppStore() {
 
     if (!floor || !property) throw new Error('البرج السكني أو الطابق المحدد غير متوفر.');
 
-    const existingNumbers = new Set(
-      globalState.units.filter(u => u.propertyId === params.propertyId && u.publicationStatus !== 'archived').map(u => u.unitNumber.trim())
-    );
-
-    // Verify all numbers in advance
-    for (let i = params.startNumber; i <= params.endNumber; i++) {
-      const numStr = params.prefix ? `${params.prefix}${i}` : `${i}`;
-      if (existingNumbers.has(numStr)) {
-        throw new Error(`تعذر التشييد المتعدد، الشقة بالرقم "${numStr}" مسجلة حالياً في المبنى.`);
-      }
+    if (params.startNumber > params.endNumber) {
+      throw new Error('رقم الشقة البادئ يجب أن يكون أصغر من أو يساوي الرقم النهائي.');
     }
 
-    const createdUnits: Unit[] = [];
+    const unitsToCreate: any[] = [];
+    const spacesMap: Record<string, any[]> = {};
 
     for (let i = params.startNumber; i <= params.endNumber; i++) {
       const numStr = params.prefix ? `${params.prefix}${i}` : `${i}`;
 
       const spaces = template ? JSON.parse(JSON.stringify(template.spaces)) : [
         {
-          id: `sp-${Date.now()}-1`,
+          id: `sp-${Date.now()}-${i}-1`,
           name: 'منطقة المعيشة والجلوس المريحة',
           type: 'living_room' as const,
-          fittings: [{ id: `fit-${Date.now()}-1`, name: 'طقم كنب فخم مناسب للضيوف', category: 'furniture' as const, quantity: 1 }]
+          fittings: [{ id: `fit-${Date.now()}-${i}-1`, name: 'طقم كنب فخم مناسب للضيوف', category: 'furniture' as const, quantity: 1 }]
         },
         {
-          id: `sp-${Date.now()}-2`,
+          id: `sp-${Date.now()}-${i}-2`,
           name: 'غرفة النوم الرئيسية الدافئة',
           type: 'bedroom' as const,
           bedsCount: 1,
-          fittings: [{ id: `fit-${Date.now()}-2`, name: 'سرير كينج ملكي بحجم مريح', category: 'bed' as const, quantity: 1 }]
+          fittings: [{ id: `fit-${Date.now()}-${i}-2`, name: 'سرير كينج ملكي بحجم مريح', category: 'bed' as const, quantity: 1 }]
         },
         {
-          id: `sp-${Date.now()}-3`,
+          id: `sp-${Date.now()}-${i}-3`,
           name: 'دورة المياه والجاكوزي المتطور',
           type: 'bathroom' as const,
-          fittings: [{ id: `fit-${Date.now()}-3`, name: 'تجهيز استحمام مدمج متكامل', category: 'sanitary' as const, quantity: 1 }]
+          fittings: [{ id: `fit-${Date.now()}-${i}-3`, name: 'تجهيز استحمام مدمج متكامل', category: 'sanitary' as const, quantity: 1 }]
         }
       ];
 
-      const metrics = calculateUnitRoomMetrics(spaces);
+      spacesMap[numStr] = spaces;
 
-      const res = await apiCall('/api/units', 'POST', {
-        propertyId: params.propertyId,
-        floorId: params.floorId,
+      unitsToCreate.push({
         unitNumber: numStr,
         title: template ? `${template.title.split('-')[0].trim()} - شقة رقم ${numStr}` : `شقة منزل الفخامة رقم #${numStr}`,
-        titleEn: `Serviced Unit #${numStr}`,
+        titleEn: `Unit #${numStr}`,
         type: template ? template.type : 'apartment',
         areaSqm: template ? template.areaSqm : 85,
         floorNumber: floor.floorNumber,
         maxGuests: template ? template.maxGuests : 3,
         dailyRate: template ? template.dailyRate : 650,
-        dailySecurityDeposit: template?.dailySecurityDeposit || (template ? template.securityDeposit : 800),
+        dailySecurityDeposit: template ? template.dailySecurityDeposit : 800,
         monthlyRate: template ? template.monthlyRate : 13500,
-        monthlySecurityDeposit: template?.monthlySecurityDeposit || 3000,
+        monthlySecurityDeposit: template ? template.monthlySecurityDeposit : 3000,
         annualRate: template ? template.yearlyRate : 140000,
-        yearlySecurityDeposit: template?.yearlySecurityDeposit || 6000,
+        yearlyRate: template ? template.yearlyRate : 140000,
+        yearlySecurityDeposit: template ? template.yearlySecurityDeposit : 6000,
+        yearlyPaymentOptions: template ? template.yearlyPaymentOptions : ['single_annual', 'semi_annual'],
+        semiAnnualSurchargePercent: template ? template.semiAnnualSurchargePercent : 0,
+        cleaningFee: template ? template.cleaningFee : 100,
+        securityDeposit: template ? template.securityDeposit : 800,
+        taxPercentage: template ? template.taxPercentage : 15,
         occupancyStatus: 'vacant',
         publicationStatus: 'published',
         operationalStatus: 'ready',
+        isClean: true,
         images: template ? template.media.map(m => m.url) : (property.media[0] ? [property.media[0].url] : []),
+        media: template ? template.media : (property.media[0] ? [property.media[0]] : []),
         spaces,
         amenities: template ? [...template.amenities] : ['smart_lock', 'wifi', 'cleaning', 'concierge', 'full_kitchen'],
         furnishingStatus: template?.furnishingStatus || 'furnished',
         allowDaily: template ? template.allowDaily : true,
         allowMonthly: template ? template.allowMonthly : true,
         allowYearly: template ? template.allowYearly : true,
-        cleaningFee: template ? template.cleaningFee : 100,
-        securityDeposit: template ? template.securityDeposit : 800,
-        taxPercentage: 15
+        floorPlanUrl: template?.floorPlanUrl
       });
+    }
 
-      if (!res || !res.success || !res.unit) {
-        throw new Error(res?.message || `فشل حفظ الشقة ${numStr} على الخادم.`);
-      }
+    const idempotencyKey = `batch_${params.propertyId}_${params.floorId}_${params.startNumber}_${params.endNumber}_${params.prefix || ''}`;
 
-      const unit: Unit = {
-        ...normalizeUnitFromServer(res.unit),
+    const res = await apiCall('/api/units/batch', 'POST', {
+      propertyId: params.propertyId,
+      floorId: params.floorId,
+      units: unitsToCreate,
+      idempotencyKey
+    });
+
+    if (!res || !res.success || !Array.isArray(res.units)) {
+      throw new Error(res?.message || 'فشل تشييد مجموعة الشقق على الخادم.');
+    }
+
+    const createdUnits: Unit[] = res.units.map((u: any) => {
+      const normalized = normalizeUnitFromServer(u);
+      const spaces = spacesMap[normalized.unitNumber] || normalized.spaces;
+      const metrics = calculateUnitRoomMetrics(spaces);
+      return {
+        ...normalized,
         spaces,
         bedroomsCount: metrics.bedroomsCount,
         bathroomsCount: metrics.bathroomsCount,
-        bedsCount: metrics.bedsCount,
-        media: template ? [...template.media] : (property.media[0] ? [property.media[0]] : []),
-        floorPlanUrl: template?.floorPlanUrl,
-        yearlyPaymentOptions: template ? [...template.yearlyPaymentOptions] : ['single_annual', 'semi_annual'],
+        bedsCount: metrics.bedsCount
       };
-
-      createdUnits.push(unit);
-    }
+    });
 
     const createdIds = new Set(createdUnits.map(u => u.id));
     globalState = {
@@ -2334,7 +2366,7 @@ export function useAppStore() {
           entityId: params.floorId,
           performedBy: 'أحمد المفلح',
           role: 'Admin',
-          details: `تم توليد وتأكيد عدد ${createdUnits.length} شقة فندقية جديدة تابعة للطابق ${floor.name} وبأرقام تتسلسل من ${params.startNumber} إلى ${params.endNumber}`,
+          details: `تم توليد وتأكيد حفظ عدد ${createdUnits.length} شقة فندقية جديدة تابعة للطابق ${floor.name} وبأرقام تتسلسل من ${params.startNumber} إلى ${params.endNumber} ضمن معاملة واحدة.`,
           timestamp: new Date().toISOString(),
         },
         ...globalState.auditLogs
@@ -2477,15 +2509,22 @@ export function useAppStore() {
       type: updates.type,
       areaSqm: updates.areaSqm,
       maxGuests: updates.maxGuests,
+      bedroomsCount: updates.bedroomsCount,
+      bathroomsCount: updates.bathroomsCount,
+      bedsCount: updates.bedsCount,
       dailyRate: updates.dailyRate,
       dailySecurityDeposit: updates.dailySecurityDeposit,
       monthlyRate: updates.monthlyRate,
       monthlySecurityDeposit: updates.monthlySecurityDeposit,
       annualRate: updates.yearlyRate,
+      yearlyRate: updates.yearlyRate,
       yearlySecurityDeposit: updates.yearlySecurityDeposit,
+      yearlyPaymentOptions: updates.yearlyPaymentOptions,
+      semiAnnualSurchargePercent: updates.semiAnnualSurchargePercent,
       occupancyStatus: updates.occupancyStatus,
       publicationStatus: updates.publicationStatus,
       operationalStatus: updates.operationalStatus,
+      isClean: updates.isClean,
       amenities: updates.amenities,
       furnishingStatus: updates.furnishingStatus,
       allowDaily: updates.allowDaily,
@@ -2495,23 +2534,38 @@ export function useAppStore() {
       securityDeposit: updates.securityDeposit,
       taxPercentage: updates.taxPercentage,
       images: updates.media?.map(m => m.url),
+      media: updates.media,
       spaces: updates.spaces,
+      fittings: (updates as any).fittings,
+      floorPlanUrl: updates.floorPlanUrl,
+      assignedParkingId: updates.assignedParkingId,
+      notes: updates.notes,
       smartLockPin: (updates as any).smartLockPin
     });
 
-    if (!res || !res.success) {
+    if (!res || !res.success || !res.unit) {
       throw new Error(res?.message || 'فشل تحديث بيانات الوحدة السكنية على الخادم.');
     }
 
-    // Recalculate metrics if spaces updated
-    let calculated = {};
-    if (updates.spaces) {
-      calculated = calculateUnitRoomMetrics(updates.spaces);
+    // Authoritative update from the server-returned record
+    const updatedRecord = normalizeUnitFromServer(res.unit);
+    if (updates.spaces && Array.isArray(updates.spaces)) {
+      updatedRecord.spaces = updates.spaces;
+      const metrics = calculateUnitRoomMetrics(updates.spaces);
+      updatedRecord.bedroomsCount = metrics.bedroomsCount;
+      updatedRecord.bathroomsCount = metrics.bathroomsCount;
+      updatedRecord.bedsCount = metrics.bedsCount;
+    } else if (res.unit.spaces && Array.isArray(res.unit.spaces)) {
+      updatedRecord.spaces = res.unit.spaces;
+      const metrics = calculateUnitRoomMetrics(res.unit.spaces);
+      updatedRecord.bedroomsCount = metrics.bedroomsCount;
+      updatedRecord.bathroomsCount = metrics.bathroomsCount;
+      updatedRecord.bedsCount = metrics.bedsCount;
     }
 
     globalState = {
       ...globalState,
-      units: globalState.units.map(u => u.id === unitId ? { ...u, ...updates, ...calculated } : u),
+      units: globalState.units.map(u => u.id === unitId ? updatedRecord : u),
     };
 
     saveState(globalState);

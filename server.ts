@@ -34,6 +34,7 @@ import {
   createUnitInDb,
   updateUnitInDb,
   deleteUnitInDb,
+  createBatchUnitsInDb,
   getBookingsFromDb,
   getLeasesFromDb,
   getExpensesFromDb,
@@ -48,7 +49,8 @@ import {
 import {
   processDailyReservation,
   processLeaseContract,
-  checkUnitConflict
+  checkUnitConflict,
+  cancelBooking
 } from './src/server/reservationService.js';
 import {
   computeCostAllocation
@@ -617,10 +619,50 @@ export async function startServer(customPort?: number) {
     }
   });
 
+  apiRouter.put('/properties/:id/archive', authenticateToken, requireRoles(['SUPER_ADMIN', 'PROPERTY_MANAGER']), checkPropertyAccess, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      if (process.env.DATABASE_URL) {
+        const updated = await updatePropertyInDb(id, { isActive: false });
+        await recordAuditLogInDb({
+          userId: req.user?.userId,
+          userName: req.user?.username || 'المسؤول',
+          action: 'أرشفة مبنى / عقار',
+          module: 'إدارة العقارات',
+          details: `أرشفة المبنى ${id} مع الاحتفاظ بكافة السجلات والتعاقدات التاريخية`,
+          ipAddress: req.ip
+        });
+        return res.json({ success: true, property: updated, message: 'تم أرشفة المبنى بنجاح مع الحفاظ على السجلات والتعاقدات التاريخية.' });
+      }
+
+      if (!memoryState.properties) memoryState.properties = [];
+      const idx = memoryState.properties.findIndex((p: any) => p.id === id);
+      if (idx !== -1) {
+        memoryState.properties[idx] = { ...memoryState.properties[idx], isActive: false, status: 'unlisted' };
+        persistFallbackState();
+        return res.json({ success: true, property: memoryState.properties[idx], message: 'تم أرشفة المبنى بنجاح مع الحفاظ على السجلات التاريخية.' });
+      }
+      return res.status(404).json({ success: false, message: 'المبنى غير موجود.' });
+    } catch (err: any) {
+      return res.status(400).json({ success: false, message: err?.message || 'فشل أرشفة المبنى.' });
+    }
+  });
+
   apiRouter.delete('/properties/:id', authenticateToken, requireRoles(['SUPER_ADMIN']), checkPropertyAccess, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { id } = req.params;
       if (process.env.DATABASE_URL) {
+        // Enforce preserving historical records: prevent hard delete if allocations/leases exist
+        const hasHistory = await prisma.unitAllocation.findFirst({
+          where: { unit: { propertyId: id } }
+        });
+        if (hasHistory) {
+          return res.status(400).json({
+            success: false,
+            message: 'لا يمكن الحذف النهائي للمبنى لوجود سجلات مالية أو تعاقدات تاريخية مرتبطة به. يرجى أرشفة المبنى بدلاً من حذفه للحفاظ على النزاهة المحاسبية والتاريخية.'
+          });
+        }
+
         await deletePropertyInDb(id);
         await recordAuditLogInDb({
           userId: req.user?.userId,
@@ -631,6 +673,17 @@ export async function startServer(customPort?: number) {
           ipAddress: req.ip
         });
         return res.json({ success: true, message: 'تم حذف المبنى بنجاح.' });
+      }
+
+      const propUnits = (memoryState?.units || []).filter((u: any) => u.propertyId === id);
+      const propUnitIds = new Set(propUnits.map((u: any) => u.id));
+      const hasBookings = (memoryState?.bookings || []).some((b: any) => propUnitIds.has(b.unitId));
+      const hasLeases = (memoryState?.leases || []).some((l: any) => propUnitIds.has(l.unitId));
+      if (hasBookings || hasLeases) {
+        return res.status(400).json({
+          success: false,
+          message: 'لا يمكن الحذف النهائي للمبنى لوجود سجلات مالية أو تعاقدات تاريخية مرتبطة به. يرجى أرشفة المبنى بدلاً من حذفه للحفاظ على النزاهة المحاسبية والتاريخية.'
+        });
       }
 
       if (memoryState.properties) {
@@ -655,6 +708,11 @@ export async function startServer(customPort?: number) {
       const { propertyId, number, name } = req.body;
       if (!propertyId || name === undefined) {
         return res.status(400).json({ success: false, message: 'معرف المبنى واسم الطابق مطلوبان.' });
+      }
+
+      const user = req.user!;
+      if (user.role !== 'SUPER_ADMIN' && !user.allowedProperties?.includes(propertyId)) {
+        return res.status(403).json({ success: false, message: 'غير مصرح لك بإضافة طوابق في هذا العقار.' });
       }
 
       if (process.env.DATABASE_URL) {
@@ -682,6 +740,23 @@ export async function startServer(customPort?: number) {
   apiRouter.put('/floors/:id', authenticateToken, requireRoles(['SUPER_ADMIN', 'PROPERTY_MANAGER']), async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { id } = req.params;
+      const user = req.user!;
+
+      // Floor Property Scoping
+      if (user.role !== 'SUPER_ADMIN') {
+        let floorPropId: string | null = null;
+        if (process.env.DATABASE_URL) {
+          const flr = await prisma.floor.findUnique({ where: { id } });
+          floorPropId = flr?.propertyId || null;
+        } else {
+          const flr = (memoryState?.floors || []).find((f: any) => f.id === id);
+          floorPropId = flr?.propertyId || null;
+        }
+        if (floorPropId && !user.allowedProperties?.includes(floorPropId)) {
+          return res.status(403).json({ success: false, message: 'غير مصرح لك بتعديل طوابق هذا العقار.' });
+        }
+      }
+
       if (process.env.DATABASE_URL) {
         const updated = await updateFloorInDb(id, req.body);
         return res.json({ success: true, floor: updated, message: 'تم تحديث الطابق بنجاح.' });
@@ -703,6 +778,23 @@ export async function startServer(customPort?: number) {
   apiRouter.delete('/floors/:id', authenticateToken, requireRoles(['SUPER_ADMIN', 'PROPERTY_MANAGER']), async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { id } = req.params;
+      const user = req.user!;
+
+      // Floor Property Scoping
+      if (user.role !== 'SUPER_ADMIN') {
+        let floorPropId: string | null = null;
+        if (process.env.DATABASE_URL) {
+          const flr = await prisma.floor.findUnique({ where: { id } });
+          floorPropId = flr?.propertyId || null;
+        } else {
+          const flr = (memoryState?.floors || []).find((f: any) => f.id === id);
+          floorPropId = flr?.propertyId || null;
+        }
+        if (floorPropId && !user.allowedProperties?.includes(floorPropId)) {
+          return res.status(403).json({ success: false, message: 'غير مصرح لك بحذف طوابق هذا العقار.' });
+        }
+      }
+
       if (process.env.DATABASE_URL) {
         await deleteFloorInDb(id);
         return res.json({ success: true, message: 'تم حذف الطابق بنجاح.' });
@@ -757,9 +849,15 @@ export async function startServer(customPort?: number) {
       }
 
       // Check that property exists in fallback
-      const propExists = (memoryState?.properties || []).some((p: any) => p.id === propertyId);
-      if (!propExists) {
+      const prop = (memoryState?.properties || []).find((p: any) => p.id === propertyId);
+      if (!prop) {
         return res.status(400).json({ success: false, message: 'المبنى المحدد غير موجود في قاعدة البيانات.' });
+      }
+
+      if (req.body.floorId) {
+        const floor = (memoryState?.floors || []).find((f: any) => f.id === req.body.floorId);
+        if (!floor) return res.status(400).json({ success: false, message: 'الطابق المحدد غير موجود في قاعدة البيانات.' });
+        if (floor.propertyId !== propertyId) return res.status(400).json({ success: false, message: 'الطابق المحدد لا ينتمي إلى هذا المبنى.' });
       }
 
       // Check uniqueness in fallback
@@ -772,11 +870,53 @@ export async function startServer(customPort?: number) {
 
       const newUnit = {
         id: req.body.id || `unit_${Date.now()}_${Math.floor(100 + Math.random() * 900)}`,
-        ...req.body,
+        propertyId,
+        floorId: req.body.floorId || null,
+        unitNumber: String(unitNumber).trim(),
+        title: req.body.title || `شقة منزل الفخامة رقم #${unitNumber}`,
+        titleEn: req.body.titleEn || `Unit #${unitNumber}`,
+        type: req.body.type || 'apartment',
+        areaSqm: req.body.areaSqm !== undefined ? Number(req.body.areaSqm) : 0,
+        floorNumber: req.body.floorNumber !== undefined ? Number(req.body.floorNumber) : 1,
+        maxGuests: req.body.maxGuests !== undefined ? Number(req.body.maxGuests) : 3,
+        bedroomsCount: req.body.bedroomsCount !== undefined ? Number(req.body.bedroomsCount) : 1,
+        bathroomsCount: req.body.bathroomsCount !== undefined ? Number(req.body.bathroomsCount) : 1,
+        bedsCount: req.body.bedsCount !== undefined ? Number(req.body.bedsCount) : 1,
+        furnishingStatus: req.body.furnishingStatus || 'furnished',
+        allowDaily: req.body.allowDaily !== false,
+        dailyRate: req.body.dailyRate !== undefined ? Number(req.body.dailyRate) : 0,
+        dailySecurityDeposit: req.body.dailySecurityDeposit !== undefined ? Number(req.body.dailySecurityDeposit) : 0,
+        allowMonthly: req.body.allowMonthly !== false,
+        monthlyRate: req.body.monthlyRate !== undefined ? Number(req.body.monthlyRate) : 0,
+        monthlySecurityDeposit: req.body.monthlySecurityDeposit !== undefined ? Number(req.body.monthlySecurityDeposit) : 0,
+        allowYearly: req.body.allowYearly !== false,
+        annualRate: (req.body.annualRate !== undefined || req.body.yearlyRate !== undefined) ? Number(req.body.annualRate ?? req.body.yearlyRate) : 0,
+        yearlyRate: (req.body.annualRate !== undefined || req.body.yearlyRate !== undefined) ? Number(req.body.annualRate ?? req.body.yearlyRate) : 0,
+        yearlySecurityDeposit: req.body.yearlySecurityDeposit !== undefined ? Number(req.body.yearlySecurityDeposit) : 0,
+        yearlyPaymentOptions: Array.isArray(req.body.yearlyPaymentOptions) ? req.body.yearlyPaymentOptions : ['single_annual', 'semi_annual'],
+        semiAnnualSurchargePercent: req.body.semiAnnualSurchargePercent !== undefined ? Number(req.body.semiAnnualSurchargePercent) : 0,
+        cleaningFee: req.body.cleaningFee !== undefined ? Number(req.body.cleaningFee) : 0,
+        securityDeposit: req.body.securityDeposit !== undefined ? Number(req.body.securityDeposit) : 0,
+        taxPercentage: req.body.taxPercentage !== undefined ? Number(req.body.taxPercentage) : 15,
+        operationalStatus: req.body.operationalStatus || 'ready',
+        occupancyStatus: req.body.occupancyStatus || 'vacant',
+        isClean: req.body.isClean !== false,
+        publicationStatus: req.body.publicationStatus || 'published',
+        amenities: Array.isArray(req.body.amenities) ? req.body.amenities : [],
+        images: Array.isArray(req.body.images) ? req.body.images : [],
+        media: req.body.media || null,
+        spaces: req.body.spaces || null,
+        fittings: req.body.fittings || null,
+        floorPlanUrl: req.body.floorPlanUrl || null,
+        assignedParkingId: req.body.assignedParkingId || null,
+        notes: req.body.notes || null,
+        smartLockPin: req.body.smartLockPin || null,
         createdAt: new Date().toISOString()
       };
+
       if (!memoryState.units) memoryState.units = [];
       memoryState.units.push(newUnit);
+      prop.unitsCount = (prop.unitsCount || 0) + 1;
       persistFallbackState();
 
       await recordAuditLogInDb({
@@ -794,9 +934,197 @@ export async function startServer(customPort?: number) {
     }
   });
 
+  // Batch Units Creation API (Transactional Single Request)
+  apiRouter.post('/units/batch', authenticateToken, requireRoles(['SUPER_ADMIN', 'PROPERTY_MANAGER']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { propertyId, floorId, units, idempotencyKey } = req.body;
+      if (!propertyId || !floorId || !Array.isArray(units) || units.length === 0) {
+        return res.status(400).json({ success: false, message: 'معرف المبنى، الطابق، ومصفوفة الوحدات مطلوبة.' });
+      }
+
+      const user = req.user!;
+      if (user.role !== 'SUPER_ADMIN' && !user.allowedProperties?.includes(propertyId)) {
+        return res.status(403).json({ success: false, message: 'غير مصرح لك بإضافة وحدات في هذا العقار.' });
+      }
+
+      // Check duplicates within incoming batch
+      const unitNumbers = units.map(u => String(u.unitNumber).trim());
+      const uniqueNumbers = new Set(unitNumbers);
+      if (uniqueNumbers.size !== unitNumbers.length) {
+        return res.status(400).json({ success: false, message: 'تحتوي المجموعة على أرقام وحدات مكررة ضمن نفس الطلب.' });
+      }
+
+      if (process.env.DATABASE_URL) {
+        const createdUnits = await createBatchUnitsInDb({
+          propertyId,
+          floorId,
+          units,
+          idempotencyKey
+        });
+
+        await recordAuditLogInDb({
+          userId: user.userId,
+          userName: user.username || 'المسؤول',
+          action: 'إنشاء وحدات بالجملة',
+          module: 'إدارة الوحدات',
+          details: `إنشاء عدد ${createdUnits?.length} وحدة في العقار ${propertyId}`,
+          ipAddress: req.ip
+        });
+
+        return res.json({
+          success: true,
+          count: createdUnits?.length || 0,
+          units: createdUnits,
+          message: `تم إنشاء عدد ${createdUnits?.length} وحدة بنجاح ضمن معاملة واحدة.`
+        });
+      }
+
+      // Fallback in-memory / JSON persistence
+      const property = (memoryState?.properties || []).find((p: any) => p.id === propertyId);
+      if (!property) {
+        return res.status(400).json({ success: false, message: 'المبنى المحدد غير موجود في قاعدة البيانات.' });
+      }
+
+      const floor = (memoryState?.floors || []).find((f: any) => f.id === floorId);
+      if (!floor) {
+        return res.status(400).json({ success: false, message: 'الطابق المحدد غير موجود في قاعدة البيانات.' });
+      }
+      if (floor.propertyId !== propertyId) {
+        return res.status(400).json({ success: false, message: 'الطابق المحدد لا ينتمي إلى هذا المبنى.' });
+      }
+
+      // Idempotency check in fallback
+      if (idempotencyKey) {
+        if (!memoryState.processedBatchKeys) memoryState.processedBatchKeys = [];
+        if (memoryState.processedBatchKeys.includes(idempotencyKey)) {
+          const existingBatch = (memoryState?.units || []).filter(
+            (u: any) => u.propertyId === propertyId && unitNumbers.includes(String(u.unitNumber).trim())
+          );
+          return res.json({
+            success: true,
+            count: existingBatch.length,
+            units: existingBatch,
+            message: 'تم استرجاع المجموعة المنفذة مسبقاً (Idempotent).'
+          });
+        }
+      }
+
+      // Check duplicates against existing units in this property
+      const existingInProp = (memoryState?.units || []).filter(
+        (u: any) => u.propertyId === propertyId && unitNumbers.includes(String(u.unitNumber).trim()) && u.publicationStatus !== 'archived'
+      );
+      if (existingInProp.length > 0) {
+        const duplicateList = existingInProp.map((u: any) => u.unitNumber).join(', ');
+        return res.status(409).json({
+          success: false,
+          message: `تعذر إنشاء المجموعة لوجود وحدات مسجلة سلفاً في المبنى بنفس الأرقام: (${duplicateList}). لم يتم حفظ أي وحدة.`
+        });
+      }
+
+      if (!memoryState.units) memoryState.units = [];
+      const now = new Date().toISOString();
+      const createdBatch: any[] = [];
+
+      for (let i = 0; i < units.length; i++) {
+        const u = units[i];
+        const newUnit = {
+          id: `unit_${Date.now()}_${i}_${Math.floor(100 + Math.random() * 900)}`,
+          propertyId,
+          floorId,
+          unitNumber: String(u.unitNumber).trim(),
+          title: u.title || `شقة منزل الفخامة رقم #${u.unitNumber}`,
+          titleEn: u.titleEn || `Unit #${u.unitNumber}`,
+          type: u.type || 'apartment',
+          areaSqm: u.areaSqm !== undefined ? Number(u.areaSqm) : 0,
+          floorNumber: floor.number ?? floor.floorNumber ?? 1,
+          maxGuests: u.maxGuests !== undefined ? Number(u.maxGuests) : 3,
+          bedroomsCount: u.bedroomsCount !== undefined ? Number(u.bedroomsCount) : 1,
+          bathroomsCount: u.bathroomsCount !== undefined ? Number(u.bathroomsCount) : 1,
+          bedsCount: u.bedsCount !== undefined ? Number(u.bedsCount) : 1,
+          furnishingStatus: u.furnishingStatus || 'furnished',
+          allowDaily: u.allowDaily !== false,
+          dailyRate: u.dailyRate !== undefined ? Number(u.dailyRate) : 0,
+          dailySecurityDeposit: u.dailySecurityDeposit !== undefined ? Number(u.dailySecurityDeposit) : 0,
+          allowMonthly: u.allowMonthly !== false,
+          monthlyRate: u.monthlyRate !== undefined ? Number(u.monthlyRate) : 0,
+          monthlySecurityDeposit: u.monthlySecurityDeposit !== undefined ? Number(u.monthlySecurityDeposit) : 0,
+          allowYearly: u.allowYearly !== false,
+          annualRate: (u.annualRate !== undefined || u.yearlyRate !== undefined) ? Number(u.annualRate ?? u.yearlyRate) : 0,
+          yearlyRate: (u.annualRate !== undefined || u.yearlyRate !== undefined) ? Number(u.annualRate ?? u.yearlyRate) : 0,
+          yearlySecurityDeposit: u.yearlySecurityDeposit !== undefined ? Number(u.yearlySecurityDeposit) : 0,
+          yearlyPaymentOptions: Array.isArray(u.yearlyPaymentOptions) ? u.yearlyPaymentOptions : ['single_annual', 'semi_annual'],
+          semiAnnualSurchargePercent: u.semiAnnualSurchargePercent !== undefined ? Number(u.semiAnnualSurchargePercent) : 0,
+          cleaningFee: u.cleaningFee !== undefined ? Number(u.cleaningFee) : 0,
+          securityDeposit: u.securityDeposit !== undefined ? Number(u.securityDeposit) : 0,
+          taxPercentage: u.taxPercentage !== undefined ? Number(u.taxPercentage) : 15,
+          operationalStatus: u.operationalStatus || 'ready',
+          occupancyStatus: u.occupancyStatus || 'vacant',
+          isClean: u.isClean !== false,
+          publicationStatus: u.publicationStatus || 'published',
+          amenities: Array.isArray(u.amenities) ? u.amenities : [],
+          images: Array.isArray(u.images) ? u.images : [],
+          media: u.media || null,
+          spaces: u.spaces || null,
+          fittings: u.fittings || null,
+          floorPlanUrl: u.floorPlanUrl || null,
+          assignedParkingId: u.assignedParkingId || null,
+          notes: u.notes || null,
+          smartLockPin: u.smartLockPin || null,
+          createdAt: now
+        };
+        createdBatch.push(newUnit);
+      }
+
+      memoryState.units.push(...createdBatch);
+      property.unitsCount = (property.unitsCount || 0) + createdBatch.length;
+
+      if (idempotencyKey) {
+        if (!memoryState.processedBatchKeys) memoryState.processedBatchKeys = [];
+        memoryState.processedBatchKeys.push(idempotencyKey);
+      }
+
+      persistFallbackState();
+
+      await recordAuditLogInDb({
+        userId: user.userId,
+        userName: user.username || 'المسؤول',
+        action: 'إنشاء وحدات بالجملة',
+        module: 'إدارة الوحدات',
+        details: `إنشاء عدد ${createdBatch.length} وحدة في العقار ${propertyId}`,
+        ipAddress: req.ip
+      });
+
+      return res.json({
+        success: true,
+        count: createdBatch.length,
+        units: createdBatch,
+        message: `تم إنشاء عدد ${createdBatch.length} وحدة بنجاح ضمن معاملة واحدة.`
+      });
+    } catch (err: any) {
+      return res.status(400).json({ success: false, message: err?.message || 'فشل إنشاء مجموعة الوحدات.' });
+    }
+  });
+
   apiRouter.put('/units/:id', authenticateToken, requireRoles(['SUPER_ADMIN', 'PROPERTY_MANAGER']), async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { id } = req.params;
+      const user = req.user!;
+
+      // Unit Property Scoping
+      if (user.role !== 'SUPER_ADMIN') {
+        let unitPropId: string | null = null;
+        if (process.env.DATABASE_URL) {
+          const u = await prisma.unit.findUnique({ where: { id } });
+          unitPropId = u?.propertyId || null;
+        } else {
+          const u = (memoryState?.units || []).find((unit: any) => unit.id === id);
+          unitPropId = u?.propertyId || null;
+        }
+        if (unitPropId && !user.allowedProperties?.includes(unitPropId)) {
+          return res.status(403).json({ success: false, message: 'غير مصرح لك بإدارة وتعديل وحدات هذا العقار.' });
+        }
+      }
+
       if (process.env.DATABASE_URL) {
         const updated = await updateUnitInDb(id, req.body);
         await recordAuditLogInDb({
@@ -813,9 +1141,25 @@ export async function startServer(customPort?: number) {
       if (!memoryState.units) memoryState.units = [];
       const idx = memoryState.units.findIndex((u: any) => u.id === id);
       if (idx !== -1) {
-        memoryState.units[idx] = { ...memoryState.units[idx], ...req.body };
+        const existing = memoryState.units[idx];
+        if (req.body.unitNumber && String(req.body.unitNumber).trim() !== String(existing.unitNumber).trim()) {
+          const duplicate = memoryState.units.some(
+            (u: any) => u.id !== id && u.propertyId === existing.propertyId && String(u.unitNumber).trim() === String(req.body.unitNumber).trim() && u.publicationStatus !== 'archived'
+          );
+          if (duplicate) {
+            return res.status(409).json({ success: false, message: `شقة بالرقم "${req.body.unitNumber}" مسجلة ومحفوظة حالياً في نفس المبنى.` });
+          }
+        }
+
+        memoryState.units[idx] = {
+          ...existing,
+          ...req.body,
+          annualRate: req.body.annualRate !== undefined ? req.body.annualRate : (req.body.yearlyRate !== undefined ? req.body.yearlyRate : existing.annualRate),
+          yearlyRate: req.body.yearlyRate !== undefined ? req.body.yearlyRate : (req.body.annualRate !== undefined ? req.body.annualRate : existing.yearlyRate),
+          updatedAt: new Date().toISOString()
+        };
         persistFallbackState();
-        return res.json({ success: true, unit: memoryState.units[idx], message: 'تم تحديث بيانات الوحدة.' });
+        return res.json({ success: true, unit: memoryState.units[idx], message: 'تم تحديث بيانات الوحدة بنجاح.' });
       }
       return res.status(404).json({ success: false, message: 'الوحدة غير موجودة.' });
     } catch (err: any) {
@@ -826,6 +1170,23 @@ export async function startServer(customPort?: number) {
   apiRouter.delete('/units/:id', authenticateToken, requireRoles(['SUPER_ADMIN', 'PROPERTY_MANAGER']), async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { id } = req.params;
+      const user = req.user!;
+
+      // Unit Property Scoping
+      if (user.role !== 'SUPER_ADMIN') {
+        let unitPropId: string | null = null;
+        if (process.env.DATABASE_URL) {
+          const u = await prisma.unit.findUnique({ where: { id } });
+          unitPropId = u?.propertyId || null;
+        } else {
+          const u = (memoryState?.units || []).find((unit: any) => unit.id === id);
+          unitPropId = u?.propertyId || null;
+        }
+        if (unitPropId && !user.allowedProperties?.includes(unitPropId)) {
+          return res.status(403).json({ success: false, message: 'غير مصرح لك بحذف وحدات هذا العقار.' });
+        }
+      }
+
       if (process.env.DATABASE_URL) {
         await deleteUnitInDb(id);
         await recordAuditLogInDb({
@@ -884,9 +1245,16 @@ export async function startServer(customPort?: number) {
 
   apiRouter.post('/expenses', authenticateToken, requireRoles(['SUPER_ADMIN', 'PROPERTY_MANAGER', 'ACCOUNTANT']), async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const { title, amount, costCenterLevel } = req.body;
+      const { title, amount, costCenterLevel, propertyId } = req.body;
       if (!title || amount === undefined) {
         return res.status(400).json({ success: false, message: 'عنوان المصروف وقيمته مطلوبان.' });
+      }
+
+      const user = req.user!;
+      if (user.role === 'PROPERTY_MANAGER') {
+        if (!propertyId || !user.allowedProperties?.includes(propertyId)) {
+          return res.status(403).json({ success: false, message: 'غير مصرح لك بتسجيل مصاريف خارج نطاق العقارات المخصصة لك.' });
+        }
       }
 
       if (process.env.DATABASE_URL) {
@@ -913,6 +1281,17 @@ export async function startServer(customPort?: number) {
       };
       if (!memoryState.expenses) memoryState.expenses = [];
       memoryState.expenses.push(newExp);
+      persistFallbackState();
+
+      await recordAuditLogInDb({
+        userId: req.user?.userId,
+        userName: req.user?.username || 'المسؤول المالي',
+        action: 'تسجيل مصروف تشغيلي',
+        module: 'الإدارة المالية',
+        details: `تسجيل مصروف ${title} بقيمة ${amount} ر.س`,
+        ipAddress: req.ip
+      });
+
       return res.json({ success: true, expense: newExp, message: 'تم حفظ المصروف بنجاح.' });
     } catch (err: any) {
       return res.status(400).json({ success: false, message: err?.message || 'فشل حفظ المصروف.' });
@@ -922,6 +1301,25 @@ export async function startServer(customPort?: number) {
   apiRouter.put('/expenses/:id', authenticateToken, requireRoles(['SUPER_ADMIN', 'PROPERTY_MANAGER', 'ACCOUNTANT']), async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { id } = req.params;
+      const user = req.user!;
+
+      // Property Manager Scoping for Expense
+      if (user.role === 'PROPERTY_MANAGER') {
+        let expPropId = req.body.propertyId;
+        if (!expPropId) {
+          if (process.env.DATABASE_URL) {
+            const existingExp = await prisma.operationalExpense.findUnique({ where: { id } });
+            expPropId = existingExp?.propertyId;
+          } else {
+            const existingExp = (memoryState?.expenses || []).find((e: any) => e.id === id);
+            expPropId = existingExp?.propertyId;
+          }
+        }
+        if (expPropId && !user.allowedProperties?.includes(expPropId)) {
+          return res.status(403).json({ success: false, message: 'غير مصرح لك بتعديل مصاريف هذا العقار.' });
+        }
+      }
+
       if (process.env.DATABASE_URL) {
         const updated = await updateExpenseInDb(id, req.body);
         await recordAuditLogInDb({
@@ -939,6 +1337,7 @@ export async function startServer(customPort?: number) {
       const idx = memoryState.expenses.findIndex((e: any) => e.id === id);
       if (idx !== -1) {
         memoryState.expenses[idx] = { ...memoryState.expenses[idx], ...req.body };
+        persistFallbackState();
         return res.json({ success: true, expense: memoryState.expenses[idx], message: 'تم تحديث بيانات المصروف.' });
       }
       return res.status(404).json({ success: false, message: 'المصروف غير موجود.' });
@@ -947,9 +1346,25 @@ export async function startServer(customPort?: number) {
     }
   });
 
-  apiRouter.delete('/expenses/:id', authenticateToken, requireRoles(['SUPER_ADMIN', 'ACCOUNTANT']), async (req: AuthenticatedRequest, res: Response) => {
+  apiRouter.delete('/expenses/:id', authenticateToken, requireRoles(['SUPER_ADMIN', 'ACCOUNTANT', 'PROPERTY_MANAGER']), async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { id } = req.params;
+      const user = req.user!;
+
+      if (user.role === 'PROPERTY_MANAGER') {
+        let expPropId: string | null = null;
+        if (process.env.DATABASE_URL) {
+          const existingExp = await prisma.operationalExpense.findUnique({ where: { id } });
+          expPropId = existingExp?.propertyId || null;
+        } else {
+          const existingExp = (memoryState?.expenses || []).find((e: any) => e.id === id);
+          expPropId = existingExp?.propertyId || null;
+        }
+        if (expPropId && !user.allowedProperties?.includes(expPropId)) {
+          return res.status(403).json({ success: false, message: 'غير مصرح لك بحذف مصاريف هذا العقار.' });
+        }
+      }
+
       if (process.env.DATABASE_URL) {
         await deleteExpenseInDb(id);
         await recordAuditLogInDb({
@@ -965,6 +1380,7 @@ export async function startServer(customPort?: number) {
 
       if (memoryState.expenses) {
         memoryState.expenses = memoryState.expenses.filter((e: any) => e.id !== id);
+        persistFallbackState();
       }
       return res.json({ success: true, message: 'تم حذف المصروف بنجاح.' });
     } catch (err: any) {
@@ -1016,6 +1432,17 @@ export async function startServer(customPort?: number) {
       }
 
       fs.writeFileSync(targetPath, buffer);
+
+      if (isPrivate) {
+        if (!memoryState.privateDocs) memoryState.privateDocs = [];
+        memoryState.privateDocs.push({
+          fileName: safeName,
+          ownerUserId: req.user?.userId,
+          propertyId: req.body.propertyId || null,
+          createdAt: new Date().toISOString()
+        });
+        persistFallbackState();
+      }
 
       const publicUrl = isPrivate ? `/api/documents/private/${safeName}` : `/uploads/${safeName}`;
 
@@ -1224,6 +1651,56 @@ export async function startServer(customPort?: number) {
         conflict: true,
         message: err.message || 'عذراً، هذه الوحدة محجوزة بالفعل في الفترة المحددة.'
       });
+    }
+  });
+
+  // Booking Cancellation Endpoint
+  apiRouter.post('/bookings/:id/cancel', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const user = req.user!;
+
+      if (process.env.DATABASE_URL) {
+        const cancelled = await cancelBooking(id);
+        await recordAuditLogInDb({
+          userId: user.userId,
+          userName: user.username || 'المسؤول',
+          action: 'إلغاء حجز',
+          module: 'إدارة الحجوزات',
+          details: `إلغاء الحجز رقم ${id} وتحرير الفترة الزمنية للوحدة`,
+          ipAddress: req.ip
+        });
+        return res.json({ success: true, booking: cancelled, message: 'تم إلغاء الحجز بنجاح وتحرير الفترة للوحدة.' });
+      }
+
+      if (!memoryState.bookings) memoryState.bookings = [];
+      const bk = memoryState.bookings.find((b: any) => b.id === id);
+      if (!bk) {
+        return res.status(404).json({ success: false, message: 'الحجز المطلوب إلغاؤه غير موجود.' });
+      }
+
+      bk.status = 'cancelled';
+      if (memoryState.allocations) {
+        memoryState.allocations.forEach((a: any) => {
+          if (a.referenceId === bk.id || a.referenceId === bk.bookingNumber) {
+            a.status = 'cancelled';
+          }
+        });
+      }
+      persistFallbackState();
+
+      await recordAuditLogInDb({
+        userId: user.userId,
+        userName: user.username || 'المسؤول',
+        action: 'إلغاء حجز',
+        module: 'إدارة الحجوزات',
+        details: `إلغاء الحجز رقم ${id} وتحرير الفترة الزمنية للوحدة`,
+        ipAddress: req.ip
+      });
+
+      return res.json({ success: true, booking: bk, message: 'تم إلغاء الحجز بنجاح وتحرير الفترة للوحدة.' });
+    } catch (err: any) {
+      return res.status(400).json({ success: false, message: err?.message || 'فشل إلغاء الحجز.' });
     }
   });
 
@@ -1457,7 +1934,7 @@ export async function startServer(customPort?: number) {
     return res.status(400).json({ success: false, message: 'وضع الاستيراد يجب أن يكون preview أو commit.' });
   });
 
-  // 8. Protected Private Documents Endpoint with Path Traversal Defense
+  // 8. Protected Private Documents Endpoint with Path Traversal Defense & Ownership Verification
   apiRouter.get('/documents/private/:docName', authenticateToken, (req: AuthenticatedRequest, res: Response) => {
     const safeDocName = path.basename(req.params.docName);
     const docPath = path.join(PRIVATE_DOCS_DIR, safeDocName);
@@ -1470,10 +1947,28 @@ export async function startServer(customPort?: number) {
       return res.status(404).json({ success: false, message: 'المستند غير موجود.' });
     }
 
+    // Ownership and RBAC Verification: Super Admins access all; others must own the doc or manage its property
+    const user = req.user!;
+    if (user.role !== 'SUPER_ADMIN') {
+      const docRecord = (memoryState?.privateDocs || []).find((d: any) => d.fileName === safeDocName);
+      if (!docRecord) {
+        return res.status(403).json({ success: false, message: 'غير مصرح لك بالوصول لهذا المستند الخاص أو غير مسجل.' });
+      }
+      if (docRecord.ownerUserId && docRecord.ownerUserId !== user.userId) {
+        if (user.role === 'PROPERTY_MANAGER') {
+          if (!docRecord.propertyId || !user.allowedProperties?.includes(docRecord.propertyId)) {
+            return res.status(403).json({ success: false, message: 'غير مصرح لك بالوصول لمستندات هذا العقار.' });
+          }
+        } else {
+          return res.status(403).json({ success: false, message: 'غير مصرح لك بالوصول لهذا المستند الخاص.' });
+        }
+      }
+    }
+
     res.sendFile(docPath);
   });
 
-  // 9. Protected Real Backup Export & Restore
+  // 9. Protected Real Backup Export & Restore (Complete with DB Data & Static Files)
   apiRouter.post('/backup/export', authenticateToken, requireRoles(['SUPER_ADMIN']), async (req: AuthenticatedRequest, res: Response) => {
     const backupFileName = `backup_${Date.now()}.json`;
     const backupFilePath = path.join(BACKUP_DIR, backupFileName);
@@ -1486,19 +1981,52 @@ export async function startServer(customPort?: number) {
         stateToExport = memoryState;
       }
 
-      fs.writeFileSync(backupFilePath, JSON.stringify(stateToExport, null, 2), 'utf-8');
+      // Read files from uploads and private_docs
+      const filesPayload: { uploads: Record<string, string>; private_docs: Record<string, string> } = {
+        uploads: {},
+        private_docs: {}
+      };
+
+      if (fs.existsSync(UPLOADS_DIR)) {
+        const uFiles = fs.readdirSync(UPLOADS_DIR);
+        for (const uf of uFiles) {
+          const fp = path.join(UPLOADS_DIR, uf);
+          if (fs.statSync(fp).isFile()) {
+            filesPayload.uploads[uf] = fs.readFileSync(fp).toString('base64');
+          }
+        }
+      }
+
+      if (fs.existsSync(PRIVATE_DOCS_DIR)) {
+        const pFiles = fs.readdirSync(PRIVATE_DOCS_DIR);
+        for (const pf of pFiles) {
+          const fp = path.join(PRIVATE_DOCS_DIR, pf);
+          if (fs.statSync(fp).isFile()) {
+            filesPayload.private_docs[pf] = fs.readFileSync(fp).toString('base64');
+          }
+        }
+      }
+
+      const backupPackage = {
+        version: '2.0',
+        exportedAt: new Date().toISOString(),
+        data: stateToExport,
+        files: filesPayload
+      };
+
+      fs.writeFileSync(backupFilePath, JSON.stringify(backupPackage, null, 2), 'utf-8');
 
       await recordAuditLogInDb({
         userId: req.user?.userId,
         userName: req.user?.username || 'المسؤول',
         action: 'تصدير نسخة احتياطية',
         module: 'النسخ الاحتياطي',
-        details: `تصدير نسخة احتياطية جديدة: ${backupFileName}`
+        details: `تصدير نسخة احتياطية جديدة كاملة: ${backupFileName}`
       });
 
       res.json({
         success: true,
-        message: 'تم إنشاء وحفظ النسخة الاحتياطية بنجاح.',
+        message: 'تم إنشاء وحفظ النسخة الاحتياطية الشاملة بنجاح.',
         backupFile: backupFileName,
         timestamp: new Date().toISOString()
       });
@@ -1519,13 +2047,33 @@ export async function startServer(customPort?: number) {
     }
 
     try {
-      const data = fs.readFileSync(backupFilePath, 'utf-8');
-      const restored = JSON.parse(data);
+      const rawData = fs.readFileSync(backupFilePath, 'utf-8');
+      const parsedPackage = JSON.parse(rawData);
+      const restored = parsedPackage.data || parsedPackage;
 
       if (process.env.DATABASE_URL) {
         await importDataIntoDb(restored);
       } else {
         memoryState = restored;
+        persistFallbackState();
+      }
+
+      // Restore files into uploads and private_docs
+      if (parsedPackage.files) {
+        if (parsedPackage.files.uploads) {
+          if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+          for (const [fname, b64] of Object.entries(parsedPackage.files.uploads as Record<string, string>)) {
+            const dest = path.join(UPLOADS_DIR, path.basename(fname));
+            fs.writeFileSync(dest, Buffer.from(b64, 'base64'));
+          }
+        }
+        if (parsedPackage.files.private_docs) {
+          if (!fs.existsSync(PRIVATE_DOCS_DIR)) fs.mkdirSync(PRIVATE_DOCS_DIR, { recursive: true });
+          for (const [fname, b64] of Object.entries(parsedPackage.files.private_docs as Record<string, string>)) {
+            const dest = path.join(PRIVATE_DOCS_DIR, path.basename(fname));
+            fs.writeFileSync(dest, Buffer.from(b64, 'base64'));
+          }
+        }
       }
 
       await recordAuditLogInDb({
@@ -1533,12 +2081,12 @@ export async function startServer(customPort?: number) {
         userName: req.user?.username || 'المسؤول',
         action: 'استعادة نسخة احتياطية',
         module: 'النسخ الاحتياطي',
-        details: `استعادة حالة النظام من الملف: ${safeFileName}`
+        details: `استعادة حالة النظام والملفات بالكامل من الملف: ${safeFileName}`
       });
 
       res.json({
         success: true,
-        message: 'تمت استعادة البيانات بنجاح من النسخة الاحتياطية إلى قاعدة البيانات.',
+        message: 'تمت استعادة البيانات والملفات بنجاح من النسخة الاحتياطية إلى قاعدة البيانات والبيئة.',
         timestamp: new Date().toISOString()
       });
     } catch (e: any) {

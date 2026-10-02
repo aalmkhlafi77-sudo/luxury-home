@@ -209,6 +209,8 @@ export interface Unit {
   // مرافق مخصصة
   assignedParkingId?: string;
   publicationStatus?: 'draft' | 'published' | 'archived';
+  isClean?: boolean;
+  smartLockPin?: string;
   isCloned?: boolean;
   clonedFromUnitId?: string;
   // الخدمات الافتراضية للشقة

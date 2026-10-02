@@ -158,26 +158,51 @@ model Floor {
 }
 
 model Unit {
-  id                String         @id @default(uuid())
-  propertyId        String
-  property          Property       @relation(fields: [propertyId], references: [id], onDelete: Cascade)
-  floorId           String?
-  floor             Floor?         @relation(fields: [floorId], references: [id], onDelete: SetNull)
-  unitNumber        String
-  type              String         // Studio, 1BD, 2BD, Penthouse
-  areaSqm           Float          @default(0)
-  dailyRate         Decimal        @default(0) @db.Decimal(12, 2)
-  monthlyRate       Decimal        @default(0) @db.Decimal(12, 2)
-  annualRate        Decimal        @default(0) @db.Decimal(12, 2)
-  occupancyStatus   String         @default("vacant") // vacant, occupied, maintenance, blocked
-  isClean           Boolean        @default(true)
-  publicationStatus String         @default("published")
-  images            String[]
-  spaces            Json?
-  fittings          Json?
-  smartLockPin      String?
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
+  id                        String         @id @default(uuid())
+  propertyId                String
+  property                  Property       @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  floorId                   String?
+  floor                     Floor?         @relation(fields: [floorId], references: [id], onDelete: SetNull)
+  unitNumber                String
+  title                     String         @default("")
+  titleEn                   String         @default("")
+  type                      String         // apartment, studio, suite, duplex
+  areaSqm                   Float          @default(0)
+  floorNumber               Int            @default(1)
+  maxGuests                 Int            @default(3)
+  bedroomsCount             Int            @default(1)
+  bathroomsCount            Int            @default(1)
+  bedsCount                 Int            @default(1)
+  furnishingStatus          String         @default("furnished") // furnished, partially_furnished, unfurnished
+  allowDaily                Boolean        @default(true)
+  dailyRate                 Decimal        @default(0) @db.Decimal(12, 2)
+  dailySecurityDeposit      Decimal        @default(0) @db.Decimal(12, 2)
+  allowMonthly              Boolean        @default(true)
+  monthlyRate               Decimal        @default(0) @db.Decimal(12, 2)
+  monthlySecurityDeposit    Decimal        @default(0) @db.Decimal(12, 2)
+  allowYearly               Boolean        @default(true)
+  annualRate                Decimal        @default(0) @db.Decimal(12, 2)
+  yearlySecurityDeposit     Decimal        @default(0) @db.Decimal(12, 2)
+  yearlyPaymentOptions      String[]       @default(["single_annual", "semi_annual"])
+  semiAnnualSurchargePercent Decimal       @default(0) @db.Decimal(5, 2)
+  cleaningFee               Decimal        @default(0) @db.Decimal(12, 2)
+  securityDeposit           Decimal        @default(0) @db.Decimal(12, 2)
+  taxPercentage             Decimal        @default(15) @db.Decimal(5, 2)
+  operationalStatus         String         @default("ready") // ready, occupied, cleaning, maintenance, blocked
+  occupancyStatus           String         @default("vacant") // vacant, occupied, maintenance, blocked
+  isClean                   Boolean        @default(true)
+  publicationStatus         String         @default("published") // draft, published, archived
+  amenities                 String[]       @default([])
+  images                    String[]       @default([])
+  media                     Json?
+  spaces                    Json?
+  fittings                  Json?
+  floorPlanUrl              String?
+  assignedParkingId         String?
+  notes                     String?
+  smartLockPin              String?
+  createdAt                 DateTime       @default(now())
+  updatedAt                 DateTime       @updatedAt
   
   allocations       UnitAllocation[]
   bookings          Booking[]

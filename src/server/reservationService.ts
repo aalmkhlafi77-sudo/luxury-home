@@ -486,3 +486,40 @@ export async function processLeaseContract(input: LeaseContractInput) {
     installments: installmentsData
   };
 }
+
+export async function cancelBooking(bookingId: string) {
+  if (process.env.DATABASE_URL) {
+    return await prisma.$transaction(async (tx) => {
+      const booking = await tx.booking.findUnique({
+        where: { id: bookingId }
+      });
+      if (!booking) throw new Error('الحجز المطلوب إلغاؤه غير موجود.');
+
+      const updated = await tx.booking.update({
+        where: { id: bookingId },
+        data: { status: BookingStatus.CANCELLED }
+      });
+
+      // Cancel associated allocations to free exclusion constraint
+      await tx.unitAllocation.updateMany({
+        where: {
+          unitId: booking.unitId,
+          referenceId: booking.id,
+          status: 'active'
+        },
+        data: { status: 'cancelled' }
+      });
+
+      // Release any held security deposits
+      await tx.securityDepositRecord.updateMany({
+        where: { bookingId: booking.id, status: 'held' },
+        data: { status: 'refunded', releasedAt: new Date() }
+      });
+
+      return serializeDecimals(updated);
+    });
+  }
+
+  return null;
+}
+

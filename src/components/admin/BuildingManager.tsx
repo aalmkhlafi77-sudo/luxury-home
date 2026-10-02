@@ -46,6 +46,7 @@ export const BuildingManager: React.FC = () => {
   const [isCreatingBuilding, setIsCreatingBuilding] = useState(false);
   const [editingUnit, setEditingUnit] = useState<Unit | null>(null);
   const [isBatchAdding, setIsBatchAdding] = useState(false);
+  const [isSubmittingBatch, setIsSubmittingBatch] = useState(false);
   const [isCloningUnit, setIsCloningUnit] = useState<Unit | null>(null);
   const [isAddingParking, setIsAddingParking] = useState(false);
   const [isAddingFloor, setIsAddingFloor] = useState(false);
@@ -146,6 +147,7 @@ export const BuildingManager: React.FC = () => {
     e.preventDefault();
     if (!currentProperty || !batchForm.floorId) return;
     setErrorMsg(null);
+    setIsSubmittingBatch(true);
     try {
       await batchCreateUnits({
         propertyId: currentProperty.id,
@@ -156,10 +158,13 @@ export const BuildingManager: React.FC = () => {
         templateUnitId: batchForm.templateUnitId || undefined,
       });
       setIsBatchAdding(false);
-      setSuccessMsg('تم توليد الوحدات السكنية المتعددة وإدراجها بنجاح في الطابق المختار.');
+      setSuccessMsg('تم توليد وتأكيد حفظ المجموعة كاملة في قاعدة البيانات بنجاح.');
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (err: any) {
+      // Retain form inputs and keep modal open on failure
       setErrorMsg(err.message || 'فشل توليد الوحدات.');
+    } finally {
+      setIsSubmittingBatch(false);
     }
   };
 
@@ -499,9 +504,20 @@ export const BuildingManager: React.FC = () => {
                     </select>
                   </div>
                   <div className="flex justify-end gap-2 pt-1.5 border-t border-[#E3DCCD]/60">
-                    <button type="button" onClick={() => setIsBatchAdding(false)} className="px-3 py-1.5 border border-[#E3DCCD] rounded-xl cursor-pointer">إلغاء التوليد</button>
-                    <button type="submit" className="px-5 py-2 bg-[#282824] text-white rounded-xl font-bold shadow-xs cursor-pointer">
-                      تأكيد توليد عدد {Number(batchForm.endNumber) - Number(batchForm.startNumber) + 1} شقة
+                    <button type="button" disabled={isSubmittingBatch} onClick={() => setIsBatchAdding(false)} className="px-3 py-1.5 border border-[#E3DCCD] rounded-xl cursor-pointer disabled:opacity-50">إلغاء التوليد</button>
+                    <button
+                      type="submit"
+                      disabled={isSubmittingBatch}
+                      className="px-5 py-2 bg-[#282824] text-white rounded-xl font-bold shadow-xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    >
+                      {isSubmittingBatch ? (
+                        <>
+                          <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                          <span>جاري التوليد بالمعاملة الموحدة...</span>
+                        </>
+                      ) : (
+                        <span>تأكيد توليد عدد {Number(batchForm.endNumber) - Number(batchForm.startNumber) + 1} شقة</span>
+                      )}
                     </button>
                   </div>
                 </form>

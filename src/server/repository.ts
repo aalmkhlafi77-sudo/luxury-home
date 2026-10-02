@@ -265,17 +265,43 @@ export async function createUnitInDb(data: {
   propertyId: string;
   floorId?: string;
   unitNumber: string;
+  title?: string;
+  titleEn?: string;
   type?: string;
   areaSqm?: number;
+  floorNumber?: number;
+  maxGuests?: number;
+  bedroomsCount?: number;
+  bathroomsCount?: number;
+  bedsCount?: number;
+  furnishingStatus?: string;
+  allowDaily?: boolean;
   dailyRate?: number;
+  dailySecurityDeposit?: number;
+  allowMonthly?: boolean;
   monthlyRate?: number;
+  monthlySecurityDeposit?: number;
+  allowYearly?: boolean;
   annualRate?: number;
+  yearlyRate?: number;
+  yearlySecurityDeposit?: number;
+  yearlyPaymentOptions?: string[];
+  semiAnnualSurchargePercent?: number;
+  cleaningFee?: number;
+  securityDeposit?: number;
+  taxPercentage?: number;
+  operationalStatus?: string;
   occupancyStatus?: string;
   isClean?: boolean;
   publicationStatus?: string;
+  amenities?: string[];
   images?: string[];
+  media?: any;
   spaces?: any;
   fittings?: any;
+  floorPlanUrl?: string;
+  assignedParkingId?: string;
+  notes?: string;
   smartLockPin?: string;
 }) {
   if (!process.env.DATABASE_URL) return null;
@@ -288,33 +314,66 @@ export async function createUnitInDb(data: {
     throw new Error('المبنى المحدد غير موجود في قاعدة البيانات.');
   }
 
+  // If floorId provided, verify floor exists and belongs to property
+  if (data.floorId) {
+    const floor = await prisma.floor.findUnique({ where: { id: data.floorId } });
+    if (!floor) throw new Error('الطابق المحدد غير موجود في قاعدة البيانات.');
+    if (floor.propertyId !== data.propertyId) throw new Error('الطابق المحدد لا ينتمي إلى هذا المبنى.');
+  }
+
   // Verify unit number uniqueness in property
   const existing = await prisma.unit.findFirst({
     where: {
       propertyId: data.propertyId,
-      unitNumber: data.unitNumber
+      unitNumber: String(data.unitNumber).trim(),
+      publicationStatus: { not: 'archived' }
     }
   });
   if (existing) {
-    throw new Error(`الوحدة رقم (${data.unitNumber}) موجودة مسبقاً في هذا العقار.`);
+    throw new Error(`الوحدة رقم (${data.unitNumber}) مسجلة سلفاً في هذا العقار.`);
   }
 
   const created = await prisma.unit.create({
     data: {
       propertyId: data.propertyId,
       floorId: data.floorId || null,
-      unitNumber: data.unitNumber,
+      unitNumber: String(data.unitNumber).trim(),
+      title: data.title || `شقة منزل الفخامة رقم #${data.unitNumber}`,
+      titleEn: data.titleEn || `Unit #${data.unitNumber}`,
       type: data.type || 'apartment',
-      areaSqm: Number(data.areaSqm) || 0,
-      dailyRate: new Decimal(data.dailyRate || 0),
-      monthlyRate: new Decimal(data.monthlyRate || 0),
-      annualRate: new Decimal(data.annualRate || 0),
+      areaSqm: data.areaSqm !== undefined ? Number(data.areaSqm) : 0,
+      floorNumber: data.floorNumber !== undefined ? Number(data.floorNumber) : 1,
+      maxGuests: data.maxGuests !== undefined ? Number(data.maxGuests) : 3,
+      bedroomsCount: data.bedroomsCount !== undefined ? Number(data.bedroomsCount) : 1,
+      bathroomsCount: data.bathroomsCount !== undefined ? Number(data.bathroomsCount) : 1,
+      bedsCount: data.bedsCount !== undefined ? Number(data.bedsCount) : 1,
+      furnishingStatus: data.furnishingStatus || 'furnished',
+      allowDaily: data.allowDaily !== false,
+      dailyRate: new Decimal(data.dailyRate ?? 0),
+      dailySecurityDeposit: new Decimal(data.dailySecurityDeposit ?? 0),
+      allowMonthly: data.allowMonthly !== false,
+      monthlyRate: new Decimal(data.monthlyRate ?? 0),
+      monthlySecurityDeposit: new Decimal(data.monthlySecurityDeposit ?? 0),
+      allowYearly: data.allowYearly !== false,
+      annualRate: new Decimal(data.annualRate ?? data.yearlyRate ?? 0),
+      yearlySecurityDeposit: new Decimal(data.yearlySecurityDeposit ?? 0),
+      yearlyPaymentOptions: Array.isArray(data.yearlyPaymentOptions) ? data.yearlyPaymentOptions : ['single_annual', 'semi_annual'],
+      semiAnnualSurchargePercent: new Decimal(data.semiAnnualSurchargePercent ?? 0),
+      cleaningFee: new Decimal(data.cleaningFee ?? 0),
+      securityDeposit: new Decimal(data.securityDeposit ?? 0),
+      taxPercentage: new Decimal(data.taxPercentage ?? 15),
+      operationalStatus: data.operationalStatus || 'ready',
       occupancyStatus: data.occupancyStatus || 'vacant',
       isClean: data.isClean !== false,
       publicationStatus: data.publicationStatus || 'published',
+      amenities: Array.isArray(data.amenities) ? data.amenities : [],
       images: Array.isArray(data.images) ? data.images : [],
+      media: data.media || null,
       spaces: data.spaces || null,
       fittings: data.fittings || null,
+      floorPlanUrl: data.floorPlanUrl || null,
+      assignedParkingId: data.assignedParkingId || null,
+      notes: data.notes || null,
       smartLockPin: data.smartLockPin || null
     },
     include: { property: true, floor: true }
@@ -335,12 +394,23 @@ export async function updateUnitInDb(id: string, data: any) {
   const existing = await prisma.unit.findUnique({ where: { id } });
   if (!existing) throw new Error('الوحدة المحددة غير موجودة.');
 
-  if (data.unitNumber && data.unitNumber !== existing.unitNumber) {
+  const propId = data.propertyId || existing.propertyId;
+
+  // Floor verification if floorId is changed
+  if (data.floorId && data.floorId !== existing.floorId) {
+    const floor = await prisma.floor.findUnique({ where: { id: data.floorId } });
+    if (!floor) throw new Error('الطابق المحدد غير موجود في قاعدة البيانات.');
+    if (floor.propertyId !== propId) throw new Error('الطابق المحدد لا ينتمي إلى هذا المبنى.');
+  }
+
+  // Duplicate unitNumber verification if changed
+  if (data.unitNumber && data.unitNumber.trim() !== existing.unitNumber.trim()) {
     const duplicate = await prisma.unit.findFirst({
       where: {
         id: { not: id },
-        propertyId: data.propertyId || existing.propertyId,
-        unitNumber: data.unitNumber
+        propertyId: propId,
+        unitNumber: data.unitNumber.trim(),
+        publicationStatus: { not: 'archived' }
       }
     });
     if (duplicate) {
@@ -350,18 +420,47 @@ export async function updateUnitInDb(id: string, data: any) {
 
   const updateData: any = {};
   if (data.floorId !== undefined) updateData.floorId = data.floorId || null;
-  if (data.unitNumber !== undefined) updateData.unitNumber = data.unitNumber;
+  if (data.unitNumber !== undefined) updateData.unitNumber = String(data.unitNumber).trim();
+  if (data.title !== undefined) updateData.title = data.title;
+  if (data.titleEn !== undefined) updateData.titleEn = data.titleEn;
   if (data.type !== undefined) updateData.type = data.type;
   if (data.areaSqm !== undefined) updateData.areaSqm = Number(data.areaSqm);
+  if (data.floorNumber !== undefined) updateData.floorNumber = Number(data.floorNumber);
+  if (data.maxGuests !== undefined) updateData.maxGuests = Number(data.maxGuests);
+  if (data.bedroomsCount !== undefined) updateData.bedroomsCount = Number(data.bedroomsCount);
+  if (data.bathroomsCount !== undefined) updateData.bathroomsCount = Number(data.bathroomsCount);
+  if (data.bedsCount !== undefined) updateData.bedsCount = Number(data.bedsCount);
+  if (data.furnishingStatus !== undefined) updateData.furnishingStatus = data.furnishingStatus;
+  if (data.allowDaily !== undefined) updateData.allowDaily = Boolean(data.allowDaily);
   if (data.dailyRate !== undefined) updateData.dailyRate = new Decimal(data.dailyRate);
+  if (data.dailySecurityDeposit !== undefined) updateData.dailySecurityDeposit = new Decimal(data.dailySecurityDeposit);
+  if (data.allowMonthly !== undefined) updateData.allowMonthly = Boolean(data.allowMonthly);
   if (data.monthlyRate !== undefined) updateData.monthlyRate = new Decimal(data.monthlyRate);
-  if (data.annualRate !== undefined) updateData.annualRate = new Decimal(data.annualRate);
+  if (data.monthlySecurityDeposit !== undefined) updateData.monthlySecurityDeposit = new Decimal(data.monthlySecurityDeposit);
+  if (data.allowYearly !== undefined) updateData.allowYearly = Boolean(data.allowYearly);
+  if (data.annualRate !== undefined || data.yearlyRate !== undefined) {
+    updateData.annualRate = new Decimal(data.annualRate ?? data.yearlyRate);
+  }
+  if (data.yearlySecurityDeposit !== undefined) updateData.yearlySecurityDeposit = new Decimal(data.yearlySecurityDeposit);
+  if (data.yearlyPaymentOptions !== undefined) {
+    updateData.yearlyPaymentOptions = Array.isArray(data.yearlyPaymentOptions) ? data.yearlyPaymentOptions : [];
+  }
+  if (data.semiAnnualSurchargePercent !== undefined) updateData.semiAnnualSurchargePercent = new Decimal(data.semiAnnualSurchargePercent);
+  if (data.cleaningFee !== undefined) updateData.cleaningFee = new Decimal(data.cleaningFee);
+  if (data.securityDeposit !== undefined) updateData.securityDeposit = new Decimal(data.securityDeposit);
+  if (data.taxPercentage !== undefined) updateData.taxPercentage = new Decimal(data.taxPercentage);
+  if (data.operationalStatus !== undefined) updateData.operationalStatus = data.operationalStatus;
   if (data.occupancyStatus !== undefined) updateData.occupancyStatus = data.occupancyStatus;
   if (data.isClean !== undefined) updateData.isClean = Boolean(data.isClean);
   if (data.publicationStatus !== undefined) updateData.publicationStatus = data.publicationStatus;
+  if (data.amenities !== undefined) updateData.amenities = Array.isArray(data.amenities) ? data.amenities : [];
   if (data.images !== undefined) updateData.images = Array.isArray(data.images) ? data.images : [];
+  if (data.media !== undefined) updateData.media = data.media;
   if (data.spaces !== undefined) updateData.spaces = data.spaces;
   if (data.fittings !== undefined) updateData.fittings = data.fittings;
+  if (data.floorPlanUrl !== undefined) updateData.floorPlanUrl = data.floorPlanUrl;
+  if (data.assignedParkingId !== undefined) updateData.assignedParkingId = data.assignedParkingId;
+  if (data.notes !== undefined) updateData.notes = data.notes;
   if (data.smartLockPin !== undefined) updateData.smartLockPin = data.smartLockPin;
 
   const updated = await prisma.unit.update({
@@ -370,6 +469,110 @@ export async function updateUnitInDb(id: string, data: any) {
     include: { property: true, floor: true }
   });
   return serializeDecimals(updated);
+}
+
+export async function createBatchUnitsInDb(params: {
+  propertyId: string;
+  floorId: string;
+  units: any[];
+  idempotencyKey?: string;
+}) {
+  if (!process.env.DATABASE_URL) return null;
+  const { propertyId, floorId, units } = params;
+
+  // 1. Verify Property
+  const property = await prisma.property.findUnique({ where: { id: propertyId } });
+  if (!property) throw new Error('المبنى المحدد غير موجود في قاعدة البيانات.');
+
+  // 2. Verify Floor & Property ownership
+  const floor = await prisma.floor.findUnique({ where: { id: floorId } });
+  if (!floor) throw new Error('الطابق المحدد غير موجود في قاعدة البيانات.');
+  if (floor.propertyId !== propertyId) {
+    throw new Error('الطابق المحدد لا ينتمي إلى هذا المبنى.');
+  }
+
+  // 3. Check duplicates within incoming batch
+  const unitNumbers = units.map(u => String(u.unitNumber).trim());
+  const uniqueNums = new Set(unitNumbers);
+  if (uniqueNums.size !== unitNumbers.length) {
+    throw new Error('تحتوي المجموعة على أرقام وحدات مكررة ضمن نفس الطلب.');
+  }
+
+  // 4. Check duplicates against existing DB units for this property
+  const existing = await prisma.unit.findMany({
+    where: {
+      propertyId,
+      unitNumber: { in: unitNumbers },
+      publicationStatus: { not: 'archived' }
+    }
+  });
+
+  if (existing.length > 0) {
+    const duplicateList = existing.map(u => u.unitNumber).join(', ');
+    throw new Error(`تعذر إنشاء المجموعة لوجود وحدات مسجلة سلفاً في المبنى بنفس الأرقام: (${duplicateList}). لم يتم حفظ أي وحدة.`);
+  }
+
+  // 5. Execute transactional batch insertion
+  const createdUnits = await prisma.$transaction(async (tx) => {
+    const results = [];
+    for (const u of units) {
+      const created = await tx.unit.create({
+        data: {
+          propertyId,
+          floorId,
+          unitNumber: String(u.unitNumber).trim(),
+          title: u.title || `شقة منزل الفخامة رقم #${u.unitNumber}`,
+          titleEn: u.titleEn || `Unit #${u.unitNumber}`,
+          type: u.type || 'apartment',
+          areaSqm: u.areaSqm !== undefined ? Number(u.areaSqm) : 0,
+          floorNumber: floor.number,
+          maxGuests: u.maxGuests !== undefined ? Number(u.maxGuests) : 3,
+          bedroomsCount: u.bedroomsCount !== undefined ? Number(u.bedroomsCount) : 1,
+          bathroomsCount: u.bathroomsCount !== undefined ? Number(u.bathroomsCount) : 1,
+          bedsCount: u.bedsCount !== undefined ? Number(u.bedsCount) : 1,
+          furnishingStatus: u.furnishingStatus || 'furnished',
+          allowDaily: u.allowDaily !== false,
+          dailyRate: new Decimal(u.dailyRate ?? 0),
+          dailySecurityDeposit: new Decimal(u.dailySecurityDeposit ?? 0),
+          allowMonthly: u.allowMonthly !== false,
+          monthlyRate: new Decimal(u.monthlyRate ?? 0),
+          monthlySecurityDeposit: new Decimal(u.monthlySecurityDeposit ?? 0),
+          allowYearly: u.allowYearly !== false,
+          annualRate: new Decimal(u.annualRate ?? u.yearlyRate ?? 0),
+          yearlySecurityDeposit: new Decimal(u.yearlySecurityDeposit ?? 0),
+          yearlyPaymentOptions: Array.isArray(u.yearlyPaymentOptions) ? u.yearlyPaymentOptions : ['single_annual', 'semi_annual'],
+          semiAnnualSurchargePercent: new Decimal(u.semiAnnualSurchargePercent ?? 0),
+          cleaningFee: new Decimal(u.cleaningFee ?? 0),
+          securityDeposit: new Decimal(u.securityDeposit ?? 0),
+          taxPercentage: new Decimal(u.taxPercentage ?? 15),
+          operationalStatus: u.operationalStatus || 'ready',
+          occupancyStatus: u.occupancyStatus || 'vacant',
+          isClean: u.isClean !== false,
+          publicationStatus: u.publicationStatus || 'published',
+          amenities: Array.isArray(u.amenities) ? u.amenities : [],
+          images: Array.isArray(u.images) ? u.images : [],
+          media: u.media || null,
+          spaces: u.spaces || null,
+          fittings: u.fittings || null,
+          floorPlanUrl: u.floorPlanUrl || null,
+          assignedParkingId: u.assignedParkingId || null,
+          notes: u.notes || null,
+          smartLockPin: u.smartLockPin || null
+        },
+        include: { property: true, floor: true }
+      });
+      results.push(created);
+    }
+
+    await tx.property.update({
+      where: { id: propertyId },
+      data: { unitsCount: { increment: units.length } }
+    });
+
+    return results;
+  });
+
+  return serializeDecimals(createdUnits);
 }
 
 export async function deleteUnitInDb(id: string) {

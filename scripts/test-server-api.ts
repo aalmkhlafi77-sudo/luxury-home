@@ -423,9 +423,416 @@ async function runApiTests() {
       failures++;
     }
 
+    // =====================================================
+    // Test 9: Complete Unit Fields Persistence & Zero Values Preservation (Tasks 1 & 2 Acceptance Tests)
+    // =====================================================
+    console.log('\n[Test 9] Testing Complete Unit Fields Persistence & Zero Values Preservation...');
+    const zeroTestUnitNumber = `ZERO-${Date.now().toString().slice(-4)}`;
+    const createZeroUnitRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/units',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    }, {
+      propertyId: realPropertyId,
+      floorId: targetFloor?.id,
+      unitNumber: zeroTestUnitNumber,
+      title: 'شقة فاخرة لاختبار القيم الصفرية الكاملة',
+      titleEn: 'Luxury Zero-Value Test Unit',
+      type: 'apartment',
+      areaSqm: 95.5,
+      floorNumber: 2,
+      maxGuests: 4,
+      bedroomsCount: 2,
+      bathroomsCount: 2,
+      bedsCount: 2,
+      furnishingStatus: 'furnished',
+      allowDaily: false, // Disabled option
+      dailyRate: 0,
+      dailySecurityDeposit: 0, // Must stay 0, not default to 800!
+      allowMonthly: true,
+      monthlyRate: 11000,
+      monthlySecurityDeposit: 0, // Must stay 0, not default to 3000!
+      allowYearly: true,
+      annualRate: 120000,
+      yearlySecurityDeposit: 0, // Must stay 0, not default to 5000!
+      yearlyPaymentOptions: ['single_annual'],
+      semiAnnualSurchargePercent: 0,
+      cleaningFee: 0, // Must stay 0, not default to 100!
+      securityDeposit: 0, // Must stay 0, not default to 800!
+      taxPercentage: 0, // Must stay 0, not default to 15!
+      operationalStatus: 'ready',
+      occupancyStatus: 'vacant',
+      isClean: true,
+      publicationStatus: 'published',
+      amenities: ['wifi', 'smart_lock'],
+      images: ['https://example.com/unit_test.jpg'],
+      spaces: [
+        {
+          id: 'sp-test-1',
+          name: 'غرفة نوم رئيسية',
+          type: 'bedroom',
+          bedsCount: 1,
+          fittings: [{ id: 'fit-1', name: 'سرير كينج', category: 'bed', quantity: 1 }]
+        }
+      ],
+      floorPlanUrl: 'https://example.com/plan_unit.pdf',
+      notes: 'ملاحظة خاصة لاختبار الحفظ الكامل'
+    });
+
+    const zeroUnit = createZeroUnitRes.data?.unit;
+    if (
+      createZeroUnitRes.status === 200 &&
+      zeroUnit &&
+      zeroUnit.allowDaily === false &&
+      Number(zeroUnit.dailySecurityDeposit) === 0 &&
+      Number(zeroUnit.monthlySecurityDeposit) === 0 &&
+      Number(zeroUnit.yearlySecurityDeposit) === 0 &&
+      Number(zeroUnit.cleaningFee) === 0 &&
+      Number(zeroUnit.securityDeposit) === 0 &&
+      Number(zeroUnit.taxPercentage) === 0 &&
+      zeroUnit.floorPlanUrl === 'https://example.com/plan_unit.pdf' &&
+      zeroUnit.titleEn === 'Luxury Zero-Value Test Unit'
+    ) {
+      console.log('✅ PASS: Complete Unit fields created and zero values preserved (not replaced with defaults).');
+    } else {
+      console.error('❌ FAIL: Zero values or fields were not preserved correctly:', zeroUnit);
+      failures++;
+    }
+
+    // Verify reading zeroUnit in fresh session
+    const readFreshUnit = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/state',
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    const reloadedZeroUnit = (readFreshUnit.data?.state?.units || []).find((u: any) => u.id === zeroUnit?.id);
+    if (
+      reloadedZeroUnit &&
+      reloadedZeroUnit.allowDaily === false &&
+      Number(reloadedZeroUnit.dailySecurityDeposit) === 0 &&
+      Number(reloadedZeroUnit.monthlySecurityDeposit) === 0 &&
+      Number(reloadedZeroUnit.yearlySecurityDeposit) === 0 &&
+      Number(reloadedZeroUnit.cleaningFee) === 0 &&
+      Number(reloadedZeroUnit.taxPercentage) === 0
+    ) {
+      console.log('✅ PASS: Acceptance Test 2 Verified: Zero values & disabled options preserved after state reload.');
+    } else {
+      console.error('❌ FAIL: Reloaded unit lost zero values or disabled option:', reloadedZeroUnit);
+      failures++;
+    }
+
+    // =====================================================
+    // Test 10: Batch Units Transactionality & Idempotency (Task 3 Acceptance Test)
+    // =====================================================
+    console.log('\n[Test 10] Testing Batch Unit Creation (Transactionality & Idempotency)...');
+    
+    // 10.1 Batch with Duplicate Unit Number in payload (Must fail and save NOTHING)
+    const duplicateBatchRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/units/batch',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    }, {
+      propertyId: realPropertyId,
+      floorId: targetFloor?.id,
+      units: [
+        { unitNumber: 'BATCH-DUP-01', title: 'شقة 1' },
+        { unitNumber: 'BATCH-DUP-01', title: 'شقة 2 مكررة' }
+      ]
+    });
+
+    if (duplicateBatchRes.status === 400 || duplicateBatchRes.status === 409) {
+      console.log('✅ PASS: Batch with internal duplicate rejected with HTTP status code.');
+    } else {
+      console.error(`❌ FAIL: Duplicate batch was not rejected. Status: ${duplicateBatchRes.status}`);
+      failures++;
+    }
+
+    // Verify 0 units from this duplicate batch were saved
+    const stateAfterDup = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/state',
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    const dupSaved = (stateAfterDup.data?.state?.units || []).filter((u: any) => u.unitNumber === 'BATCH-DUP-01');
+    if (dupSaved.length === 0) {
+      console.log('✅ PASS: Acceptance Test 3 (Atomicity): 0 units saved when batch contained duplicate.');
+    } else {
+      console.error('❌ FAIL: Partial units were saved from failed duplicate batch:', dupSaved);
+      failures++;
+    }
+
+    // 10.2 Valid Batch Creation
+    const validBatchKey = `test_batch_key_${Date.now()}`;
+    const validBatchUnits = [
+      { unitNumber: `B-${Date.now().toString().slice(-4)}-1`, title: 'شقة دفعة 1', areaSqm: 80 },
+      { unitNumber: `B-${Date.now().toString().slice(-4)}-2`, title: 'شقة دفعة 2', areaSqm: 85 }
+    ];
+
+    const validBatchRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/units/batch',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    }, {
+      propertyId: realPropertyId,
+      floorId: targetFloor?.id,
+      units: validBatchUnits,
+      idempotencyKey: validBatchKey
+    });
+
+    if (validBatchRes.status === 200 && validBatchRes.data?.count === 2 && Array.isArray(validBatchRes.data?.units)) {
+      console.log('✅ PASS: Valid batch created successfully with official server records & IDs.');
+    } else {
+      console.error('❌ FAIL: Valid batch creation failed:', validBatchRes.data);
+      failures++;
+    }
+
+    // 10.3 Re-submit the exact same batch request (Idempotency)
+    const reBatchRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/units/batch',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    }, {
+      propertyId: realPropertyId,
+      floorId: targetFloor?.id,
+      units: validBatchUnits,
+      idempotencyKey: validBatchKey
+    });
+
+    if (reBatchRes.status === 200 && reBatchRes.data?.count === 2) {
+      console.log('✅ PASS: Acceptance Test 3 (Idempotency): Re-sent batch request returned existing units without duplicating.');
+    } else {
+      console.error('❌ FAIL: Re-sent batch request failed or duplicated:', reBatchRes.data);
+      failures++;
+    }
+
+    // =====================================================
+    // Test 11: Document Upload and RBAC Download Verification (Task 5)
+    // =====================================================
+    console.log('\n[Test 11] Testing Document Upload and Ownership Verification...');
+    const sampleDocData = Buffer.from('Official Private Document Content 2026').toString('base64');
+    const docUploadRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/media/upload',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    }, {
+      fileName: 'secret_contract.pdf',
+      base64Data: `data:application/pdf;base64,${sampleDocData}`,
+      isPrivate: true,
+      propertyId: realPropertyId
+    });
+
+    const docFileName = docUploadRes.data?.fileName;
+    if (docUploadRes.status === 200 && docFileName) {
+      console.log(`✅ PASS: Private document uploaded with secure file name: ${docFileName}`);
+    } else {
+      console.error('❌ FAIL: Private document upload failed:', docUploadRes.data);
+      failures++;
+    }
+
+    // Download document as Admin (Should succeed)
+    const docDownloadAdmin = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: `/api/documents/private/${docFileName}`,
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+
+    if (docDownloadAdmin.status === 200) {
+      console.log('✅ PASS: Super Admin authorized to download private document.');
+    } else {
+      console.error(`❌ FAIL: Super Admin download failed with status ${docDownloadAdmin.status}`);
+      failures++;
+    }
+
+    // Download document without Token (Should be blocked 401)
+    const docDownloadUnauth = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: `/api/documents/private/${docFileName}`,
+      method: 'GET'
+    });
+
+    if (docDownloadUnauth.status === 401) {
+      console.log('✅ PASS: Unauthenticated private document access blocked with HTTP 401.');
+    } else {
+      console.error(`❌ FAIL: Unauthenticated private document access not blocked: ${docDownloadUnauth.status}`);
+      failures++;
+    }
+
+    // =====================================================
+    // Test 12: Booking Conflict and Re-booking after Cancellation (Task 5)
+    // =====================================================
+    console.log('\n[Test 12] Testing Booking Conflict and Re-booking after Cancellation...');
+    const bookingUnitId = realUnitId;
+    const testStartDate = '2026-12-01';
+    const testEndDate = '2026-12-05';
+
+    // 12.1 Initial Booking
+    const bookRes1 = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/bookings/check-and-reserve',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    }, {
+      unitId: bookingUnitId,
+      startDate: testStartDate,
+      endDate: testEndDate,
+      guestName: 'محمد الغامدي',
+      rentalType: 'daily'
+    });
+
+    const bookingId = bookRes1.data?.booking?.id;
+    if (bookRes1.status === 200 && bookingId) {
+      console.log(`✅ PASS: Initial booking created successfully: ${bookingId}`);
+    } else {
+      console.error('❌ FAIL: Initial booking failed:', bookRes1.data);
+      failures++;
+    }
+
+    // 12.2 Conflict Booking on Overlapping Dates (Must fail with 409)
+    const bookResConflict = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/bookings/check-and-reserve',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    }, {
+      unitId: bookingUnitId,
+      startDate: '2026-12-02',
+      endDate: '2026-12-04',
+      guestName: 'علي القرني',
+      rentalType: 'daily'
+    });
+
+    if (bookResConflict.status === 409) {
+      console.log('✅ PASS: Overlapping reservation correctly prevented with HTTP 409 conflict.');
+    } else {
+      console.error(`❌ FAIL: Overlapping reservation was not prevented. Status: ${bookResConflict.status}`);
+      failures++;
+    }
+
+    // 12.3 Cancel Original Booking
+    const cancelRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: `/api/bookings/${bookingId}/cancel`,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    });
+
+    if (cancelRes.status === 200 && cancelRes.data?.booking?.status === 'cancelled') {
+      console.log('✅ PASS: Booking cancelled and unit allocation freed.');
+    } else {
+      console.error('❌ FAIL: Booking cancellation failed:', cancelRes.data);
+      failures++;
+    }
+
+    // 12.4 Re-booking Same Unit on Same Dates after Cancellation (Must Succeed!)
+    const reBookRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/bookings/check-and-reserve',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    }, {
+      unitId: bookingUnitId,
+      startDate: testStartDate,
+      endDate: testEndDate,
+      guestName: 'سعد القحطاني',
+      rentalType: 'daily'
+    });
+
+    if (reBookRes.status === 200 && reBookRes.data?.booking?.id) {
+      console.log('✅ PASS: Re-booking same dates succeeded after cancellation (Constraint conflict resolved!).');
+    } else {
+      console.error('❌ FAIL: Re-booking after cancellation failed:', reBookRes.data);
+      failures++;
+    }
+
+    // =====================================================
+    // Test 13: Full Backup Package Export & Restore with Static Files (Task 5)
+    // =====================================================
+    console.log('\n[Test 13] Testing Comprehensive Backup Export & Restore (Data + Files)...');
+    const backupExport = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/backup/export',
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+
+    const exportedFile = backupExport.data?.backupFile;
+    if (backupExport.status === 200 && exportedFile) {
+      console.log(`✅ PASS: Comprehensive backup exported: ${exportedFile}`);
+    } else {
+      console.error('❌ FAIL: Comprehensive backup export failed:', backupExport.data);
+      failures++;
+    }
+
+    const backupRestore = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/backup/restore',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    }, { backupFileName: exportedFile });
+
+    if (backupRestore.status === 200) {
+      console.log('✅ PASS: Backup restored successfully into database and static files environment.');
+    } else {
+      console.error('❌ FAIL: Backup restore failed:', backupRestore.data);
+      failures++;
+    }
+
     console.log('\n=====================================================');
     if (failures === 0) {
-      console.log('🎉 ALL API & SECURITY TESTS PASSED (0 Failures)');
+      console.log('🎉 ALL API, UNIT PERSISTENCE & SECURITY TESTS PASSED (0 Failures)');
     } else {
       console.error(`💥 TEST SUITE COMPLETED WITH ${failures} FAILURE(S)`);
     }

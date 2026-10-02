@@ -3,13 +3,16 @@
 
 CREATE EXTENSION IF NOT EXISTS btree_gist;
 
--- Drop constraint if exists
+-- Drop legacy conflicting constraints if exist
 ALTER TABLE "UnitAllocation" DROP CONSTRAINT IF EXISTS "no_overlapping_allocations";
+ALTER TABLE "UnitAllocation" DROP CONSTRAINT IF EXISTS "no_overlapping_active_allocations";
 
--- Add Exclusion Constraint for non-overlapping daterange per unit
+-- Add Exclusion Constraint for non-overlapping timestamp range per unit ONLY for active allocations
 ALTER TABLE "UnitAllocation" 
-ADD CONSTRAINT "no_overlapping_allocations" 
+ADD CONSTRAINT "no_overlapping_active_allocations" 
 EXCLUDE USING gist (
   "unitId" WITH =, 
-  daterange("startDate"::date, "endDate"::date, '[)') WITH &&
-);
+  tsrange("startDate", "endDate", '[)') WITH &&
+)
+WHERE ("status" = 'active');
+
