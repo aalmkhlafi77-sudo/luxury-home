@@ -1404,6 +1404,57 @@ export function validateBackupPackageIntegrity(backupData: any): { isValid: bool
     if (sd.leaseId && !leaseIdSet.has(String(sd.leaseId))) {
       errors.push(`علاقة غير متطابقة: التأمين ${sd.id} يشير إلى عقد غير موجود (${sd.leaseId}).`);
     }
+
+    for (const field of [
+      'collectedAmount',
+      'collectionReference',
+      'collectionVerifiedAt',
+      'refundedAmount',
+      'deductedAmount',
+    ]) {
+      if (!Object.prototype.hasOwnProperty.call(sd, field)) {
+        errors.push(`التأمين ${sd.id}: الحقل ${field} مفقود.`);
+      }
+    }
+
+    const parseAmount = (value: unknown): Decimal => {
+      if (
+        !['string', 'number'].includes(typeof value) ||
+        !/^\d{1,10}(?:\.\d{1,2})?$/.test(String(value))
+      ) {
+        errors.push(`التأمين ${sd.id}: مبلغ غير صالح.`);
+        return new Decimal(0);
+      }
+      return new Decimal(String(value));
+    };
+
+    if (
+      Object.prototype.hasOwnProperty.call(sd, 'collectedAmount') &&
+      Object.prototype.hasOwnProperty.call(sd, 'refundedAmount') &&
+      Object.prototype.hasOwnProperty.call(sd, 'deductedAmount')
+    ) {
+      const collected = parseAmount(sd.collectedAmount);
+      const refunded = parseAmount(sd.refundedAmount);
+      const deducted = parseAmount(sd.deductedAmount);
+
+      if (refunded.plus(deducted).gt(collected)) {
+        errors.push(`التأمين ${sd.id}: الحركات تتجاوز التحصيل.`);
+      }
+
+      if (collected.gt(0)) {
+        const validReference =
+          typeof sd.collectionReference === 'string' &&
+          sd.collectionReference.trim().length > 0;
+
+        const validDate =
+          typeof sd.collectionVerifiedAt === 'string' &&
+          Number.isFinite(Date.parse(sd.collectionVerifiedAt));
+
+        if (!validReference || !validDate) {
+          errors.push(`التأمين ${sd.id}: إثبات التحصيل ناقص.`);
+        }
+      }
+    }
   }
 
   for (const sdt of backupData.securityDepositTransactions || []) {
@@ -1777,9 +1828,12 @@ export async function restoreFullDatabaseInDb(backupData: any) {
             leaseId: sd.leaseId ?? null,
             bookingId: sd.bookingId ?? null,
             amount: new Decimal(sd.amount ?? 0),
-            collectedAmount: new Decimal(sd.collectedAmount ?? sd.amount ?? 0),
-            collectionReference: sd.collectionReference ?? null,
-            collectionVerifiedAt: sd.collectionVerifiedAt ? new Date(sd.collectionVerifiedAt) : null,
+    collectedAmount: new Decimal(sd.collectedAmount),
+    collectionReference: sd.collectionReference,
+    collectionVerifiedAt:
+      sd.collectionVerifiedAt === null
+        ? null
+        : new Date(sd.collectionVerifiedAt),
             status: sd.status || 'held',
             deductedAmount: new Decimal(sd.deductedAmount ?? 0),
             refundedAmount: new Decimal(sd.refundedAmount ?? 0),

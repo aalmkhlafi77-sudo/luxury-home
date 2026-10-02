@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useAppStore } from '../../store/useAppStore';
+import { useAppStore, loadAuthoritativeServerState } from '../../store/useAppStore';
 import {
   CreditCard,
   ShieldCheck,
@@ -23,7 +23,7 @@ import { AdjustmentModal } from './financials/AdjustmentModal';
 import { DepositSettlementModal } from './financials/DepositSettlementModal';
 
 export const FinancialsManager: React.FC = () => {
-  const { state, processDepositDeduction, refundSecurityDeposit } = useAppStore();
+  const { state } = useAppStore();
   const [activeTab, setActiveTab] = useState<
     'statement' | 'oversight' | 'profitability' | 'expenses' | 'cash_outflow' | 'categories_rules' | 'deposits' | 'payments'
   >('statement');
@@ -36,29 +36,127 @@ export const FinancialsManager: React.FC = () => {
   const [modalLeaseId, setModalLeaseId] = useState<string | undefined>(undefined);
   const [modalDepositId, setModalDepositId] = useState<string | undefined>(undefined);
 
-  // Deposit deduction modal state (legacy quick deduct)
+  // Deposit deduction modal state
   const [deductModalDepositId, setDeductModalDepositId] = useState<string | null>(null);
   const [deductAmount, setDeductAmount] = useState<number>(200);
   const [deductReason, setDeductReason] = useState<string>('تعويض خدش الحوائط وتلف المفتاح');
+  const [deductReference, setDeductReference] = useState<string>('DOC-DEDUCT-01');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const pendingOperation = React.useRef<{
+    depositId: string;
+    key: string;
+    payload: {
+      refundAmount: string;
+      deductedAmount: string;
+      deductionReason?: string;
+      refundMethod: 'bank_transfer' | 'cash' | 'deduction';
+      refundReference: string;
+      refundType: 'actual_payout';
+    };
+  } | null>(null);
+
+  const submitting = React.useRef(false);
 
   const selectedDeposit = state.securityDeposits.find(d => d.id === deductModalDepositId);
 
-  const handleDeductSubmit = (e: React.FormEvent) => {
+  async function submitDepositOp(payload: {
+    depositId: string;
+    refundAmount: string;
+    deductedAmount: string;
+    deductionReason?: string;
+    refundMethod: 'bank_transfer' | 'cash' | 'deduction';
+    refundReference: string;
+    refundType: 'actual_payout';
+  }) {
+    if (submitting.current) return;
+
+    if (!pendingOperation.current || pendingOperation.current.depositId !== payload.depositId) {
+      pendingOperation.current = {
+        depositId: payload.depositId,
+        key: crypto.randomUUID(),
+        payload: {
+          refundAmount: payload.refundAmount,
+          deductedAmount: payload.deductedAmount,
+          deductionReason: payload.deductionReason,
+          refundMethod: payload.refundMethod,
+          refundReference: payload.refundReference,
+          refundType: payload.refundType,
+        },
+      };
+    }
+
+    submitting.current = true;
+    setSaving(true);
+    setErrorMsg(null);
+    setSuccessMsg(null);
+
+    try {
+      const op = pendingOperation.current;
+      const token = localStorage.getItem('luxury_token') || '';
+
+      const response = await fetch(
+        `/api/security-deposits/${encodeURIComponent(op.depositId)}/refund`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+            'X-Idempotency-Key': op.key,
+          },
+          body: JSON.stringify(op.payload),
+        },
+      );
+
+      const result = await response.json().catch(() => null);
+
+      if (!response.ok || result?.success !== true) {
+        throw new Error(result?.message ?? 'تعذر تأكيد تنفيذ العملية.');
+      }
+
+      pendingOperation.current = null;
+      setDeductModalDepositId(null);
+      setSuccessMsg('تم تسجيل العملية في الخادم وتحديث البيانات المعتمدة.');
+      await loadAuthoritativeServerState(true);
+    } catch (error) {
+      setErrorMsg(
+        error instanceof Error ? error.message : 'تعذر تنفيذ العملية.',
+      );
+    } finally {
+      submitting.current = false;
+      setSaving(false);
+    }
+  }
+
+  const handleDeductSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!deductModalDepositId) return;
-    setErrorMsg(null);
-    try {
-      processDepositDeduction(deductModalDepositId, deductAmount, deductReason, 'مشرف المعاينة والصيانة الميداني');
-      setDeductModalDepositId(null);
-    } catch (err: any) {
-      setErrorMsg(err.message);
-    }
+    await submitDepositOp({
+      depositId: deductModalDepositId,
+      refundAmount: '0.00',
+      deductedAmount: deductAmount.toFixed(2),
+      deductionReason: deductReason,
+      refundMethod: 'deduction',
+      refundReference: deductReference || 'DEDUCTION-REF-01',
+      refundType: 'actual_payout',
+    });
   };
 
-  const handleRefundFull = (depositId: string, fullAmount: number) => {
+  const handleRefundFull = async (depositId: string, fullAmount: number) => {
+    const ref = prompt('أدخل رقم مرجع الإثبات البنكي أو سند الصرف:', `BANK-REF-${Date.now().toString().slice(-4)}`);
+    if (!ref || !ref.trim()) return;
+
     if (confirm(`هل أنت متأكد من تسوية وإعادة كامل وديعة التأمين وقدرها ${fullAmount} ر.س للعميل؟`)) {
-      refundSecurityDeposit(depositId, fullAmount);
+      await submitDepositOp({
+        depositId,
+        refundAmount: fullAmount.toFixed(2),
+        deductedAmount: '0.00',
+        refundMethod: 'bank_transfer',
+        refundReference: ref.trim(),
+        refundType: 'actual_payout',
+      });
     }
   };
 

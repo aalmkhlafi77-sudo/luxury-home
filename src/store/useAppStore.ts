@@ -1738,81 +1738,12 @@ export function useAppStore() {
   /**
    * Security deposit actions: deduct or refund
    */
-  const processDepositDeduction = useCallback((depositId: string, amount: number, reason: string, approvedBy: string) => {
-    const dep = globalState.securityDeposits.find(d => d.id === depositId);
-    if (!dep) return;
-
-    const remainingAmount = dep.amount - dep.deductions.reduce((sum, d) => sum + d.amount, 0);
-    if (amount > remainingAmount) {
-      throw new Error(`مبلغ الخصم المطلوب (${amount} ر.س) يتجاوز رصيد التأمين المتاح وهو (${remainingAmount} ر.س)`);
-    }
-
-    const deductionId = `ded-${Date.now()}`;
-    const deduction = {
-      id: deductionId,
-      amount,
-      reason,
-      deductedAt: new Date().toISOString(),
-      approvedBy,
-    };
-
-    const newDeductions = [...dep.deductions, deduction];
-    const totalDeducted = newDeductions.reduce((sum, d) => sum + d.amount, 0);
-    const newStatus = totalDeducted >= dep.amount ? 'claimed_for_damage' : 'partially_refunded';
-
-    globalState = {
-      ...globalState,
-      securityDeposits: globalState.securityDeposits.map(d => d.id === depositId ? {
-        ...d,
-        deductions: newDeductions,
-        status: newStatus as any,
-      } : d),
-      auditLogs: [
-        {
-          id: `log-${Date.now()}`,
-          action: 'تسوية اقتطاع من تأمين الشقة',
-          entity: 'SecurityDeposit',
-          entityId: depositId,
-          performedBy: approvedBy,
-          role: 'Supervisor',
-          details: `اقتطاع قيمة ${amount} ر.س لتعويض تلفيات: ${reason}`,
-          timestamp: new Date().toISOString(),
-        },
-        ...globalState.auditLogs
-      ]
-    };
-
-    notify();
+  const processDepositDeduction = useCallback((_depositId: string, _amount: number, _reason: string, _approvedBy: string) => {
+    // Local mutations removed. Deposit deductions must be executed via server API with strict verification.
   }, []);
 
-  const refundSecurityDeposit = useCallback((depositId: string, refundAmount: number) => {
-    const dep = globalState.securityDeposits.find(d => d.id === depositId);
-    if (!dep) return;
-
-    globalState = {
-      ...globalState,
-      securityDeposits: globalState.securityDeposits.map(d => d.id === depositId ? {
-        ...d,
-        refundAmount,
-        status: 'fully_refunded',
-        refundedAt: new Date().toISOString(),
-      } : d),
-      auditLogs: [
-        {
-          id: `log-${Date.now()}`,
-          action: 'إرجاع وتصفية تأمين سكن بالكامل',
-          entity: 'SecurityDeposit',
-          entityId: depositId,
-          performedBy: 'أمين الصندوق',
-          role: 'Accountant',
-          details: `تمت تسوية إرجاع مبلغ تأمين الإيجار وقدره ${refundAmount} ر.س للنزيل المستفيد ${dep.guestName}`,
-          timestamp: new Date().toISOString(),
-        },
-        ...globalState.auditLogs
-      ]
-    };
-
-    notify();
+  const refundSecurityDeposit = useCallback((_depositId: string, _refundAmount: number) => {
+    // Local mutations removed. Deposit refunds must be executed via server API with strict verification.
   }, []);
 
   /**

@@ -562,24 +562,20 @@ export function computeRefundFingerprint(params: {
 }
 
 export async function processSecurityDepositRefund(params: {
-  depositId?: string;
-  bookingId?: string;
-  leaseId?: string;
+  depositId: string;
   refundAmount?: number | string | Decimal;
   deductedAmount?: number | string | Decimal;
   deductionReason?: string;
   refundMethod: string;
   refundReference?: string;
   refundType?: string;
-  userId?: string;
-  userRole?: string;
-  userAllowedProperties?: string[];
-  idempotencyKey?: string;
+  userId: string;
+  idempotencyKey: string;
   providerConfirmation?: any;
 }) {
   return await refundDeposit({
-    depositId: params.depositId || params.bookingId || params.leaseId || '',
-    actorId: params.userId || 'admin',
+    depositId: params.depositId,
+    actorId: params.userId,
     idempotencyKey: params.idempotencyKey,
     refundAmount: params.refundAmount,
     deductedAmount: params.deductedAmount,
