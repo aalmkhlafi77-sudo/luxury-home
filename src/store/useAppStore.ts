@@ -197,7 +197,100 @@ export function saveState(state: AppState) {
   }
 }
 
-// Helper to make authenticated server calls
+// Normalization Helpers to bridge Server DB <-> Frontend Models
+export function normalizePropertyFromServer(p: any): Property {
+  return {
+    id: p.id,
+    identifierCode: p.code || p.identifierCode || `BLD-${String(p.id).slice(0, 6)}`,
+    name: p.name || '',
+    nameEn: p.nameEn || p.name || '',
+    slug: p.slug || `bld-${(p.code || p.name || p.id).toLowerCase().replace(/[^a-z0-9]/g, '-')}`,
+    tagline: p.tagline || 'مجمع سكني فخم متكامل بمستوى خدمات فندقية راقي',
+    description: p.description || '',
+    address: p.address || '',
+    city: p.city || 'الرياض',
+    district: p.district || '',
+    latitude: p.latitude || 24.7136,
+    longitude: p.longitude || 46.6753,
+    media: Array.isArray(p.media) && p.media.length > 0 ? p.media : (
+      Array.isArray(p.images) ? p.images.map((url: string, i: number) => ({
+        id: `med-${p.id}-${i}`,
+        url,
+        title: p.name,
+        type: 'image' as const,
+        category: 'facade' as const
+      })) : []
+    ),
+    amenities: Array.isArray(p.amenities) ? p.amenities : ['smart_lock', 'wifi', 'cleaning', 'concierge'],
+    totalFloors: p.floorsCount || p.totalFloors || 1,
+    checkInTime: p.checkInTime || '15:00',
+    checkOutTime: p.checkOutTime || '12:00',
+    featured: p.featured !== undefined ? p.featured : true,
+    status: p.isActive === false ? 'unlisted' : (p.status || 'published'),
+    sharedFacilities: Array.isArray(p.sharedFacilities) ? p.sharedFacilities : [],
+    defaultBuildingServices: Array.isArray(p.defaultBuildingServices) ? p.defaultBuildingServices : []
+  };
+}
+
+export function normalizeFloorFromServer(f: any): Floor {
+  return {
+    id: f.id,
+    propertyId: f.propertyId,
+    floorNumber: f.number !== undefined ? f.number : (f.floorNumber !== undefined ? f.floorNumber : 1),
+    name: f.name || `طابق الدور رقم ${f.number || 1}`,
+    label: f.label || f.name
+  };
+}
+
+export function normalizeUnitFromServer(u: any): Unit {
+  return {
+    id: u.id,
+    propertyId: u.propertyId,
+    floorId: u.floorId || '',
+    unitNumber: String(u.unitNumber || ''),
+    title: u.title || `شقة منزل الفخامة رقم #${u.unitNumber}`,
+    titleEn: u.titleEn || `Unit #${u.unitNumber}`,
+    type: (u.type || 'apartment') as any,
+    areaSqm: Number(u.areaSqm) || 80,
+    floorNumber: u.floorNumber !== undefined ? u.floorNumber : (u.floor?.number ?? 1),
+    maxGuests: u.maxGuests || 3,
+    bedroomsCount: u.bedroomsCount || 1,
+    bathroomsCount: u.bathroomsCount || 1,
+    bedsCount: u.bedsCount || 1,
+    spaces: Array.isArray(u.spaces) ? u.spaces : [],
+    amenities: Array.isArray(u.amenities) ? u.amenities : ['smart_lock', 'wifi', 'cleaning'],
+    media: Array.isArray(u.media) && u.media.length > 0 ? u.media : (
+      Array.isArray(u.images) ? u.images.map((url: string, i: number) => ({
+        id: `med-u-${u.id}-${i}`,
+        url,
+        title: u.unitNumber,
+        type: 'image' as const,
+        category: 'living' as const
+      })) : []
+    ),
+    floorPlanUrl: u.floorPlanUrl,
+    furnishingStatus: u.furnishingStatus || 'furnished',
+    allowDaily: u.allowDaily !== false,
+    dailyRate: Number(u.dailyRate) || 0,
+    dailySecurityDeposit: Number(u.dailySecurityDeposit) || 800,
+    allowMonthly: u.allowMonthly !== false,
+    monthlyRate: Number(u.monthlyRate) || 0,
+    monthlySecurityDeposit: Number(u.monthlySecurityDeposit) || 3000,
+    allowYearly: u.allowYearly !== false,
+    yearlyRate: Number(u.annualRate || u.yearlyRate) || 0,
+    yearlySecurityDeposit: Number(u.yearlySecurityDeposit) || 5000,
+    yearlyPaymentOptions: Array.isArray(u.yearlyPaymentOptions) ? u.yearlyPaymentOptions : ['single_annual', 'semi_annual'],
+    cleaningFee: Number(u.cleaningFee) || 100,
+    securityDeposit: Number(u.securityDeposit) || 800,
+    taxPercentage: Number(u.taxPercentage) || 15,
+    operationalStatus: (u.operationalStatus || 'ready') as any,
+    occupancyStatus: (u.occupancyStatus || 'vacant') as any,
+    publicationStatus: (u.publicationStatus || 'published') as any,
+    notes: u.notes || ''
+  };
+}
+
+// Helper to make authenticated server calls with strict error verification
 export async function apiCall(endpoint: string, method: string = 'GET', body?: any) {
   const token = localStorage.getItem('luxury_home_jwt_token');
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -205,24 +298,61 @@ export async function apiCall(endpoint: string, method: string = 'GET', body?: a
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const res = await fetch(endpoint, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined
-  });
-
-  if (!res.ok && res.status !== 401) {
-    const errorData = await res.json().catch(() => ({ message: 'فشلت العملية على الخادم' }));
-    throw new Error(errorData.message || `خطأ من الخادم (${res.status})`);
+  let res: Response;
+  try {
+    res = await fetch(endpoint, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined
+    });
+  } catch (networkErr: any) {
+    throw new Error(`تعذر الاتصال بالخادم: ${networkErr?.message || 'تحقق من اتصال الشبكة'}`);
   }
 
-  return res.json().catch(() => ({ success: true }));
+  let data: any = null;
+  const contentType = res.headers.get('content-type');
+  if (contentType && contentType.includes('application/json')) {
+    try {
+      data = await res.json();
+    } catch {
+      throw new Error('فشل قراءة استجابة الخادم كـ JSON.');
+    }
+  } else {
+    try {
+      const text = await res.text();
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      // non-json response
+    }
+  }
+
+  if (!res.ok) {
+    if (res.status === 401) {
+      throw new Error('انتهت صلاحية الجلسة أو لم يتم تسجيل الدخول (401). يرجى تسجيل الدخول مجدداً لإتمام العملية.');
+    }
+    if (res.status === 403) {
+      throw new Error('ليس لديك الصلاحيات الكافية لإجراء هذه العملية (403).');
+    }
+    const message = (data && typeof data === 'object' && data.message) || `فشلت العملية على الخادم (${res.status})`;
+    throw new Error(message);
+  }
+
+  if (data === null) {
+    throw new Error('استجابة الخادم فارغة أو غير صالحة.');
+  }
+
+  return data;
 }
 
 // Fetch authoritative server state on boot
 let hasLoadedServerState = false;
-export async function loadAuthoritativeServerState() {
-  if (hasLoadedServerState) return;
+
+export function resetServerStateLoadFlag() {
+  hasLoadedServerState = false;
+}
+
+export async function loadAuthoritativeServerState(force: boolean = false) {
+  if (hasLoadedServerState && !force) return;
   hasLoadedServerState = true;
 
   try {
@@ -234,8 +364,9 @@ export async function loadAuthoritativeServerState() {
         globalState = {
           ...globalState,
           settings: s.settings ? { ...globalState.settings, ...s.settings } : globalState.settings,
-          properties: Array.isArray(s.properties) && s.properties.length > 0 ? s.properties : globalState.properties,
-          units: Array.isArray(s.units) && s.units.length > 0 ? s.units : globalState.units,
+          properties: Array.isArray(s.properties) ? s.properties.map(normalizePropertyFromServer) : globalState.properties,
+          floors: Array.isArray(s.floors) ? s.floors.map(normalizeFloorFromServer) : globalState.floors,
+          units: Array.isArray(s.units) ? s.units.map(normalizeUnitFromServer) : globalState.units,
           bookings: Array.isArray(s.bookings) ? s.bookings : globalState.bookings,
           leases: Array.isArray(s.leases) ? s.leases : globalState.leases,
           expenses: Array.isArray(s.expenses) ? s.expenses : globalState.expenses,
@@ -259,12 +390,16 @@ export async function loadAuthoritativeServerState() {
       globalState = { ...globalState, settings: { ...globalState.settings, ...settingsRes.settings } };
       changed = true;
     }
-    if (propsRes?.success && Array.isArray(propsRes.properties) && propsRes.properties.length > 0) {
-      globalState = { ...globalState, properties: propsRes.properties };
+    if (propsRes?.success && Array.isArray(propsRes.properties)) {
+      globalState = {
+        ...globalState,
+        properties: propsRes.properties.map(normalizePropertyFromServer),
+        floors: Array.isArray(propsRes.floors) ? propsRes.floors.map(normalizeFloorFromServer) : globalState.floors
+      };
       changed = true;
     }
-    if (unitsRes?.success && Array.isArray(unitsRes.units) && unitsRes.units.length > 0) {
-      globalState = { ...globalState, units: unitsRes.units };
+    if (unitsRes?.success && Array.isArray(unitsRes.units)) {
+      globalState = { ...globalState, units: unitsRes.units.map(normalizeUnitFromServer) };
       changed = true;
     }
 
@@ -1764,54 +1899,14 @@ export function useAppStore() {
   /**
    * --- 1. Property Management ---
    */
-  const createProperty = useCallback((payload: Omit<Property, 'id'>) => {
+  const createProperty = useCallback(async (payload: Omit<Property, 'id'>): Promise<Property> => {
     // Check duplicate identifier code
     if (globalState.properties.some(p => p.identifierCode.toLowerCase() === payload.identifierCode.toLowerCase())) {
       throw new Error(`كود تصنيف المبنى (${payload.identifierCode}) مكرر ومسجل لمبنى آخر سلفاً!`);
     }
 
-    const propId = `prop-${Date.now()}`;
-    const newProperty: Property = {
-      ...payload,
-      id: propId,
-      slug: payload.slug || `prop-${payload.identifierCode.toLowerCase().replace(/[^a-z0-9]/g, '-')}`,
-      status: payload.status || 'draft',
-      sharedFacilities: payload.sharedFacilities || [],
-    };
-
-    // Auto-create standard floors according to totalFloors
-    const newFloors: Floor[] = [];
-    newFloors.push({ id: `flr-${propId}-b1`, propertyId: propId, floorNumber: -1, name: 'طابق القبو الأول (مواقف سيارات)', label: 'القبو الأول' });
-    newFloors.push({ id: `flr-${propId}-0`, propertyId: propId, floorNumber: 0, name: 'طابق الاستقبال (البهو والبهو المشترك)', label: 'البهو الأرضي' });
-
-    for (let f = 1; f <= payload.totalFloors; f++) {
-      newFloors.push({ id: `flr-${propId}-${f}`, propertyId: propId, floorNumber: f, name: `طابق الدور رقم ${f}`, label: `الدور رقم ${f}` });
-    }
-
-    globalState = {
-      ...globalState,
-      properties: [...globalState.properties, newProperty],
-      floors: [...globalState.floors, ...newFloors],
-      auditLogs: [
-        {
-          id: `log-${Date.now()}`,
-          action: 'إضافة مجمع سكني وموقع جديد',
-          entity: 'Property',
-          entityId: propId,
-          performedBy: 'أحمد المفلح',
-          role: 'Admin',
-          details: `تم بنجاح تشييد وتسجيل مبنى ${payload.name} كود (${payload.identifierCode}) مع تشييد نظامي تلقائي لعدد ${newFloors.length} طابق شامل القبو والبهو.`,
-          timestamp: new Date().toISOString(),
-        },
-        ...globalState.auditLogs
-      ]
-    };
-
-    notify();
-
-    // Push to backend API
-    apiCall('/api/properties', 'POST', {
-      id: propId,
+    // Push to backend API and wait for authoritative DB record
+    const res = await apiCall('/api/properties', 'POST', {
       name: payload.name,
       code: payload.identifierCode,
       address: payload.address,
@@ -1819,18 +1914,94 @@ export function useAppStore() {
       district: payload.district,
       floorsCount: payload.totalFloors,
       unitsCount: (payload as any).totalUnits || 0,
+      totalAreaSqm: (payload as any).totalAreaSqm || 0,
       description: payload.description,
       images: payload.media?.map(m => m.url) || [],
       isActive: payload.status !== 'unlisted'
-    }).catch(err => console.warn('[Sync Error] Property creation sync:', err.message));
+    });
 
-    return newProperty;
-  }, []);
+    if (!res || !res.success || !res.property) {
+      throw new Error(res?.message || 'فشل حفظ المبنى على الخادم.');
+    }
 
-  const updateProperty = useCallback((propertyId: string, updates: Partial<Property>) => {
+    const serverProp = res.property;
+    const serverFloors = res.floors || serverProp.floors || [];
+
+    const savedProperty: Property = {
+      ...payload,
+      id: serverProp.id,
+      identifierCode: serverProp.code || payload.identifierCode,
+      name: serverProp.name || payload.name,
+      address: serverProp.address || payload.address,
+      city: serverProp.city || payload.city,
+      district: serverProp.district || payload.district,
+      totalFloors: serverProp.floorsCount || payload.totalFloors,
+      status: serverProp.isActive === false ? 'unlisted' : (payload.status || 'published'),
+      media: payload.media || (serverProp.images || []).map((url: string, idx: number) => ({
+        id: `med-${serverProp.id}-${idx}`,
+        url,
+        title: serverProp.name,
+        type: 'image' as const,
+        category: 'facade' as const
+      })),
+      sharedFacilities: payload.sharedFacilities || []
+    };
+
+    const newFloors: Floor[] = serverFloors.map(normalizeFloorFromServer);
+
     globalState = {
       ...globalState,
-      properties: globalState.properties.map(p => p.id === propertyId ? { ...p, ...updates } : p),
+      properties: [...globalState.properties.filter(p => p.id !== savedProperty.id && p.identifierCode.toLowerCase() !== savedProperty.identifierCode.toLowerCase()), savedProperty],
+      floors: [...globalState.floors.filter(f => f.propertyId !== savedProperty.id), ...newFloors],
+      auditLogs: [
+        {
+          id: `log-${Date.now()}`,
+          action: 'إضافة مجمع سكني وموقع جديد',
+          entity: 'Property',
+          entityId: savedProperty.id,
+          performedBy: 'أحمد المفلح',
+          role: 'Admin',
+          details: `تم بنجاح تشييد وتسجيل مبنى ${savedProperty.name} كود (${savedProperty.identifierCode}) مع تشييد نظامي تلقائي لعدد ${newFloors.length} طابق شامل القبو والبهو.`,
+          timestamp: new Date().toISOString(),
+        },
+        ...globalState.auditLogs
+      ]
+    };
+
+    saveState(globalState);
+    notify();
+
+    return savedProperty;
+  }, []);
+
+  const updateProperty = useCallback(async (propertyId: string, updates: Partial<Property>) => {
+    const res = await apiCall(`/api/properties/${propertyId}`, 'PUT', {
+      name: updates.name,
+      code: updates.identifierCode,
+      address: updates.address,
+      city: updates.city,
+      district: updates.district,
+      floorsCount: updates.totalFloors,
+      unitsCount: (updates as any).totalUnits,
+      description: updates.description,
+      isActive: updates.status ? updates.status !== 'unlisted' : undefined
+    });
+
+    if (!res || !res.success) {
+      throw new Error(res?.message || 'فشل تحديث بيانات المبنى على الخادم.');
+    }
+
+    const serverProp = res.property;
+
+    globalState = {
+      ...globalState,
+      properties: globalState.properties.map(p => p.id === propertyId ? {
+        ...p,
+        ...updates,
+        id: serverProp?.id || p.id,
+        name: serverProp?.name || updates.name || p.name,
+        identifierCode: serverProp?.code || updates.identifierCode || p.identifierCode,
+      } : p),
       auditLogs: [
         {
           id: `log-${Date.now()}`,
@@ -1846,22 +2017,11 @@ export function useAppStore() {
       ]
     };
 
+    saveState(globalState);
     notify();
-
-    apiCall(`/api/properties/${propertyId}`, 'PUT', {
-      name: updates.name,
-      code: updates.identifierCode,
-      address: updates.address,
-      city: updates.city,
-      district: updates.district,
-      floorsCount: updates.totalFloors,
-      unitsCount: (updates as any).totalUnits,
-      description: updates.description,
-      isActive: updates.status ? updates.status !== 'unlisted' : undefined
-    }).catch(err => console.warn('[Sync Error] Property update sync:', err.message));
   }, []);
 
-  const archiveProperty = useCallback((propertyId: string) => {
+  const archiveProperty = useCallback(async (propertyId: string) => {
     // Check for any active units with bookings or leases
     const propertyUnits = globalState.units.filter(u => u.propertyId === propertyId);
     const unitIds = new Set(propertyUnits.map(u => u.id));
@@ -1870,6 +2030,8 @@ export function useAppStore() {
     if (activeAlloc) {
       throw new Error('لا يمكن سحب أو إخفاء المبنى السكني نظراً لوجود تعاقدات أو حجوزات نشطة جارية أو مستقبلية.');
     }
+
+    await apiCall(`/api/properties/${propertyId}`, 'PUT', { isActive: false });
 
     globalState = {
       ...globalState,
@@ -1889,54 +2051,61 @@ export function useAppStore() {
       ]
     };
 
+    saveState(globalState);
     notify();
-
-    apiCall(`/api/properties/${propertyId}`, 'DELETE').catch(err => {
-      console.warn('[Sync Error] Property archive sync:', err.message);
-    });
   }, []);
 
   /**
    * --- 2. Floor Management ---
    */
-  const createFloor = useCallback((payload: Omit<Floor, 'id'>) => {
-    const floorId = `flr-${Date.now()}`;
-    const newFloor: Floor = {
-      ...payload,
-      id: floorId,
-    };
+  const createFloor = useCallback(async (payload: Omit<Floor, 'id'>): Promise<Floor> => {
+    const res = await apiCall('/api/floors', 'POST', {
+      propertyId: payload.propertyId,
+      number: payload.floorNumber,
+      name: payload.name,
+      label: payload.label
+    });
+
+    if (!res || !res.success || !res.floor) {
+      throw new Error(res?.message || 'فشل حفظ الطابق على الخادم.');
+    }
+
+    const savedFloor: Floor = normalizeFloorFromServer(res.floor);
 
     globalState = {
       ...globalState,
-      floors: [...globalState.floors, newFloor],
+      floors: [...globalState.floors.filter(f => f.id !== savedFloor.id), savedFloor],
       auditLogs: [
         {
           id: `log-${Date.now()}`,
           action: 'إضافة طابق للمبنى يدوياً',
           entity: 'Floor',
-          entityId: floorId,
+          entityId: savedFloor.id,
           performedBy: 'أحمد المفلح',
           role: 'Admin',
-          details: `تم تشييد الطابق ${payload.name} للمبنى المختار بنجاح.`,
+          details: `تم تشييد الطابق ${savedFloor.name} للمبنى المختار بنجاح.`,
           timestamp: new Date().toISOString(),
         },
         ...globalState.auditLogs
       ]
     };
 
+    saveState(globalState);
     notify();
-    return newFloor;
+    return savedFloor;
   }, []);
 
-  const updateFloor = useCallback((floorId: string, updates: Partial<Floor>) => {
+  const updateFloor = useCallback(async (floorId: string, updates: Partial<Floor>) => {
+    await apiCall(`/api/floors/${floorId}`, 'PUT', updates);
     globalState = {
       ...globalState,
       floors: globalState.floors.map(f => f.id === floorId ? { ...f, ...updates } : f),
     };
+    saveState(globalState);
     notify();
   }, []);
 
-  const deleteFloor = useCallback((floorId: string) => {
+  const deleteFloor = useCallback(async (floorId: string) => {
     const floorUnits = globalState.units.filter(u => u.floorId === floorId);
     if (floorUnits.length > 0) {
       const activeUnit = floorUnits.some(u =>
@@ -1947,18 +2116,21 @@ export function useAppStore() {
       }
     }
 
+    await apiCall(`/api/floors/${floorId}`, 'DELETE');
+
     globalState = {
       ...globalState,
       floors: globalState.floors.filter(f => f.id !== floorId),
       units: globalState.units.filter(u => u.floorId !== floorId),
     };
+    saveState(globalState);
     notify();
   }, []);
 
   /**
    * --- 3. Unit Management & Cloner ---
    */
-  const createUnit = useCallback((payload: Omit<Unit, 'id' | 'bedroomsCount' | 'bathroomsCount' | 'bedsCount'> & { spaces?: UnitSpace[] }) => {
+  const createUnit = useCallback(async (payload: Omit<Unit, 'id' | 'bedroomsCount' | 'bathroomsCount' | 'bedsCount'> & { spaces?: UnitSpace[] }): Promise<Unit> => {
     // Strict uniqueness check: prevent duplicate unitNumber within the same property
     const duplicate = globalState.units.some(
       u => u.propertyId === payload.propertyId && u.unitNumber.trim() === payload.unitNumber.trim() && u.publicationStatus !== 'archived'
@@ -1967,73 +2139,90 @@ export function useAppStore() {
       throw new Error(`شقة بالرقم "${payload.unitNumber}" مسجلة ومحفوظة حالياً في نفس المبنى.`);
     }
 
-    const unitId = `unit-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
     const spaces = payload.spaces || [];
     const metrics = calculateUnitRoomMetrics(spaces);
 
-    const newUnit: Unit = {
+    // Call server to persist and obtain real server ID
+    const res = await apiCall('/api/units', 'POST', {
+      propertyId: payload.propertyId,
+      floorId: payload.floorId,
+      unitNumber: payload.unitNumber,
+      title: payload.title,
+      titleEn: payload.titleEn,
+      type: payload.type,
+      areaSqm: payload.areaSqm,
+      floorNumber: payload.floorNumber,
+      maxGuests: payload.maxGuests,
+      dailyRate: payload.dailyRate,
+      dailySecurityDeposit: payload.dailySecurityDeposit,
+      monthlyRate: payload.monthlyRate,
+      monthlySecurityDeposit: payload.monthlySecurityDeposit,
+      annualRate: payload.yearlyRate,
+      yearlySecurityDeposit: payload.yearlySecurityDeposit,
+      occupancyStatus: payload.occupancyStatus || 'vacant',
+      publicationStatus: payload.publicationStatus || 'published',
+      operationalStatus: payload.operationalStatus || 'ready',
+      images: payload.media?.map(m => m.url) || [],
+      spaces,
+      amenities: payload.amenities,
+      furnishingStatus: payload.furnishingStatus,
+      allowDaily: payload.allowDaily,
+      allowMonthly: payload.allowMonthly,
+      allowYearly: payload.allowYearly,
+      cleaningFee: payload.cleaningFee,
+      securityDeposit: payload.securityDeposit,
+      taxPercentage: payload.taxPercentage,
+      smartLockPin: (payload as any).smartLockPin
+    });
+
+    if (!res || !res.success || !res.unit) {
+      throw new Error(res?.message || 'فشل حفظ الوحدة السكنية على الخادم.');
+    }
+
+    const savedUnit: Unit = {
       ...payload,
-      id: unitId,
+      ...normalizeUnitFromServer(res.unit),
       spaces,
       bedroomsCount: metrics.bedroomsCount,
       bathroomsCount: metrics.bathroomsCount,
       bedsCount: metrics.bedsCount,
-      operationalStatus: payload.operationalStatus || 'ready',
-      occupancyStatus: 'vacant',
-      publicationStatus: payload.publicationStatus || 'published',
     };
 
     globalState = {
       ...globalState,
-      units: [...globalState.units, newUnit],
+      units: [...globalState.units.filter(u => u.id !== savedUnit.id), savedUnit],
       auditLogs: [
         {
           id: `log-${Date.now()}`,
           action: 'إضافة وحدة شقة سكنية جديدة',
           entity: 'Unit',
-          entityId: unitId,
+          entityId: savedUnit.id,
           performedBy: 'أحمد المفلح',
           role: 'Admin',
-          details: `تم تسجيل الشقة رقم #${newUnit.unitNumber} (${newUnit.title}) مع احتساب الغرف والمقاعد تلقائياً لتكون (${newUnit.bedroomsCount} غرف نوم، ${newUnit.bathroomsCount} حمام).`,
+          details: `تم تسجيل الشقة رقم #${savedUnit.unitNumber} (${savedUnit.title}) مع احتساب الغرف والمقاعد تلقائياً لتكون (${savedUnit.bedroomsCount} غرف نوم، ${savedUnit.bathroomsCount} حمام).`,
           timestamp: new Date().toISOString(),
         },
         ...globalState.auditLogs
       ]
     };
 
+    saveState(globalState);
     notify();
 
-    apiCall('/api/units', 'POST', {
-      id: unitId,
-      propertyId: payload.propertyId,
-      floorId: payload.floorId,
-      unitNumber: payload.unitNumber,
-      type: payload.type,
-      areaSqm: payload.areaSqm,
-      dailyRate: payload.dailyRate,
-      monthlyRate: payload.monthlyRate,
-      annualRate: payload.yearlyRate,
-      occupancyStatus: payload.occupancyStatus,
-      publicationStatus: payload.publicationStatus,
-      images: payload.media?.map(m => m.url) || [],
-      spaces: payload.spaces,
-      smartLockPin: (payload as any).smartLockPin
-    }).catch(err => console.warn('[Sync Error] Unit creation sync:', err.message));
-
-    return newUnit;
+    return savedUnit;
   }, []);
 
   /**
    * Batch create multiple units with numbering range
    */
-  const batchCreateUnits = useCallback((params: {
+  const batchCreateUnits = useCallback(async (params: {
     propertyId: string;
     floorId: string;
     startNumber: number;
     endNumber: number;
     prefix?: string;
     templateUnitId?: string;
-  }) => {
+  }): Promise<Unit[]> => {
     const template = params.templateUnitId
       ? globalState.units.find(u => u.id === params.templateUnitId)
       : null;
@@ -2043,7 +2232,6 @@ export function useAppStore() {
 
     if (!floor || !property) throw new Error('البرج السكني أو الطابق المحدد غير متوفر.');
 
-    const createdUnits: Unit[] = [];
     const existingNumbers = new Set(
       globalState.units.filter(u => u.propertyId === params.propertyId && u.publicationStatus !== 'archived').map(u => u.unitNumber.trim())
     );
@@ -2056,9 +2244,10 @@ export function useAppStore() {
       }
     }
 
+    const createdUnits: Unit[] = [];
+
     for (let i = params.startNumber; i <= params.endNumber; i++) {
       const numStr = params.prefix ? `${params.prefix}${i}` : `${i}`;
-      const unitId = `unit-${Date.now()}-${i}`;
 
       const spaces = template ? JSON.parse(JSON.stringify(template.spaces)) : [
         {
@@ -2084,8 +2273,7 @@ export function useAppStore() {
 
       const metrics = calculateUnitRoomMetrics(spaces);
 
-      const unit: Unit = {
-        id: unitId,
+      const res = await apiCall('/api/units', 'POST', {
         propertyId: params.propertyId,
         floorId: params.floorId,
         unitNumber: numStr,
@@ -2095,38 +2283,49 @@ export function useAppStore() {
         areaSqm: template ? template.areaSqm : 85,
         floorNumber: floor.floorNumber,
         maxGuests: template ? template.maxGuests : 3,
+        dailyRate: template ? template.dailyRate : 650,
+        dailySecurityDeposit: template?.dailySecurityDeposit || (template ? template.securityDeposit : 800),
+        monthlyRate: template ? template.monthlyRate : 13500,
+        monthlySecurityDeposit: template?.monthlySecurityDeposit || 3000,
+        annualRate: template ? template.yearlyRate : 140000,
+        yearlySecurityDeposit: template?.yearlySecurityDeposit || 6000,
+        occupancyStatus: 'vacant',
+        publicationStatus: 'published',
+        operationalStatus: 'ready',
+        images: template ? template.media.map(m => m.url) : (property.media[0] ? [property.media[0].url] : []),
+        spaces,
+        amenities: template ? [...template.amenities] : ['smart_lock', 'wifi', 'cleaning', 'concierge', 'full_kitchen'],
+        furnishingStatus: template?.furnishingStatus || 'furnished',
+        allowDaily: template ? template.allowDaily : true,
+        allowMonthly: template ? template.allowMonthly : true,
+        allowYearly: template ? template.allowYearly : true,
+        cleaningFee: template ? template.cleaningFee : 100,
+        securityDeposit: template ? template.securityDeposit : 800,
+        taxPercentage: 15
+      });
+
+      if (!res || !res.success || !res.unit) {
+        throw new Error(res?.message || `فشل حفظ الشقة ${numStr} على الخادم.`);
+      }
+
+      const unit: Unit = {
+        ...normalizeUnitFromServer(res.unit),
+        spaces,
         bedroomsCount: metrics.bedroomsCount,
         bathroomsCount: metrics.bathroomsCount,
         bedsCount: metrics.bedsCount,
-        spaces,
-        amenities: template ? [...template.amenities] : ['smart_lock', 'wifi', 'cleaning', 'concierge', 'full_kitchen'],
         media: template ? [...template.media] : (property.media[0] ? [property.media[0]] : []),
         floorPlanUrl: template?.floorPlanUrl,
-        furnishingStatus: template?.furnishingStatus || 'furnished',
-        allowDaily: template ? template.allowDaily : true,
-        dailyRate: template ? template.dailyRate : 650,
-        dailySecurityDeposit: template?.dailySecurityDeposit || (template ? template.securityDeposit : 800),
-        allowMonthly: template ? template.allowMonthly : true,
-        monthlyRate: template ? template.monthlyRate : 13500,
-        monthlySecurityDeposit: template?.monthlySecurityDeposit || 3000,
-        allowYearly: template ? template.allowYearly : true,
-        yearlyRate: template ? template.yearlyRate : 140000,
-        yearlySecurityDeposit: template?.yearlySecurityDeposit || 6000,
         yearlyPaymentOptions: template ? [...template.yearlyPaymentOptions] : ['single_annual', 'semi_annual'],
-        cleaningFee: template ? template.cleaningFee : 100,
-        securityDeposit: template ? template.securityDeposit : 800,
-        taxPercentage: 15,
-        operationalStatus: 'ready',
-        occupancyStatus: 'vacant',
-        publicationStatus: 'published',
       };
 
       createdUnits.push(unit);
     }
 
+    const createdIds = new Set(createdUnits.map(u => u.id));
     globalState = {
       ...globalState,
-      units: [...globalState.units, ...createdUnits],
+      units: [...globalState.units.filter(u => !createdIds.has(u.id)), ...createdUnits],
       auditLogs: [
         {
           id: `log-${Date.now()}`,
@@ -2135,13 +2334,14 @@ export function useAppStore() {
           entityId: params.floorId,
           performedBy: 'أحمد المفلح',
           role: 'Admin',
-          details: `تم توليد عدد ${createdUnits.length} شقة فندقية جديدة تابعة للطابق ${floor.name} وبأرقام تتسلسل من ${params.startNumber} إلى ${params.endNumber}`,
+          details: `تم توليد وتأكيد عدد ${createdUnits.length} شقة فندقية جديدة تابعة للطابق ${floor.name} وبأرقام تتسلسل من ${params.startNumber} إلى ${params.endNumber}`,
           timestamp: new Date().toISOString(),
         },
         ...globalState.auditLogs
       ]
     };
 
+    saveState(globalState);
     notify();
     return createdUnits;
   }, []);
@@ -2149,7 +2349,7 @@ export function useAppStore() {
   /**
    * Clone unit as a model/template for similar units
    */
-  const cloneUnit = useCallback((sourceUnitId: string, newUnitNumber: string, targetFloorId?: string) => {
+  const cloneUnit = useCallback(async (sourceUnitId: string, newUnitNumber: string, targetFloorId?: string): Promise<Unit> => {
     const source = globalState.units.find(u => u.id === sourceUnitId);
     if (!source) throw new Error('الشقة المصدر للنسخ غير متوفرة.');
 
@@ -2165,8 +2365,6 @@ export function useAppStore() {
       ? globalState.floors.find(f => f.id === targetFloorId)
       : globalState.floors.find(f => f.id === source.floorId);
 
-    const clonedId = `unit-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
-
     // Deep clone spaces and fittings with fresh IDs
     const clonedSpaces: UnitSpace[] = source.spaces.map(sp => ({
       ...sp,
@@ -2179,13 +2377,44 @@ export function useAppStore() {
 
     const metrics = calculateUnitRoomMetrics(clonedSpaces);
 
-    const clonedUnit: Unit = {
-      ...source,
-      id: clonedId,
+    const res = await apiCall('/api/units', 'POST', {
+      propertyId: source.propertyId,
+      floorId: floor ? floor.id : source.floorId,
       unitNumber: newUnitNumber.trim(),
       title: `${source.title.split('#')[0].trim()} #${newUnitNumber}`,
-      floorId: floor ? floor.id : source.floorId,
+      titleEn: `Unit #${newUnitNumber}`,
+      type: source.type,
+      areaSqm: source.areaSqm,
       floorNumber: floor ? floor.floorNumber : source.floorNumber,
+      maxGuests: source.maxGuests,
+      dailyRate: source.dailyRate,
+      dailySecurityDeposit: source.dailySecurityDeposit,
+      monthlyRate: source.monthlyRate,
+      monthlySecurityDeposit: source.monthlySecurityDeposit,
+      annualRate: source.yearlyRate,
+      yearlySecurityDeposit: source.yearlySecurityDeposit,
+      occupancyStatus: 'vacant',
+      publicationStatus: 'published',
+      operationalStatus: 'ready',
+      images: source.media.map(m => m.url),
+      spaces: clonedSpaces,
+      amenities: source.amenities,
+      furnishingStatus: source.furnishingStatus,
+      allowDaily: source.allowDaily,
+      allowMonthly: source.allowMonthly,
+      allowYearly: source.allowYearly,
+      cleaningFee: source.cleaningFee,
+      securityDeposit: source.securityDeposit,
+      taxPercentage: source.taxPercentage,
+    });
+
+    if (!res || !res.success || !res.unit) {
+      throw new Error(res?.message || 'فشل استنساخ الشقة على الخادم.');
+    }
+
+    const clonedUnit: Unit = {
+      ...source,
+      ...normalizeUnitFromServer(res.unit),
       spaces: clonedSpaces,
       bedroomsCount: metrics.bedroomsCount,
       bathroomsCount: metrics.bathroomsCount,
@@ -2193,7 +2422,7 @@ export function useAppStore() {
       operationalStatus: 'ready',
       occupancyStatus: 'vacant',
       currentBookingId: undefined,
-      assignedParkingId: undefined, // Must be assigned independently!
+      assignedParkingId: undefined,
       isCloned: true,
       clonedFromUnitId: sourceUnitId,
       todayArrival: false,
@@ -2203,13 +2432,13 @@ export function useAppStore() {
 
     globalState = {
       ...globalState,
-      units: [...globalState.units, clonedUnit],
+      units: [...globalState.units.filter(u => u.id !== clonedUnit.id), clonedUnit],
       auditLogs: [
         {
           id: `log-${Date.now()}`,
           action: 'نسخ شقة سكنية متطابقة يدوياً',
           entity: 'Unit',
-          entityId: clonedId,
+          entityId: clonedUnit.id,
           performedBy: 'أحمد المفلح',
           role: 'Admin',
           details: `تم نسخ نموذج الشقة #${source.unitNumber} بالكامل وتوليد الشقة الجديدة رقم #${newUnitNumber}`,
@@ -2219,11 +2448,12 @@ export function useAppStore() {
       ]
     };
 
+    saveState(globalState);
     notify();
     return clonedUnit;
   }, []);
 
-  const updateUnit = useCallback((unitId: string, updates: Partial<Unit>) => {
+  const updateUnit = useCallback(async (unitId: string, updates: Partial<Unit>): Promise<void> => {
     const existing = globalState.units.find(u => u.id === unitId);
     if (!existing) return;
 
@@ -2237,6 +2467,42 @@ export function useAppStore() {
       }
     }
 
+    // Call API and wait for authoritative DB confirmation
+    const res = await apiCall(`/api/units/${unitId}`, 'PUT', {
+      unitNumber: updates.unitNumber,
+      floorId: updates.floorId,
+      floorNumber: updates.floorNumber,
+      title: updates.title,
+      titleEn: updates.titleEn,
+      type: updates.type,
+      areaSqm: updates.areaSqm,
+      maxGuests: updates.maxGuests,
+      dailyRate: updates.dailyRate,
+      dailySecurityDeposit: updates.dailySecurityDeposit,
+      monthlyRate: updates.monthlyRate,
+      monthlySecurityDeposit: updates.monthlySecurityDeposit,
+      annualRate: updates.yearlyRate,
+      yearlySecurityDeposit: updates.yearlySecurityDeposit,
+      occupancyStatus: updates.occupancyStatus,
+      publicationStatus: updates.publicationStatus,
+      operationalStatus: updates.operationalStatus,
+      amenities: updates.amenities,
+      furnishingStatus: updates.furnishingStatus,
+      allowDaily: updates.allowDaily,
+      allowMonthly: updates.allowMonthly,
+      allowYearly: updates.allowYearly,
+      cleaningFee: updates.cleaningFee,
+      securityDeposit: updates.securityDeposit,
+      taxPercentage: updates.taxPercentage,
+      images: updates.media?.map(m => m.url),
+      spaces: updates.spaces,
+      smartLockPin: (updates as any).smartLockPin
+    });
+
+    if (!res || !res.success) {
+      throw new Error(res?.message || 'فشل تحديث بيانات الوحدة السكنية على الخادم.');
+    }
+
     // Recalculate metrics if spaces updated
     let calculated = {};
     if (updates.spaces) {
@@ -2248,28 +2514,21 @@ export function useAppStore() {
       units: globalState.units.map(u => u.id === unitId ? { ...u, ...updates, ...calculated } : u),
     };
 
+    saveState(globalState);
     notify();
-
-    apiCall(`/api/units/${unitId}`, 'PUT', {
-      unitNumber: updates.unitNumber,
-      type: updates.type,
-      areaSqm: updates.areaSqm,
-      dailyRate: updates.dailyRate,
-      monthlyRate: updates.monthlyRate,
-      annualRate: updates.yearlyRate,
-      occupancyStatus: updates.occupancyStatus,
-      publicationStatus: updates.publicationStatus,
-      spaces: updates.spaces,
-      smartLockPin: (updates as any).smartLockPin
-    }).catch(err => console.warn('[Sync Error] Unit update sync:', err.message));
   }, []);
 
-  const archiveUnit = useCallback((unitId: string) => {
+  const archiveUnit = useCallback(async (unitId: string): Promise<void> => {
     // Check if unit has active allocations
     const hasActiveAlloc = globalState.allocations.some(a => a.unitId === unitId && a.status === 'active');
     if (hasActiveAlloc) {
       throw new Error('لا يمكن حذف أو أرشفة الشقة نظراً لوجود تعاقدات، إيجار، أو حظر نشط للتواريخ الحالية والآتية.');
     }
+
+    await apiCall(`/api/units/${unitId}`, 'PUT', {
+      publicationStatus: 'archived',
+      operationalStatus: 'blocked'
+    });
 
     // Unassign parking if any
     const assignedSpot = globalState.parkingSpots.find(p => p.assignedUnitId === unitId);
@@ -2299,11 +2558,8 @@ export function useAppStore() {
       ]
     };
 
+    saveState(globalState);
     notify();
-
-    apiCall(`/api/units/${unitId}`, 'DELETE').catch(err => {
-      console.warn('[Sync Error] Unit archive sync:', err.message);
-    });
   }, []);
 
   /**

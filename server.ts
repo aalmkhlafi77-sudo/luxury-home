@@ -27,6 +27,9 @@ import {
   createPropertyInDb,
   updatePropertyInDb,
   deletePropertyInDb,
+  createFloorInDb,
+  updateFloorInDb,
+  deleteFloorInDb,
   getUnitsFromDb,
   createUnitInDb,
   updateUnitInDb,
@@ -83,12 +86,25 @@ async function initializeFallbackState() {
         tagline: 'تجربة سكنية فاخرة تدمج بين خصوصية المنزل وخدمات الضيافة الراقية'
       },
       properties: [],
+      floors: [],
       units: [],
       bookings: [],
       leases: [],
       expenses: [],
       auditLogs: []
     };
+  } else {
+    if (!memoryState.floors) memoryState.floors = [];
+  }
+}
+
+export function persistFallbackState() {
+  if (memoryState) {
+    try {
+      fs.writeFileSync(SERVER_DB_FILE, JSON.stringify(memoryState, null, 2), 'utf-8');
+    } catch (e) {
+      console.error('[Server DB] Error persisting server-db.json:', e);
+    }
   }
 }
 
@@ -455,10 +471,14 @@ export async function startServer(customPort?: number) {
   apiRouter.get('/public/properties', async (req: Request, res: Response) => {
     if (process.env.DATABASE_URL) {
       const props = await getPropertiesFromDb();
-      return res.json({ success: true, properties: props.filter((p: any) => p.isActive !== false) });
+      const activeProps = props.filter((p: any) => p.isActive !== false);
+      const floors = activeProps.flatMap((p: any) => p.floors || []);
+      return res.json({ success: true, properties: activeProps, floors });
     }
     const properties = (memoryState?.properties || []).filter((p: any) => p.isActive !== false);
-    res.json({ success: true, properties });
+    const allowedIds = new Set(properties.map((p: any) => p.id));
+    const floors = (memoryState?.floors || []).filter((f: any) => allowedIds.has(f.propertyId));
+    res.json({ success: true, properties, floors });
   });
 
   apiRouter.get('/public/units', async (req: Request, res: Response) => {
@@ -477,11 +497,14 @@ export async function startServer(customPort?: number) {
     const allowed = user.role === 'SUPER_ADMIN' ? ['all'] : user.allowedProperties;
     if (process.env.DATABASE_URL) {
       const properties = await getPropertiesFromDb(allowed);
-      return res.json({ success: true, properties });
+      const floors = properties.flatMap((p: any) => p.floors || []);
+      return res.json({ success: true, properties, floors });
     }
     const isUniversal = allowed.includes('all');
     const filtered = isUniversal ? (memoryState?.properties || []) : (memoryState?.properties || []).filter((p: any) => allowed.includes(p.id));
-    res.json({ success: true, properties: filtered });
+    const allowedIds = new Set(filtered.map((p: any) => p.id));
+    const floors = (memoryState?.floors || []).filter((f: any) => allowedIds.has(f.propertyId));
+    res.json({ success: true, properties: filtered, floors });
   });
 
   apiRouter.post('/properties', authenticateToken, requireRoles(['SUPER_ADMIN', 'PROPERTY_MANAGER']), async (req: AuthenticatedRequest, res: Response) => {
@@ -501,28 +524,65 @@ export async function startServer(customPort?: number) {
           details: `إنشاء المبنى ${name} (${code})`,
           ipAddress: req.ip
         });
-        return res.json({ success: true, property: prop, message: 'تم حفظ المبنى بنجاح في قاعدة البيانات.' });
+        return res.json({ success: true, property: prop, floors: prop?.floors || [], message: 'تم حفظ المبنى بنجاح في قاعدة البيانات.' });
       }
 
+      if (!memoryState.properties) memoryState.properties = [];
+      if (!memoryState.floors) memoryState.floors = [];
+
+      // Check duplicate code
+      const duplicate = memoryState.properties.find((p: any) => p.code?.toLowerCase() === code.trim().toLowerCase());
+      if (duplicate) {
+        return res.status(409).json({ success: false, message: `كود تصنيف المبنى (${code}) مسجل لمبنى آخر سلفاً!` });
+      }
+
+      const propId = req.body.id || `prop_${Date.now()}`;
+      const fCount = Math.max(1, Number(floorsCount) || 1);
+      const newFloors = [
+        { id: `flr_${propId}_b1`, propertyId: propId, number: -1, floorNumber: -1, name: 'طابق القبو الأول (مواقف سيارات)', label: 'القبو الأول' },
+        { id: `flr_${propId}_0`, propertyId: propId, number: 0, floorNumber: 0, name: 'طابق الاستقبال (البهو والبهو المشترك)', label: 'البهو الأرضي' },
+        ...Array.from({ length: fCount }, (_, i) => ({
+          id: `flr_${propId}_${i + 1}`,
+          propertyId: propId,
+          number: i + 1,
+          floorNumber: i + 1,
+          name: `طابق الدور رقم ${i + 1}`,
+          label: `الدور رقم ${i + 1}`
+        }))
+      ];
+
       const newProp = {
-        id: req.body.id || `prop_${Date.now()}`,
-        name,
-        code,
-        address,
+        id: propId,
+        name: name.trim(),
+        code: code.trim(),
+        address: address.trim(),
         city: city || 'الرياض',
-        district,
-        floorsCount: Number(floorsCount) || 1,
+        district: district.trim(),
+        floorsCount: fCount,
         unitsCount: Number(unitsCount) || 0,
         totalAreaSqm: Number(totalAreaSqm) || 0,
         rooftopPayment: Number(rooftopPayment) || 0,
         description: description || null,
         images: Array.isArray(images) ? images : [],
         isActive: isActive !== false,
+        floors: newFloors,
         createdAt: new Date().toISOString()
       };
-      if (!memoryState.properties) memoryState.properties = [];
+
       memoryState.properties.push(newProp);
-      return res.json({ success: true, property: newProp, message: 'تم حفظ المبنى بنجاح.' });
+      memoryState.floors.push(...newFloors);
+      persistFallbackState();
+
+      await recordAuditLogInDb({
+        userId: req.user?.userId,
+        userName: req.user?.username || 'المسؤول',
+        action: 'إنشاء مبنى / عقار جديد',
+        module: 'إدارة العقارات',
+        details: `إنشاء المبنى ${name} (${code})`,
+        ipAddress: req.ip
+      });
+
+      return res.json({ success: true, property: newProp, floors: newFloors, message: 'تم حفظ المبنى بنجاح.' });
     } catch (err: any) {
       return res.status(400).json({ success: false, message: err?.message || 'فشل حفظ المبنى.' });
     }
@@ -548,6 +608,7 @@ export async function startServer(customPort?: number) {
       const idx = memoryState.properties.findIndex((p: any) => p.id === id);
       if (idx !== -1) {
         memoryState.properties[idx] = { ...memoryState.properties[idx], ...req.body };
+        persistFallbackState();
         return res.json({ success: true, property: memoryState.properties[idx], message: 'تم تحديث بيانات المبنى.' });
       }
       return res.status(404).json({ success: false, message: 'المبنى غير موجود.' });
@@ -575,9 +636,85 @@ export async function startServer(customPort?: number) {
       if (memoryState.properties) {
         memoryState.properties = memoryState.properties.filter((p: any) => p.id !== id);
       }
+      if (memoryState.floors) {
+        memoryState.floors = memoryState.floors.filter((f: any) => f.propertyId !== id);
+      }
+      if (memoryState.units) {
+        memoryState.units = memoryState.units.filter((u: any) => u.propertyId !== id);
+      }
+      persistFallbackState();
       return res.json({ success: true, message: 'تم حذف المبنى بنجاح.' });
     } catch (err: any) {
       return res.status(400).json({ success: false, message: err?.message || 'فشل حذف المبنى.' });
+    }
+  });
+
+  // Floors API
+  apiRouter.post('/floors', authenticateToken, requireRoles(['SUPER_ADMIN', 'PROPERTY_MANAGER']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { propertyId, number, name } = req.body;
+      if (!propertyId || name === undefined) {
+        return res.status(400).json({ success: false, message: 'معرف المبنى واسم الطابق مطلوبان.' });
+      }
+
+      if (process.env.DATABASE_URL) {
+        const floor = await createFloorInDb(propertyId, Number(number) || 1, name);
+        return res.json({ success: true, floor, message: 'تم حفظ الطابق بنجاح.' });
+      }
+
+      if (!memoryState.floors) memoryState.floors = [];
+      const newFloor = {
+        id: `flr_${propertyId}_${Date.now()}`,
+        propertyId,
+        number: Number(number) || 1,
+        floorNumber: Number(number) || 1,
+        name,
+        label: req.body.label || name
+      };
+      memoryState.floors.push(newFloor);
+      persistFallbackState();
+      return res.json({ success: true, floor: newFloor, message: 'تم حفظ الطابق بنجاح.' });
+    } catch (err: any) {
+      return res.status(400).json({ success: false, message: err?.message || 'فشل حفظ الطابق.' });
+    }
+  });
+
+  apiRouter.put('/floors/:id', authenticateToken, requireRoles(['SUPER_ADMIN', 'PROPERTY_MANAGER']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      if (process.env.DATABASE_URL) {
+        const updated = await updateFloorInDb(id, req.body);
+        return res.json({ success: true, floor: updated, message: 'تم تحديث الطابق بنجاح.' });
+      }
+
+      if (!memoryState.floors) memoryState.floors = [];
+      const idx = memoryState.floors.findIndex((f: any) => f.id === id);
+      if (idx !== -1) {
+        memoryState.floors[idx] = { ...memoryState.floors[idx], ...req.body };
+        persistFallbackState();
+        return res.json({ success: true, floor: memoryState.floors[idx], message: 'تم تحديث الطابق.' });
+      }
+      return res.status(404).json({ success: false, message: 'الطابق غير موجود.' });
+    } catch (err: any) {
+      return res.status(400).json({ success: false, message: err?.message || 'فشل تحديث الطابق.' });
+    }
+  });
+
+  apiRouter.delete('/floors/:id', authenticateToken, requireRoles(['SUPER_ADMIN', 'PROPERTY_MANAGER']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      if (process.env.DATABASE_URL) {
+        await deleteFloorInDb(id);
+        return res.json({ success: true, message: 'تم حذف الطابق بنجاح.' });
+      }
+
+      if (memoryState.floors) {
+        memoryState.floors = memoryState.floors.filter((f: any) => f.id !== id);
+        persistFallbackState();
+      }
+      return res.json({ success: true, message: 'تم حذف الطابق بنجاح.' });
+    } catch (err: any) {
+      return res.status(400).json({ success: false, message: err?.message || 'فشل حذف الطابق.' });
     }
   });
 
@@ -619,13 +756,38 @@ export async function startServer(customPort?: number) {
         return res.json({ success: true, unit, message: 'تم حفظ الوحدة بنجاح في قاعدة البيانات.' });
       }
 
+      // Check that property exists in fallback
+      const propExists = (memoryState?.properties || []).some((p: any) => p.id === propertyId);
+      if (!propExists) {
+        return res.status(400).json({ success: false, message: 'المبنى المحدد غير موجود في قاعدة البيانات.' });
+      }
+
+      // Check uniqueness in fallback
+      const duplicateUnit = (memoryState?.units || []).some(
+        (u: any) => u.propertyId === propertyId && String(u.unitNumber).trim() === String(unitNumber).trim() && u.publicationStatus !== 'archived'
+      );
+      if (duplicateUnit) {
+        return res.status(409).json({ success: false, message: `شقة بالرقم "${unitNumber}" مسجلة ومحفوظة حالياً في نفس المبنى.` });
+      }
+
       const newUnit = {
-        id: req.body.id || `unit_${Date.now()}`,
+        id: req.body.id || `unit_${Date.now()}_${Math.floor(100 + Math.random() * 900)}`,
         ...req.body,
         createdAt: new Date().toISOString()
       };
       if (!memoryState.units) memoryState.units = [];
       memoryState.units.push(newUnit);
+      persistFallbackState();
+
+      await recordAuditLogInDb({
+        userId: req.user?.userId,
+        userName: req.user?.username || 'المسؤول',
+        action: 'إنشاء وحدة سكنية جديدة',
+        module: 'إدارة الوحدات',
+        details: `إنشاء الوحدة ${unitNumber} في العقار ${propertyId}`,
+        ipAddress: req.ip
+      });
+
       return res.json({ success: true, unit: newUnit, message: 'تم حفظ الوحدة بنجاح.' });
     } catch (err: any) {
       return res.status(400).json({ success: false, message: err?.message || 'فشل حفظ الوحدة.' });
@@ -652,6 +814,7 @@ export async function startServer(customPort?: number) {
       const idx = memoryState.units.findIndex((u: any) => u.id === id);
       if (idx !== -1) {
         memoryState.units[idx] = { ...memoryState.units[idx], ...req.body };
+        persistFallbackState();
         return res.json({ success: true, unit: memoryState.units[idx], message: 'تم تحديث بيانات الوحدة.' });
       }
       return res.status(404).json({ success: false, message: 'الوحدة غير موجودة.' });
@@ -678,6 +841,7 @@ export async function startServer(customPort?: number) {
 
       if (memoryState.units) {
         memoryState.units = memoryState.units.filter((u: any) => u.id !== id);
+        persistFallbackState();
       }
       return res.json({ success: true, message: 'تم حذف الوحدة بنجاح.' });
     } catch (err: any) {
@@ -825,6 +989,7 @@ export async function startServer(customPort?: number) {
       }
 
       memoryState.settings = { ...memoryState.settings, ...req.body };
+      persistFallbackState();
       return res.json({ success: true, settings: memoryState.settings, message: 'تم تحديث إعدادات المنشأة بنجاح.' });
     } catch (err: any) {
       return res.status(400).json({ success: false, message: err?.message || 'فشل تحديث الإعدادات.' });
@@ -882,11 +1047,14 @@ export async function startServer(customPort?: number) {
           user.role === 'SUPER_ADMIN' ? getAuditLogsFromDb(100) : []
         ]);
 
+        const floors = properties.flatMap((p: any) => p.floors || []);
+
         return res.json({
           success: true,
           state: {
             settings,
             properties,
+            floors,
             units,
             bookings,
             leases,
@@ -904,7 +1072,10 @@ export async function startServer(customPort?: number) {
     // Fallback
     res.json({
       success: true,
-      state: memoryState,
+      state: {
+        ...memoryState,
+        floors: memoryState?.floors || []
+      },
       timestamp: Date.now()
     });
   });

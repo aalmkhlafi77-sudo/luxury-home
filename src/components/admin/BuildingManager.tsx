@@ -118,14 +118,14 @@ export const BuildingManager: React.FC = () => {
     label: '',
   });
 
-  const handleCreateBuildingSubmit = (e: React.FormEvent) => {
+  const handleCreateBuildingSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
     try {
-      const created = createProperty({
+      const created = await createProperty({
         ...newBuildingForm,
         slug: `bld-${newBuildingForm.identifierCode.toLowerCase().replace(/[^a-z0-9]/g, '-')}`,
-        tagline: 'مجمع سني فخم متكامل بمستوى خدمات فندقية راقي',
+        tagline: 'مجمع سكني فخم متكامل بمستوى خدمات فندقية راقي',
         media: [],
         amenities: ['smart_lock', 'wifi', 'cleaning', 'concierge'],
         featured: true,
@@ -138,16 +138,16 @@ export const BuildingManager: React.FC = () => {
       setSuccessMsg(`تم إنشاء وتسجيل مبنى ${created.name} ومطابقة الطوابق التابعة له بنجاح.`);
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (err: any) {
-      setErrorMsg(err.message);
+      setErrorMsg(err.message || 'فشل حفظ المبنى.');
     }
   };
 
-  const handleBatchUnitsSubmit = (e: React.FormEvent) => {
+  const handleBatchUnitsSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentProperty || !batchForm.floorId) return;
     setErrorMsg(null);
     try {
-      batchCreateUnits({
+      await batchCreateUnits({
         propertyId: currentProperty.id,
         floorId: batchForm.floorId,
         startNumber: Number(batchForm.startNumber),
@@ -159,22 +159,22 @@ export const BuildingManager: React.FC = () => {
       setSuccessMsg('تم توليد الوحدات السكنية المتعددة وإدراجها بنجاح في الطابق المختار.');
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (err: any) {
-      setErrorMsg(err.message);
+      setErrorMsg(err.message || 'فشل توليد الوحدات.');
     }
   };
 
-  const handleCloneUnitSubmit = (e: React.FormEvent) => {
+  const handleCloneUnitSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isCloningUnit || !cloneUnitNumber) return;
     setErrorMsg(null);
     try {
-      cloneUnit(isCloningUnit.id, cloneUnitNumber);
+      await cloneUnit(isCloningUnit.id, cloneUnitNumber);
       setIsCloningUnit(null);
       setCloneUnitNumber('');
       setSuccessMsg('تم نسخ الشقة وتوزيع كافة الغرف والأثاث على الشقة الجديدة بنجاح.');
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (err: any) {
-      setErrorMsg(err.message);
+      setErrorMsg(err.message || 'فشل استنساخ الشقة.');
     }
   };
 
@@ -204,11 +204,12 @@ export const BuildingManager: React.FC = () => {
     }
   };
 
-  const handleCreateFloorSubmit = (e: React.FormEvent) => {
+  const handleCreateFloorSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentProperty || !newFloorForm.name) return;
+    setErrorMsg(null);
     try {
-      createFloor({
+      await createFloor({
         propertyId: currentProperty.id,
         floorNumber: Number(newFloorForm.floorNumber),
         name: newFloorForm.name,
@@ -219,7 +220,7 @@ export const BuildingManager: React.FC = () => {
       setSuccessMsg('تم تسجيل الطابق الإضافي في هيكل المبنى بنجاح.');
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (err: any) {
-      setErrorMsg(err.message);
+      setErrorMsg(err.message || 'فشل حفظ الطابق.');
     }
   };
 
@@ -527,59 +528,65 @@ export const BuildingManager: React.FC = () => {
                         </div>
                         <div className="flex items-center gap-2">
                           <button
-                            onClick={() => {
-                              // Quick create single unit
-                              const nextNum = `${floor.floorNumber > 0 ? floor.floorNumber : 'B'}${Math.floor(10 + Math.random() * 89)}`;
-                              createUnit({
-                                propertyId: currentProperty.id,
-                                floorId: floor.id,
-                                unitNumber: nextNum,
-                                title: `شقة منزل الفخامة رقم #${nextNum}`,
-                                titleEn: `Unit #${nextNum}`,
-                                type: 'apartment',
-                                areaSqm: 90,
-                                floorNumber: floor.floorNumber,
-                                maxGuests: 3,
-                                spaces: [
-                                  {
-                                    id: `sp-${Date.now()}-1`,
-                                    name: 'صالة الجلوس الرائعة',
-                                    type: 'living_room',
-                                    fittings: [{ id: `f-${Date.now()}`, name: 'طقم كنب إيطالي فاخر وبياضات', category: 'furniture', quantity: 1 }]
-                                  },
-                                  {
-                                    id: `sp-${Date.now()}-2`,
-                                    name: 'غرفة النوم الرئيسية الدافئة',
-                                    type: 'bedroom',
-                                    bedsCount: 1,
-                                    fittings: [{ id: `fb-${Date.now()}`, name: 'سرير كينج طبي بالكامل', category: 'bed', quantity: 1 }]
-                                  },
-                                  {
-                                    id: `sp-${Date.now()}-3`,
-                                    name: 'دورة المياه والجاكوزي',
-                                    type: 'bathroom',
-                                    fittings: [{ id: `fs-${Date.now()}`, name: 'تجهيز استحمام بورسلين', category: 'sanitary', quantity: 1 }]
-                                  }
-                                ],
-                                amenities: ['smart_lock', 'wifi', 'cleaning'],
-                                media: currentProperty.media[0] ? [currentProperty.media[0]] : [],
-                                furnishingStatus: 'furnished',
-                                allowDaily: true,
-                                dailyRate: 700,
-                                dailySecurityDeposit: 800,
-                                allowMonthly: true,
-                                monthlyRate: 14000,
-                                monthlySecurityDeposit: 3000,
-                                allowYearly: true,
-                                yearlyRate: 140000,
-                                yearlySecurityDeposit: 5000,
-                                yearlyPaymentOptions: ['single_annual', 'semi_annual'],
-                                cleaningFee: 120,
-                                securityDeposit: 800,
-                                taxPercentage: 15,
-                                operationalStatus: 'ready',
-                                occupancyStatus: 'vacant',
-                              });
+                            onClick={async () => {
+                              setErrorMsg(null);
+                              try {
+                                const nextNum = `${floor.floorNumber > 0 ? floor.floorNumber : 'B'}${Math.floor(10 + Math.random() * 89)}`;
+                                await createUnit({
+                                  propertyId: currentProperty.id,
+                                  floorId: floor.id,
+                                  unitNumber: nextNum,
+                                  title: `شقة منزل الفخامة رقم #${nextNum}`,
+                                  titleEn: `Unit #${nextNum}`,
+                                  type: 'apartment',
+                                  areaSqm: 90,
+                                  floorNumber: floor.floorNumber,
+                                  maxGuests: 3,
+                                  spaces: [
+                                    {
+                                      id: `sp-${Date.now()}-1`,
+                                      name: 'صالة الجلوس الرائعة',
+                                      type: 'living_room',
+                                      fittings: [{ id: `f-${Date.now()}`, name: 'طقم كنب إيطالي فاخر وبياضات', category: 'furniture', quantity: 1 }]
+                                    },
+                                    {
+                                      id: `sp-${Date.now()}-2`,
+                                      name: 'غرفة النوم الرئيسية الدافئة',
+                                      type: 'bedroom',
+                                      bedsCount: 1,
+                                      fittings: [{ id: `fb-${Date.now()}`, name: 'سرير كينج طبي بالكامل', category: 'bed', quantity: 1 }]
+                                    },
+                                    {
+                                      id: `sp-${Date.now()}-3`,
+                                      name: 'دورة المياه والجاكوزي',
+                                      type: 'bathroom',
+                                      fittings: [{ id: `fs-${Date.now()}`, name: 'تجهيز استحمام بورسلين', category: 'sanitary', quantity: 1 }]
+                                    }
+                                  ],
+                                  amenities: ['smart_lock', 'wifi', 'cleaning'],
+                                  media: currentProperty.media[0] ? [currentProperty.media[0]] : [],
+                                  furnishingStatus: 'furnished',
+                                  allowDaily: true,
+                                  dailyRate: 700,
+                                  dailySecurityDeposit: 800,
+                                  allowMonthly: true,
+                                  monthlyRate: 14000,
+                                  monthlySecurityDeposit: 3000,
+                                  allowYearly: true,
+                                  yearlyRate: 140000,
+                                  yearlySecurityDeposit: 5000,
+                                  yearlyPaymentOptions: ['single_annual', 'semi_annual'],
+                                  cleaningFee: 120,
+                                  securityDeposit: 800,
+                                  taxPercentage: 15,
+                                  operationalStatus: 'ready',
+                                  occupancyStatus: 'vacant',
+                                });
+                                setSuccessMsg('تم تأسيس الشقة بنجاح على الخادم.');
+                                setTimeout(() => setSuccessMsg(null), 3000);
+                              } catch (err: any) {
+                                setErrorMsg(err.message || 'فشل تأسيس الشقة.');
+                              }
                             }}
                             className="px-2.5 py-1 text-[11px] font-semibold bg-white border border-[#E3DCCD] hover:border-[#B69A68] rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
                           >

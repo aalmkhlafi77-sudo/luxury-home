@@ -136,6 +136,7 @@ export async function createPropertyInDb(data: {
   isActive?: boolean;
 }) {
   if (!process.env.DATABASE_URL) return null;
+  const fCount = Math.max(1, Number(data.floorsCount) || 1);
   const created = await prisma.property.create({
     data: {
       name: data.name,
@@ -143,17 +144,58 @@ export async function createPropertyInDb(data: {
       address: data.address,
       city: data.city || 'الرياض',
       district: data.district,
-      floorsCount: Number(data.floorsCount) || 1,
+      floorsCount: fCount,
       unitsCount: Number(data.unitsCount) || 0,
       totalAreaSqm: Number(data.totalAreaSqm) || 0,
       rooftopPayment: new Decimal(data.rooftopPayment || 0),
       description: data.description || null,
       images: Array.isArray(data.images) ? data.images : [],
-      isActive: data.isActive !== false
+      isActive: data.isActive !== false,
+      floors: {
+        create: [
+          { number: -1, name: 'طابق القبو الأول (مواقف سيارات)' },
+          { number: 0, name: 'طابق الاستقبال (البهو والبهو المشترك)' },
+          ...Array.from({ length: fCount }, (_, i) => ({
+            number: i + 1,
+            name: `طابق الدور رقم ${i + 1}`
+          }))
+        ]
+      }
     },
-    include: { floors: true, units: true, parkingSpots: true }
+    include: { floors: { orderBy: { number: 'asc' } }, units: true, parkingSpots: true }
   });
   return serializeDecimals(created);
+}
+
+export async function createFloorInDb(propertyId: string, number: number, name: string) {
+  if (!process.env.DATABASE_URL) return null;
+  const floor = await prisma.floor.create({
+    data: {
+      propertyId,
+      number,
+      name
+    }
+  });
+  return serializeDecimals(floor);
+}
+
+export async function updateFloorInDb(id: string, data: { number?: number; name?: string }) {
+  if (!process.env.DATABASE_URL) return null;
+  const updated = await prisma.floor.update({
+    where: { id },
+    data
+  });
+  return serializeDecimals(updated);
+}
+
+export async function deleteFloorInDb(id: string) {
+  if (!process.env.DATABASE_URL) return null;
+  const unitsCount = await prisma.unit.count({ where: { floorId: id } });
+  if (unitsCount > 0) {
+    throw new Error('لا يمكن حذف الطابق نظراً لوجود وحدات سكنية مرتبطة به.');
+  }
+  const deleted = await prisma.floor.delete({ where: { id } });
+  return serializeDecimals(deleted);
 }
 
 export async function updatePropertyInDb(id: string, data: any) {
@@ -238,6 +280,14 @@ export async function createUnitInDb(data: {
 }) {
   if (!process.env.DATABASE_URL) return null;
   
+  // Verify that the property exists in DB
+  const property = await prisma.property.findUnique({
+    where: { id: data.propertyId }
+  });
+  if (!property) {
+    throw new Error('المبنى المحدد غير موجود في قاعدة البيانات.');
+  }
+
   // Verify unit number uniqueness in property
   const existing = await prisma.unit.findFirst({
     where: {

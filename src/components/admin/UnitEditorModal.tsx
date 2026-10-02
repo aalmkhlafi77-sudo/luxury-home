@@ -111,12 +111,12 @@ export const UnitEditorModal: React.FC<UnitEditorModalProps> = ({
   // Selected space object
   const currentSpace = unit.spaces.find(s => s.id === selectedSpaceId) || unit.spaces[0];
 
-  const handleSaveBasic = (e: React.FormEvent) => {
+  const handleSaveBasic = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
     try {
       const selectedFloor = propertyFloors.find(f => f.id === basicForm.floorId);
-      updateUnit(unit.id, {
+      await updateUnit(unit.id, {
         ...basicForm,
         floorNumber: selectedFloor ? selectedFloor.floorNumber : unit.floorNumber,
       });
