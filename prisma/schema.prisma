@@ -311,6 +311,7 @@ model Lease {
   installments      LeaseInstallment[]
   securityDeposits  SecurityDepositRecord[]
   payments          PaymentRecord[]
+  targetDepositTransactions SecurityDepositTransaction[] @relation("LeaseTargetDepositTransactions")
 }
 
 model LeaseInstallment {
@@ -325,6 +326,9 @@ model LeaseInstallment {
   remainingAmount Decimal           @db.Decimal(12, 2)
   status          InstallmentStatus @default(UPCOMING)
   paidAt          DateTime?
+
+  payments        PaymentRecord[]
+  targetDepositTransactions SecurityDepositTransaction[] @relation("InstallmentTargetDepositTransactions")
 }
 
 model PaymentRecord {
@@ -334,6 +338,7 @@ model PaymentRecord {
   leaseId       String?
   lease         Lease?    @relation(fields: [leaseId], references: [id], onDelete: SetNull)
   installmentId String?
+  installment   LeaseInstallment? @relation(fields: [installmentId], references: [id], onDelete: SetNull)
   amount        Decimal   @db.Decimal(12, 2)
   paymentMethod String    // cash, card, bank_transfer, mada, apple_pay, security_deposit
   sourceType    String?   @default("direct_payment") // direct_payment, deposit_application, reversal
@@ -382,7 +387,9 @@ model SecurityDepositTransaction {
   reference           String                // Payment receipt / transfer reference
   reason              String?
   targetLeaseId       String?
+  targetLease         Lease?                @relation("LeaseTargetDepositTransactions", fields: [targetLeaseId], references: [id], onDelete: SetNull)
   targetInstallmentId String?
+  targetInstallment   LeaseInstallment?     @relation("InstallmentTargetDepositTransactions", fields: [targetInstallmentId], references: [id], onDelete: SetNull)
   executedByUserId    String?
   executedAt          DateTime              @default(now())
   status              String                @default("completed") // completed, pending_provider

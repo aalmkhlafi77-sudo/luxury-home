@@ -17,21 +17,38 @@ export const DepositSettlementModal: React.FC<Props> = ({
 }) => {
   const { state, settleSecurityDepositAgainstRent } = useAppStore();
 
+  const getCurrentUser = () => {
+    try {
+      const raw = localStorage.getItem('luxury_user');
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  };
+
   const [pendingSettleOp, setPendingSettleOp] = useState<{
     depositId: string;
     key: string;
+    userId?: string;
     payload: {
       leaseId: string;
       installmentId: string;
       amount: number;
-      reason: string;
-      approvalReference?: string;
+      reason?: string;
+      approvalReference: string;
       authorizedBy: string;
     };
   } | null>(() => {
     try {
       const saved = localStorage.getItem('luxury_pending_settle_op');
-      return saved ? JSON.parse(saved) : null;
+      if (!saved) return null;
+      const parsed = JSON.parse(saved);
+      // Ensure pending op belongs to current user
+      const currentUser = getCurrentUser();
+      if (parsed.userId && currentUser?.id && parsed.userId !== currentUser.id) {
+        return null;
+      }
+      return parsed;
     } catch {
       return null;
     }
@@ -40,7 +57,11 @@ export const DepositSettlementModal: React.FC<Props> = ({
   const updatePendingSettleOp = (op: typeof pendingSettleOp) => {
     setPendingSettleOp(op);
     if (op) {
-      localStorage.setItem('luxury_pending_settle_op', JSON.stringify(op));
+      const currentUser = getCurrentUser();
+      localStorage.setItem('luxury_pending_settle_op', JSON.stringify({
+        ...op,
+        userId: currentUser?.id || currentUser?.username || 'admin'
+      }));
     } else {
       localStorage.removeItem('luxury_pending_settle_op');
     }
@@ -64,10 +85,10 @@ export const DepositSettlementModal: React.FC<Props> = ({
   const [canClearPending, setCanClearPending] = useState(false);
 
   const selectedDeposit = state.securityDeposits.find(d => d.id === depositId);
-  const collected = (selectedDeposit as any)?.collectedAmount ?? selectedDeposit?.amount ?? 0;
-  const refunded = (selectedDeposit as any)?.refundedAmount ?? selectedDeposit?.refundAmount ?? 0;
-  const deducted = (selectedDeposit as any)?.deductedAmount ?? (selectedDeposit?.deductions || []).reduce((s, x) => s + x.amount, 0);
-  const rentApplied = (selectedDeposit as any)?.rentAppliedAmount ?? 0;
+  const collected = Number((selectedDeposit as any)?.collectedAmount || 0);
+  const refunded = Number((selectedDeposit as any)?.refundedAmount || (selectedDeposit as any)?.refundAmount || 0);
+  const deducted = Number((selectedDeposit as any)?.deductedAmount || (selectedDeposit?.deductions || []).reduce((s, x) => s + x.amount, 0));
+  const rentApplied = Number((selectedDeposit as any)?.rentAppliedAmount || 0);
   const availableDeposit = selectedDeposit ? Math.max(0, collected - refunded - deducted - rentApplied) : 0;
 
   // Find target lease
@@ -88,8 +109,9 @@ export const DepositSettlementModal: React.FC<Props> = ({
         leaseId: op.payload.leaseId,
         installmentId: op.payload.installmentId,
         amount: op.payload.amount,
-        reason: `${op.payload.reason} (مرجع الاعتماد: ${op.payload.approvalReference || 'معتمد'})`,
-        authorizedBy: op.payload.approvalReference || 'معتمد رسمياً',
+        reason: op.payload.reason || 'تسوية قسط إيجار',
+        approvalReference: op.payload.approvalReference,
+        authorizedBy: getCurrentUser()?.name || getCurrentUser()?.username || 'المسؤول المالي',
         idempotencyKey: op.key,
       });
 

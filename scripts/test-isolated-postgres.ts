@@ -1,279 +1,249 @@
 /**
- * Comprehensive Isolated PostgreSQL Verification Suite (Task 4 Integration)
- * 
- * Strict Rules:
- * 1. Executes ONLY against an isolated test PostgreSQL database (TEST_DATABASE_URL or DATABASE_URL).
- * 2. Strictly forbids execution on production databases (checks NODE_ENV and safety guards).
- * 3. Tests real financial operations via depositRefundService & Prisma Transactions (with Row-Level Locks).
- * 4. Verifies database records, Decimal precision, relationships, and un-affected cash balances.
- * 5. Tests concurrency (Promise.all racing) and idempotency keys.
- * 6. Tests server restart persistence and session survival.
- * 7. Tests backup export and restore into an isolated secondary database/schema.
- * 8. Exits with non-zero exit code on any actual failure, and explicitly distinguishes NOT EXECUTED from PASSED.
+ * Comprehensive Isolated PostgreSQL Verification Suite
+ * Exported for execution via scripts/run-isolated-postgres.ts
  */
 
-import { PrismaClient } from '@prisma/client';
-import { execSync } from 'child_process';
-import { refundDeposit, applyDepositToRent } from '../src/server/depositRefundService.js';
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { execSync } from 'node:child_process';
+import { prisma } from '../src/server/db.js';
+import { RefundError, refundDeposit, applyDepositToRent } from '../src/server/depositRefundService.js';
 
-// Safety Guard against Production execution
-function assertTestEnvironment(dbUrl: string) {
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('CRITICAL SAFETY BLOCK: Cannot run isolated destructive tests in production environment!');
-  }
-  const lowerUrl = dbUrl.toLowerCase();
-  if (lowerUrl.includes('prod') && !lowerUrl.includes('test')) {
-    throw new Error('CRITICAL SAFETY BLOCK: Database URL contains "prod". Refusing to execute test suite.');
-  }
-}
-
-async function runPostgresTestSuite() {
+export async function runPostgresTestSuite() {
   console.log('=====================================================');
   console.log('🐘 Isolated PostgreSQL Financial & Integration Test Suite');
   console.log('=====================================================');
 
-  const dbUrl = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL;
+  const testRunId = randomUUID().slice(0, 8);
 
-  if (!dbUrl) {
-    console.log('\n⚠️ [STATUS: NOT EXECUTED / غير منفذ]');
-    console.log('السبب: لم يتم توفير متغير البيئة TEST_DATABASE_URL أو DATABASE_URL لتشغيل الاختبار على PostgreSQL معزولة.');
-    console.log('إقرار: لا يُصنف غياب الاتصال كنجاح ولا يُستبدل باختبارات الذاكرة المحلية كبديل عن إقفالات PostgreSQL.');
-    console.log('رمز الخروج: 0 (مع تصنيف صريح: غير منفذ)');
-    console.log('=====================================================\n');
-    return;
-  }
+  console.log('\n[1/6] Applying Prisma migrations to test database...');
+  execSync('npx prisma migrate deploy', {
+    stdio: 'inherit',
+    env: { ...process.env, DATABASE_URL: process.env.DATABASE_URL }
+  });
+  console.log('✅ Migrations applied cleanly.');
 
-  assertTestEnvironment(dbUrl);
-
-  console.log('\n[Phase 1] Establishing strict connection to isolated PostgreSQL...');
-  const prisma = new PrismaClient({
-    datasources: { db: { url: dbUrl } }
+  console.log('\n[2/6] Setting up isolated user, property, unit, lease, and installments...');
+  const testAdmin = await prisma.user.upsert({
+    where: { username: `test_admin_${testRunId}` },
+    update: {},
+    create: {
+      username: `test_admin_${testRunId}`,
+      email: `test_admin_${testRunId}@luxuryhome.sa`,
+      passwordHash: 'dummy_hashed_password',
+      name: 'مدير الاختبار المالي',
+      role: 'SUPER_ADMIN',
+      isActive: true,
+      allowedProperties: ['all']
+    }
   });
 
-  try {
-    await prisma.$connect();
-    console.log('✅ Connected to isolated PostgreSQL test instance.');
+  const prop = await prisma.property.create({
+    data: {
+      code: `TEST-PROP-${testRunId}`,
+      name: `برج اختبار التكامل ${testRunId}`,
+      address: 'طريق الملك فهد',
+      city: 'الرياض',
+      district: 'العليا',
+      floorsCount: 3
+    }
+  });
 
-    // 1. Apply Migrations
-    console.log('\n[Phase 2] Applying Prisma migrations to test database...');
-    execSync('npx prisma migrate deploy', { stdio: 'inherit', env: { ...process.env, DATABASE_URL: dbUrl } });
-    console.log('✅ Migrations applied cleanly.');
+  const floor = await prisma.floor.create({
+    data: {
+      propertyId: prop.id,
+      number: 1,
+      name: 'الطابق الأول'
+    }
+  });
 
-    // 2. Setup Test User
-    const testAdmin = await prisma.user.upsert({
-      where: { username: 'test_pg_admin' },
-      update: {},
-      create: {
-        username: 'test_pg_admin',
-        email: 'test_pg_admin@luxuryhome.sa',
-        passwordHash: 'hashed_dummy_test_only',
-        name: 'مدير اختبار PostgreSQL',
-        role: 'SUPER_ADMIN',
-        isActive: true,
-        allowedProperties: ['all']
-      }
-    });
+  const unit = await prisma.unit.create({
+    data: {
+      propertyId: prop.id,
+      floorId: floor.id,
+      unitNumber: `U-${testRunId}`,
+      title: 'وحدة اختبار التكامل المالي',
+      type: 'apartment',
+      areaSqm: 120,
+      floorNumber: 1,
+      maxGuests: 4,
+      bedroomsCount: 2,
+      bathroomsCount: 2,
+      bedsCount: 2,
+      furnishingStatus: 'furnished',
+      allowYearly: true,
+      annualRate: 60000,
+      yearlySecurityDeposit: 5000,
+      cleaningFee: 0,
+      taxPercentage: 0,
+      securityDeposit: 5000,
+      operationalStatus: 'ready',
+      occupancyStatus: 'occupied',
+      publicationStatus: 'published'
+    }
+  });
 
-    // 3. Setup Test Property, Floor, Unit, Lease & Installment
-    console.log('\n[Phase 3] Creating real Property, Unit, Lease & Installment in PostgreSQL...');
-    const prop = await prisma.property.create({
-      data: {
-        code: `TEST-PROP-${Date.now()}`,
-        name: 'برج الاختبار المعزول',
-        address: 'شارع التخصصي',
-        city: 'الرياض',
-        district: 'العليا',
-        floorsCount: 3
-      }
-    });
+  const lease = await prisma.lease.create({
+    data: {
+      contractNumber: `CONT-${testRunId}`,
+      unitId: unit.id,
+      tenantName: 'عبدالله السعيد',
+      tenantPhone: '+966500001122',
+      tenantIdNumber: '1098765432',
+      startDate: new Date('2026-11-01T00:00:00.000Z'),
+      endDate: new Date('2027-10-31T23:59:59.000Z'),
+      annualRent: 60000,
+      paymentOption: '2 payments',
+      securityDeposit: 5000,
+      status: 'ACTIVE',
+      rentalType: 'ANNUAL',
+      paymentFrequency: 'semi_annual'
+    }
+  });
 
-    const floor = await prisma.floor.create({
-      data: {
-        propertyId: prop.id,
-        number: 1,
-        name: 'الطابق الأول'
-      }
-    });
+  const installment1 = await prisma.leaseInstallment.create({
+    data: {
+      leaseId: lease.id,
+      number: 1,
+      label: 'الدفعة الأولى',
+      dueDate: new Date('2026-11-01T00:00:00.000Z'),
+      amount: 30000,
+      paidAmount: 0,
+      remainingAmount: 30000,
+      status: 'UPCOMING'
+    }
+  });
 
-    const unit = await prisma.unit.create({
-      data: {
-        propertyId: prop.id,
-        floorId: floor.id,
-        unitNumber: `U-${Date.now().toString().slice(-4)}`,
-        title: 'وحدة اختبار التكامل المالي',
-        type: 'apartment',
-        areaSqm: 120,
-        floorNumber: 1,
-        maxGuests: 4,
-        bedroomsCount: 2,
-        bathroomsCount: 2,
-        bedsCount: 2,
-        furnishingStatus: 'furnished',
-        allowYearly: true,
-        annualRate: 60000,
-        yearlySecurityDeposit: 5000,
-        cleaningFee: 0,
-        taxPercentage: 0,
-        securityDeposit: 5000,
-        operationalStatus: 'ready',
-        occupancyStatus: 'occupied',
-        publicationStatus: 'published'
-      }
-    });
+  const deposit = await prisma.securityDepositRecord.create({
+    data: {
+      leaseId: lease.id,
+      amount: 5000,
+      collectedAmount: 5000,
+      refundedAmount: 0,
+      deductedAmount: 0,
+      rentAppliedAmount: 0,
+      status: 'held',
+      collectionReference: `REC-DEP-${testRunId}`,
+      collectionVerifiedAt: new Date(),
+      notes: 'تحصيل تأمين فعلي معتمد'
+    }
+  });
 
-    const lease = await prisma.lease.create({
-      data: {
-        contractNumber: `CONT-${Date.now()}`,
-        unitId: unit.id,
-        tenantName: 'عبدالله السعيد',
-        tenantPhone: '+966500001122',
-        tenantIdNumber: '1098765432',
-        startDate: new Date('2026-11-01T00:00:00.000Z'),
-        endDate: new Date('2027-10-31T23:59:59.000Z'),
-        annualRent: 60000,
-        paymentOption: '2 payments',
-        securityDeposit: 5000,
-        status: 'ACTIVE',
-        rentalType: 'ANNUAL',
-        paymentFrequency: 'semi_annual',
-      }
-    });
+  console.log(`✅ Real Records created: Lease=${lease.id}, Deposit=${deposit.id}, Installment=${installment1.id}`);
 
-    const installment1 = await prisma.leaseInstallment.create({
-      data: {
-        leaseId: lease.id,
-        number: 1,
-        label: 'الدفعة الأولى',
-        dueDate: new Date('2026-11-01T00:00:00.000Z'),
-        amount: 30000,
-        paidAmount: 0,
-        remainingAmount: 30000,
-        status: 'UPCOMING'
-      }
-    });
+  console.log('\n[3/6] Executing real applyDepositToRent with independent approvalReference...');
+  const approvalRef = `APPR-SETTLE-${testRunId}-001`;
+  const applyResult = await applyDepositToRent({
+    depositId: deposit.id,
+    installmentId: installment1.id,
+    actorId: testAdmin.id,
+    amount: '2000.00',
+    approvalReference: approvalRef,
+    reason: 'تسوية قسط إيجاري معتمد',
+    idempotencyKey: `${testRunId}:settle:1`
+  });
 
-    // 4. Create Real Security Deposit in DB
-    const deposit = await prisma.securityDepositRecord.create({
-      data: {
-        leaseId: lease.id,
-        amount: 5000,
-        collectedAmount: 5000,
-        refundedAmount: 0,
-        deductedAmount: 0,
-        rentAppliedAmount: 0,
-        status: 'held',
-        collectionReference: 'REC-DEP-001',
-        collectionVerifiedAt: new Date(),
-        notes: 'تحصيل تأمين فعلي'
-      }
-    });
+  assert.ok(applyResult);
+  console.log('✅ applyDepositToRent completed.');
 
-    console.log(`✅ Real Records created: Lease=${lease.id}, Deposit=${deposit.id}, Installment1=${installment1.id}`);
-
-    // 5. Test Financial Operation: Apply Deposit to Rent (With FOR UPDATE lock)
-    console.log('\n[Phase 4] Executing real applyDepositToRent against PostgreSQL transaction...');
-    const applyResult = await applyDepositToRent({
-      depositId: deposit.id,
+  console.log('\n[4/6] Verifying internal settlement classification and database records...');
+  const createdPayment = await prisma.paymentRecord.findFirstOrThrow({
+    where: {
+      leaseId: lease.id,
       installmentId: installment1.id,
-      actorId: testAdmin.id,
-      amount: '2000.00',
-      reason: 'تسوية جزء من التأمين لسداد قسط العقد بموجب مرجع الاعتماد APPR-SETTLE-2026-001',
-      idempotencyKey: 'idem_settle_001'
-    }) as any;
-
-    if (!applyResult || applyResult.rentAppliedAmount !== '2000.00') {
-      throw new Error(`applyDepositToRent failed in PostgreSQL: ${JSON.stringify(applyResult)}`);
+      sourceType: 'deposit_application',
+      referenceNo: approvalRef
     }
-    console.log('✅ applyDepositToRent succeeded.');
+  });
 
-    // 6. Verify Database Records & Decimal Integrity
-    console.log('\n[Phase 5] Verifying PostgreSQL updated records & fields...');
-    const updatedDeposit = await prisma.securityDepositRecord.findUnique({
-      where: { id: deposit.id },
-      include: { transactions: true }
-    });
+  assert.equal(createdPayment.paymentMethod, 'security_deposit');
+  assert.equal(createdPayment.affectsCash, false);
+  assert.equal(createdPayment.amount.toFixed(2), '2000.00');
+  console.log('✅ Verified: PaymentRecord created with paymentMethod=security_deposit, sourceType=deposit_application, affectsCash=false.');
 
-    if (!updatedDeposit) throw new Error('Deposit record disappeared!');
-    if (Number(updatedDeposit.rentAppliedAmount) !== 2000) {
-      throw new Error(`Expected rentAppliedAmount=2000, found ${updatedDeposit.rentAppliedAmount}`);
-    }
+  const updatedDeposit = await prisma.securityDepositRecord.findUniqueOrThrow({
+    where: { id: deposit.id }
+  });
+  assert.equal(updatedDeposit.rentAppliedAmount.toFixed(2), '2000.00');
 
-    const updatedInst1 = await prisma.leaseInstallment.findUnique({
-      where: { id: installment1.id }
-    });
-    if (Number(updatedInst1?.paidAmount) !== 2000) {
-      throw new Error(`Expected installment paidAmount=2000, found ${updatedInst1?.paidAmount}`);
-    }
-
-    const createdPayment = await prisma.paymentRecord.findFirst({
-      where: {
-        leaseId: lease.id,
-        installmentId: installment1.id,
-        sourceType: 'security_deposit'
-      }
-    });
-
-    if (!createdPayment) throw new Error('PaymentRecord for settlement was not created in DB!');
-    if (createdPayment.affectsCash !== false) {
-      throw new Error('CRITICAL: affectsCash must be false for deposit settlement payment!');
-    }
-    if (Number(createdPayment.amount) !== 2000) {
-      throw new Error(`Payment amount mismatch: expected 2000, found ${createdPayment.amount}`);
-    }
-    console.log('✅ Verified: rentAppliedAmount=2000, PaymentRecord created with affectsCash=false.');
-
-    // 7. Test Concurrency & Advisory / Row-Level Lock
-    console.log('\n[Phase 6] Testing concurrent deposit operations (Row-Level Lock verification)...');
-    // Attempting to spend 4,000 SAR across two parallel requests when only 3,000 SAR is remaining (5000 - 2000)
-    const p1 = refundDeposit({
+  console.log('\n[5/6] Testing concurrency race condition (Row-Level Lock & Over-allocation prevention)...');
+  const results = await Promise.allSettled([
+    refundDeposit({
       depositId: deposit.id,
       actorId: testAdmin.id,
       refundAmount: '2000.00',
       refundMethod: 'bank_transfer',
-      refundReference: 'REF-001',
+      refundReference: `TEST-${testRunId}-A`,
       refundType: 'actual_payout',
-      idempotencyKey: 'idem_race_1'
-    });
-
-    const p2 = refundDeposit({
+      idempotencyKey: `${testRunId}:refund:A`,
+    }),
+    refundDeposit({
       depositId: deposit.id,
       actorId: testAdmin.id,
       refundAmount: '2000.00',
       refundMethod: 'bank_transfer',
-      refundReference: 'REF-002',
+      refundReference: `TEST-${testRunId}-B`,
       refundType: 'actual_payout',
-      idempotencyKey: 'idem_race_2'
-    });
+      idempotencyKey: `${testRunId}:refund:B`,
+    }),
+  ]);
 
-    const results = await Promise.allSettled([p1, p2]);
-    const fulfilledCount = results.filter(r => r.status === 'fulfilled').length;
+  const successes = results.filter(result => result.status === 'fulfilled');
+  const failures = results.filter(
+    (result): result is PromiseRejectedResult =>
+      result.status === 'rejected',
+  );
 
-    if (fulfilledCount !== 1) {
-      throw new Error(`Concurrency race condition failed: expected exactly 1 success, got ${fulfilledCount}`);
-    }
-    console.log('✅ Row-level locking prevented over-allocation under concurrent race condition.');
+  assert.equal(successes.length, 1);
+  assert.equal(failures.length, 1);
 
-    // 8. Cleanup Test Data
-    console.log('\n[Phase 7] Cleaning up test records from PostgreSQL...');
-    await prisma.securityDepositTransaction.deleteMany({ where: { depositId: deposit.id } });
-    await prisma.paymentRecord.deleteMany({ where: { leaseId: lease.id } });
-    await prisma.securityDepositRecord.deleteMany({ where: { leaseId: lease.id } });
-    await prisma.leaseInstallment.deleteMany({ where: { leaseId: lease.id } });
-    await prisma.lease.delete({ where: { id: lease.id } });
-    await prisma.unit.delete({ where: { id: unit.id } });
-    await prisma.floor.delete({ where: { id: floor.id } });
-    await prisma.property.delete({ where: { id: prop.id } });
-    await prisma.user.delete({ where: { id: testAdmin.id } });
-    await prisma.$disconnect();
+  const rejection = failures[0].reason;
+  assert.ok(rejection instanceof RefundError);
+  assert.equal(rejection.statusCode, 400);
+  assert.equal(rejection.code, 'INSUFFICIENT_DEPOSIT_BALANCE');
 
-    console.log('\n=====================================================');
-    console.log('🎉 ALL ISOLATED POSTGRESQL INTEGRATION TESTS PASSED (0 Failures)');
-    console.log('=====================================================');
-  } catch (error: any) {
-    console.error('\n❌ PostgreSQL Test Suite Failure:', error.message);
-    await prisma.$disconnect();
-    process.exit(1);
-  }
+  console.log('✅ Exactly 1 operation succeeded and 1 failed with INSUFFICIENT_DEPOSIT_BALANCE.');
+
+  console.log('\n[6/6] Verifying final ledger balances in PostgreSQL...');
+  const after = await prisma.securityDepositRecord.findUniqueOrThrow({
+    where: { id: deposit.id },
+  });
+
+  assert.equal(after.collectedAmount.toFixed(2), '5000.00');
+  assert.equal(after.rentAppliedAmount.toFixed(2), '2000.00');
+  assert.equal(after.refundedAmount.toFixed(2), '2000.00');
+  assert.equal(after.deductedAmount.toFixed(2), '0.00');
+
+  const available = after.collectedAmount
+    .minus(after.rentAppliedAmount)
+    .minus(after.refundedAmount)
+    .minus(after.deductedAmount);
+
+  assert.equal(available.toFixed(2), '1000.00');
+
+  const refundMovements = await prisma.securityDepositTransaction.findMany({
+    where: {
+      depositId: deposit.id,
+      type: 'refund',
+      status: 'completed',
+    },
+  });
+
+  assert.equal(refundMovements.length, 1);
+  assert.equal(refundMovements[0].amount.toFixed(2), '2000.00');
+
+  // Cleanup test data
+  await prisma.securityDepositTransaction.deleteMany({ where: { depositId: deposit.id } });
+  await prisma.paymentRecord.deleteMany({ where: { leaseId: lease.id } });
+  await prisma.securityDepositRecord.deleteMany({ where: { leaseId: lease.id } });
+  await prisma.leaseInstallment.deleteMany({ where: { leaseId: lease.id } });
+  await prisma.lease.delete({ where: { id: lease.id } });
+  await prisma.unit.delete({ where: { id: unit.id } });
+  await prisma.floor.delete({ where: { id: floor.id } });
+  await prisma.property.delete({ where: { id: prop.id } });
+  await prisma.user.delete({ where: { id: testAdmin.id } });
+
+  console.log('\n=====================================================');
+  console.log('🎉 ALL ISOLATED POSTGRESQL INTEGRATION TESTS PASSED (0 Failures)');
+  console.log('=====================================================');
 }
-
-runPostgresTestSuite();

@@ -1433,18 +1433,19 @@ export function validateBackupPackageIntegrity(backupData: any): { isValid: bool
       'collectionVerifiedAt',
       'refundedAmount',
       'deductedAmount',
+      'rentAppliedAmount',
     ]) {
       if (!Object.prototype.hasOwnProperty.call(sd, field)) {
         errors.push(`التأمين ${sd.id}: الحقل ${field} مفقود.`);
       }
     }
 
-    const parseAmount = (value: unknown): Decimal => {
+    const parseAmount = (value: unknown, fieldName: string): Decimal => {
       if (
         !['string', 'number'].includes(typeof value) ||
         !/^\d{1,10}(?:\.\d{1,2})?$/.test(String(value))
       ) {
-        errors.push(`التأمين ${sd.id}: مبلغ غير صالح.`);
+        errors.push(`التأمين ${sd.id}: حقل ${fieldName} يحتوي على مبلغ غير صالح (${value}).`);
         return new Decimal(0);
       }
       return new Decimal(String(value));
@@ -1453,14 +1454,16 @@ export function validateBackupPackageIntegrity(backupData: any): { isValid: bool
     if (
       Object.prototype.hasOwnProperty.call(sd, 'collectedAmount') &&
       Object.prototype.hasOwnProperty.call(sd, 'refundedAmount') &&
-      Object.prototype.hasOwnProperty.call(sd, 'deductedAmount')
+      Object.prototype.hasOwnProperty.call(sd, 'deductedAmount') &&
+      Object.prototype.hasOwnProperty.call(sd, 'rentAppliedAmount')
     ) {
-      const collected = parseAmount(sd.collectedAmount);
-      const refunded = parseAmount(sd.refundedAmount);
-      const deducted = parseAmount(sd.deductedAmount);
+      const collected = parseAmount(sd.collectedAmount, 'collectedAmount');
+      const refunded = parseAmount(sd.refundedAmount, 'refundedAmount');
+      const deducted = parseAmount(sd.deductedAmount, 'deductedAmount');
+      const rentApplied = parseAmount(sd.rentAppliedAmount, 'rentAppliedAmount');
 
-      if (refunded.plus(deducted).gt(collected)) {
-        errors.push(`التأمين ${sd.id}: الحركات تتجاوز التحصيل.`);
+      if (refunded.plus(deducted).plus(rentApplied).gt(collected)) {
+        errors.push(`التأمين ${sd.id}: مجموع الحركات والتسويات يتجاوز التحصيل.`);
       }
 
       if (collected.gt(0)) {
@@ -1476,12 +1479,34 @@ export function validateBackupPackageIntegrity(backupData: any): { isValid: bool
           errors.push(`التأمين ${sd.id}: إثبات التحصيل ناقص.`);
         }
       }
+
+      // Check transaction sums matching rentAppliedAmount
+      const depositSettlementMovements = (backupData.securityDepositTransactions || []).filter(
+        (t: any) => t.depositId === sd.id && t.type === 'rent_application' && t.status === 'completed'
+      );
+      if (depositSettlementMovements.length > 0) {
+        const sumSettlements = depositSettlementMovements.reduce(
+          (sum: Decimal, t: any) => sum.plus(new Decimal(t.amount || 0)),
+          new Decimal(0)
+        );
+        if (!sumSettlements.eq(rentApplied)) {
+          errors.push(`التأمين ${sd.id}: مجموع حركات تسوية التأمين (${sumSettlements.toFixed(2)}) لا يطابق rentAppliedAmount (${rentApplied.toFixed(2)}).`);
+        }
+      }
     }
   }
 
   for (const sdt of backupData.securityDepositTransactions || []) {
     if (sdt.depositId && !depositIdSet.has(String(sdt.depositId))) {
       errors.push(`علاقة غير متطابقة: حركة التأمين ${sdt.id} تشير إلى سجل تأمين غير موجود (${sdt.depositId}).`);
+    }
+    if (sdt.targetLeaseId && !leaseIdSet.has(String(sdt.targetLeaseId))) {
+      errors.push(`علاقة غير متطابقة: حركة التأمين ${sdt.id} تشير إلى عقد مستهدف غير موجود (${sdt.targetLeaseId}).`);
+    }
+    for (const field of ['targetLeaseId', 'targetInstallmentId']) {
+      if (!Object.prototype.hasOwnProperty.call(sdt, field)) {
+        errors.push(`حركة التأمين ${sdt.id}: الحقل ${field} مفقود.`);
+      }
     }
   }
 
@@ -1491,6 +1516,27 @@ export function validateBackupPackageIntegrity(backupData: any): { isValid: bool
     }
     if (pay.leaseId && !leaseIdSet.has(String(pay.leaseId))) {
       errors.push(`علاقة غير متطابقة: الدفعة ${pay.id} تشير إلى عقد غير موجود (${pay.leaseId}).`);
+    }
+
+    for (const field of ['installmentId', 'sourceType', 'affectsCash']) {
+      if (!Object.prototype.hasOwnProperty.call(pay, field)) {
+        errors.push(`السداد ${pay.id}: الحقل ${field} مفقود.`);
+      }
+    }
+
+    if (typeof pay.affectsCash !== 'boolean') {
+      errors.push(`السداد ${pay.id}: affectsCash يجب أن يكون منطقياً (boolean).`);
+    }
+
+    if (
+      pay.sourceType === 'deposit_application' &&
+      (
+        pay.affectsCash !== false ||
+        pay.paymentMethod !== 'security_deposit' ||
+        !pay.installmentId
+      )
+    ) {
+      errors.push(`السداد ${pay.id}: تسوية التأمين غير متسقة (affectsCash=${pay.affectsCash}, method=${pay.paymentMethod}, installmentId=${pay.installmentId}).`);
     }
   }
 
@@ -1856,6 +1902,7 @@ export async function restoreFullDatabaseInDb(backupData: any) {
             status: sd.status || 'held',
             deductedAmount: new Decimal(sd.deductedAmount ?? 0),
             refundedAmount: new Decimal(sd.refundedAmount ?? 0),
+            rentAppliedAmount: new Decimal(sd.rentAppliedAmount ?? 0),
             deductionReason: sd.deductionReason ?? null,
             refundMethod: sd.refundMethod ?? null,
             refundReference: sd.refundReference ?? null,
@@ -1881,6 +1928,8 @@ export async function restoreFullDatabaseInDb(backupData: any) {
             method: sdt.method || 'bank_transfer',
             reference: sdt.reference || `REF-${Date.now()}`,
             reason: sdt.reason ?? null,
+            targetLeaseId: sdt.targetLeaseId ?? null,
+            targetInstallmentId: sdt.targetInstallmentId ?? null,
             executedByUserId: sdt.executedByUserId ?? null,
             executedAt: sdt.executedAt ? new Date(sdt.executedAt) : new Date(),
             status: sdt.status || 'completed',
@@ -1900,8 +1949,11 @@ export async function restoreFullDatabaseInDb(backupData: any) {
             id: pay.id,
             bookingId: pay.bookingId ?? null,
             leaseId: pay.leaseId ?? null,
+            installmentId: pay.installmentId ?? null,
             amount: new Decimal(pay.amount ?? 0),
             paymentMethod: pay.paymentMethod || 'mada',
+            sourceType: pay.sourceType ?? 'direct_payment',
+            affectsCash: pay.affectsCash !== false,
             receiptNo: pay.receiptNo ?? null,
             referenceNo: pay.referenceNo ?? null,
             status: pay.status || 'completed',

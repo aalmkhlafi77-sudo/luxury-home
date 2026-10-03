@@ -6,6 +6,7 @@ export class RefundError extends Error {
   constructor(
     public readonly statusCode: number,
     message: string,
+    public readonly code = 'DEPOSIT_OPERATION_REJECTED',
   ) {
     super(message);
     this.name = 'RefundError';
@@ -319,6 +320,7 @@ export async function refundDeposit(input: RefundInput) {
         throw new RefundError(
           400,
           `المبلغ المطلوب يتجاوز الرصيد المتاح ${available.toFixed(2)} ر.س.`,
+          'INSUFFICIENT_DEPOSIT_BALANCE',
         );
       }
 
@@ -431,8 +433,8 @@ type ApplyRentInput = {
   depositId: unknown;
   installmentId: unknown;
   amount: unknown;
-  reason: unknown;
-  approvalReference?: unknown;
+  approvalReference: unknown;
+  reason?: unknown;
   actorId: unknown;
   idempotencyKey?: unknown;
 };
@@ -447,6 +449,7 @@ export async function applyDepositToRent(input: ApplyRentInput) {
 
   const depositId = requiredText(input.depositId, 'معرّف التأمين');
   const installmentId = requiredText(input.installmentId, 'معرّف القسط المالي المستهدف');
+  const approvalReference = requiredText(input.approvalReference, 'مرجع اعتماد التسوية');
   const actorId = requiredText(input.actorId, 'معرّف المستخدم');
   const clientKey = requiredText(
     input.idempotencyKey,
@@ -464,13 +467,14 @@ export async function applyDepositToRent(input: ApplyRentInput) {
     throw new RefundError(400, 'يجب تحديد مبلغ تسوية موجب أكبر من الصفر.');
   }
 
-  const reason = requiredText(input.reason, 'سبب ومبرر التسوية المعتمد', 1000);
+  const reason = input.reason ? String(input.reason).trim() : 'تسوية قسط إيجار';
 
   const requestHash = sha256(
     JSON.stringify({
       depositId,
       installmentId,
       amount: applyAmount.toFixed(2),
+      approvalReference,
       reason,
     }),
   );
@@ -651,6 +655,7 @@ export async function applyDepositToRent(input: ApplyRentInput) {
         throw new RefundError(
           400,
           `المبلغ المطلوب يتجاوز الرصيد المتاح للتأمين وهو ${available.toFixed(2)} ر.س.`,
+          'INSUFFICIENT_DEPOSIT_BALANCE',
         );
       }
 
@@ -659,6 +664,7 @@ export async function applyDepositToRent(input: ApplyRentInput) {
         throw new RefundError(
           400,
           `مبلغ التسوية المطلوب يتجاوز المبلغ المتبقي على القسط وهو ${remInstallment.toFixed(2)} ر.س.`,
+          'INSTALLMENT_REMAINING_EXCEEDED',
         );
       }
 
@@ -678,8 +684,8 @@ export async function applyDepositToRent(input: ApplyRentInput) {
           rentAppliedAmount: rentAppliedTotal,
           status: depositStatus,
           notes: deposit.notes
-            ? `${deposit.notes} | تسوية إيجار: ${reason}`
-            : `تسوية إيجار: ${reason}`,
+            ? `${deposit.notes} | تسوية إيجار: ${approvalReference} (${reason})`
+            : `تسوية إيجار: ${approvalReference} (${reason})`,
         },
       });
 
@@ -705,8 +711,8 @@ export async function applyDepositToRent(input: ApplyRentInput) {
           type: 'rent_application',
           amount: applyAmount,
           method: 'security_deposit',
-          reference: `SETTLE-LEASE-${installment.lease.contractNumber}`,
-          reason,
+          reference: approvalReference,
+          reason: `${approvalReference}: ${reason}`,
           targetLeaseId: installment.leaseId,
           targetInstallmentId: installment.id,
           executedByUserId: actor.id,
@@ -730,12 +736,12 @@ export async function applyDepositToRent(input: ApplyRentInput) {
           paymentMethod: settlementClassification.paymentMethod,
           sourceType: settlementClassification.sourceType,
           affectsCash: settlementClassification.affectsCash,
-          referenceNo: `SETTLE-DEP-${deposit.id}`,
+          referenceNo: approvalReference,
           receiptNo: `DEP-SETTLE-${Date.now()}`,
           status: 'completed',
           isVerified: true,
           paidAt: new Date(),
-          notes: `تسوية جزء من مبلغ التأمين لسداد قسط العقد #${installment.lease.contractNumber} بسبب (${reason}) [تسوية دفترية معزولة لا تؤثر على السيولة النقدية]`,
+          notes: `تسوية من رصيد التأمين لسداد قسط العقد #${installment.lease.contractNumber} بموجب مرجع الاعتماد: ${approvalReference} [تسوية دفترية معزولة لا تؤثر على السيولة النقدية]`,
         },
       });
 
@@ -751,6 +757,7 @@ export async function applyDepositToRent(input: ApplyRentInput) {
             installmentId: installment.id,
             leaseId: installment.leaseId,
             amount: applyAmount.toFixed(2),
+            approvalReference,
             reason,
             transactionId: movement.id,
             paymentRecordId: paymentRec.id,

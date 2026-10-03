@@ -3091,8 +3091,9 @@ export function useAppStore() {
     leaseId: string;
     installmentId: string;
     amount: number;
-    reason: string;
-    authorizedBy: string;
+    reason?: string;
+    approvalReference: string;
+    authorizedBy?: string;
     idempotencyKey: string;
   }) => {
     const token = localStorage.getItem('luxury_token') || '';
@@ -3108,7 +3109,8 @@ export function useAppStore() {
         body: JSON.stringify({
           installmentId: params.installmentId,
           amount: params.amount,
-          reason: `${params.reason} (باعتماد: ${params.authorizedBy})`,
+          approvalReference: params.approvalReference,
+          reason: params.reason || 'تسوية قسط إيجار',
         }),
       },
     );

@@ -88,6 +88,8 @@ async function runPhase4Integration() {
   let annualInstallment1Id = '';
   let depositAId = '';
 
+  let fatalError = false;
+
   try {
     // ----------------------------------------------------
     // Step 0: Super Admin Authentication
@@ -669,7 +671,8 @@ async function runPhase4Integration() {
     }
 
   } catch (err: any) {
-    console.error('Fatal error during integration cycle:', err);
+    fatalError = true;
+    console.error('Fatal error during integration cycle:', err instanceof Error ? err.message : err);
   } finally {
     server.close();
   }
@@ -695,7 +698,13 @@ async function runPhase4Integration() {
   console.log(`\nإجمالي الحالات: ${resultsTable.length} | الناجحة: ${passedCount} | غير المنفذة (PostgreSQL): ${notExecCount} | الفاشلة: ${failedCount}`);
   console.log('=====================================================\n');
 
-  process.exit(failedCount > 0 ? 1 : 0);
+  if (fatalError || failedCount > 0) {
+    process.exit(1);
+  } else if (notExecCount > 0) {
+    process.exit(2);
+  } else {
+    process.exit(0);
+  }
 }
 
 runPhase4Integration();
