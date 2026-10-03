@@ -100,11 +100,7 @@ export async function runPostgresTestSuite(): Promise<boolean> {
   // Guard passed: configure environment and dynamically load dependencies
   process.env.DATABASE_URL = envCheck.dbUrl;
 
-  const { PrismaClient } = await import('@prisma/client');
-  const prisma = new PrismaClient({
-    datasources: { db: { url: envCheck.dbUrl } }
-  });
-
+  const { prisma } = await import('../src/server/db.js');
   const { RefundError, refundDeposit, applyDepositToRent } = await import('../src/server/depositRefundService.js');
   const { validateBackupPackageIntegrity, exportFullDatabase, restoreFullDatabaseInDb } = await import('../src/server/repository.js');
 
@@ -533,10 +529,12 @@ export async function runPostgresTestSuite(): Promise<boolean> {
 if (import.meta.url === `file://${process.argv[1]}`) {
   runPostgresTestSuite().then((success) => {
     if (!success) {
-      process.exit(0);
+      process.exitCode = 2;
+      process.exit(2);
     }
   }).catch((err) => {
     console.error('❌ PostgreSQL Test Suite Failed:', err);
+    process.exitCode = 1;
     process.exit(1);
   });
 }
