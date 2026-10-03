@@ -45,6 +45,7 @@ async function runFinancialTests() {
 
     // Test 1: Standard Equal Unit Allocation
     console.log('\n[Test 1] Testing Equal Units OPEX Distribution...');
+    console.log('[Classification: Direct Calculation Function Call via POST /api/financials/calculate-distribution]');
     const res1 = await makeRequest({
       hostname: '127.0.0.1',
       port: PORT,
