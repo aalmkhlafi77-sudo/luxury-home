@@ -36,6 +36,13 @@ import {
   updateUnitInDb,
   deleteUnitInDb,
   createBatchUnitsInDb,
+  getParkingSpotsFromDb,
+  createParkingSpotInDb,
+  updateParkingSpotInDb,
+  deleteParkingSpotInDb,
+  assignParkingSpotInDb,
+  unassignParkingSpotInDb,
+  computeServerRoomMetrics,
   getBookingsFromDb,
   getLeasesFromDb,
   getExpensesFromDb,
@@ -1404,9 +1411,11 @@ export async function startServer(customPort?: number) {
           }
         }
 
+        const metrics = Array.isArray(req.body.spaces) ? computeServerRoomMetrics(req.body.spaces) : null;
         memoryState.units[idx] = {
           ...existing,
           ...req.body,
+          ...(metrics ? metrics : {}),
           annualRate: req.body.annualRate !== undefined ? req.body.annualRate : (req.body.yearlyRate !== undefined ? req.body.yearlyRate : existing.annualRate),
           yearlyRate: req.body.yearlyRate !== undefined ? req.body.yearlyRate : (req.body.annualRate !== undefined ? req.body.annualRate : existing.yearlyRate),
           updatedAt: new Date().toISOString()
@@ -1460,6 +1469,302 @@ export async function startServer(customPort?: number) {
       return res.json({ success: true, message: 'تم حذف الوحدة بنجاح.' });
     } catch (err: any) {
       return res.status(400).json({ success: false, message: err?.message || 'فشل حذف الوحدة.' });
+    }
+  });
+
+  // --- Parking Spots Endpoints ---
+  apiRouter.get('/parking-spots', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const user = req.user!;
+      const allowed = user.role === 'SUPER_ADMIN' ? ['all'] : user.allowedProperties;
+
+      if (process.env.DATABASE_URL) {
+        const spots = await getParkingSpotsFromDb(allowed);
+        return res.json({ success: true, parkingSpots: spots });
+      }
+
+      const isUniversal = allowed.includes('all');
+      const filtered = isUniversal
+        ? (memoryState?.parkingSpots || [])
+        : (memoryState?.parkingSpots || []).filter((p: any) => allowed.includes(p.propertyId));
+
+      return res.json({ success: true, parkingSpots: filtered });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: 'فشل جلب مواقف السيارات.' });
+    }
+  });
+
+  apiRouter.post('/parking-spots', authenticateToken, requireRoles(['SUPER_ADMIN', 'PROPERTY_MANAGER']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { propertyId, spotNumber } = req.body;
+      if (!propertyId || !spotNumber) {
+        return res.status(400).json({ success: false, message: 'معرف العقار ورقم الموقف مطلوبان.' });
+      }
+
+      const user = req.user!;
+      if (user.role !== 'SUPER_ADMIN' && !user.allowedProperties?.includes(propertyId)) {
+        return res.status(403).json({ success: false, message: 'غير مصرح لك بإضافة مواقف في هذا العقار.' });
+      }
+
+      if (process.env.DATABASE_URL) {
+        const spot = await createParkingSpotInDb(req.body);
+        await recordAuditLogInDb({
+          userId: req.user?.userId,
+          userName: req.user?.username || 'المسؤول',
+          action: 'إضافة موقف سيارات',
+          module: 'إدارة المواقف',
+          details: `إضافة الموقف ${spotNumber} في العقار ${propertyId}`,
+          ipAddress: req.ip
+        });
+        return res.json({ success: true, parkingSpot: spot, message: 'تم حفظ موقف السيارات بنجاح.' });
+      }
+
+      const prop = (memoryState?.properties || []).find((p: any) => p.id === propertyId);
+      if (!prop) {
+        return res.status(400).json({ success: false, message: 'المبنى المحدد غير موجود.' });
+      }
+
+      const duplicate = (memoryState?.parkingSpots || []).some(
+        (p: any) => p.propertyId === propertyId && String(p.spotNumber).trim() === String(spotNumber).trim()
+      );
+      if (duplicate) {
+        return res.status(409).json({ success: false, message: `موقف سيارات بالرقم "${spotNumber}" مسجل بالفعل في هذا المبنى.` });
+      }
+
+      const assignedUnitId = req.body.assignedUnitId || null;
+      if (assignedUnitId) {
+        const unit = (memoryState?.units || []).find((u: any) => u.id === assignedUnitId);
+        if (!unit) return res.status(400).json({ success: false, message: 'الوحدة المحددة غير موجودة.' });
+        if (unit.propertyId !== propertyId) return res.status(400).json({ success: false, message: 'الموقف والوحدة لا ينتميان إلى نفس المبنى.' });
+      }
+
+      const spotId = req.body.id || `prk_${Date.now()}_${Math.floor(100 + Math.random() * 900)}`;
+
+      if (assignedUnitId) {
+        const currentSpot = (memoryState?.parkingSpots || []).find((p: any) => p.assignedUnitId === assignedUnitId);
+        if (currentSpot) {
+          currentSpot.assignedUnitId = null;
+          currentSpot.status = 'vacant';
+        }
+      }
+
+      const newSpot = {
+        id: spotId,
+        propertyId,
+        spotNumber: String(spotNumber).trim(),
+        floor: req.body.floor || 'الدور الأرضي',
+        hasEVCharger: Boolean(req.body.hasEVCharger),
+        status: req.body.status || (assignedUnitId ? 'assigned' : 'vacant'),
+        assignedUnitId,
+        createdAt: new Date().toISOString()
+      };
+
+      if (!memoryState.parkingSpots) memoryState.parkingSpots = [];
+      memoryState.parkingSpots.push(newSpot);
+
+      if (assignedUnitId) {
+        const targetUnit = (memoryState.units || []).find((u: any) => u.id === assignedUnitId);
+        if (targetUnit) targetUnit.assignedParkingId = spotId;
+      }
+
+      persistFallbackState();
+
+      return res.json({ success: true, parkingSpot: newSpot, message: 'تم حفظ موقف السيارات بنجاح.' });
+    } catch (err: any) {
+      return res.status(400).json({ success: false, message: err?.message || 'فشل إضافة موقف السيارات.' });
+    }
+  });
+
+  apiRouter.put('/parking-spots/:id', authenticateToken, requireRoles(['SUPER_ADMIN', 'PROPERTY_MANAGER']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const user = req.user!;
+
+      let spotPropId: string | null = null;
+      if (process.env.DATABASE_URL) {
+        const s = await prisma.parkingSpot.findUnique({ where: { id } });
+        spotPropId = s?.propertyId || null;
+      } else {
+        const s = (memoryState?.parkingSpots || []).find((p: any) => p.id === id);
+        spotPropId = s?.propertyId || null;
+      }
+
+      if (!spotPropId) return res.status(404).json({ success: false, message: 'موقف السيارات غير موجود.' });
+
+      if (user.role !== 'SUPER_ADMIN' && !user.allowedProperties?.includes(spotPropId)) {
+        return res.status(403).json({ success: false, message: 'غير مصرح لك بإدارة مواقف هذا العقار.' });
+      }
+
+      if (process.env.DATABASE_URL) {
+        const updated = await updateParkingSpotInDb(id, req.body);
+        return res.json({ success: true, parkingSpot: updated, message: 'تم تحديث بيانات الموقف بنجاح.' });
+      }
+
+      const idx = memoryState.parkingSpots.findIndex((p: any) => p.id === id);
+      if (idx !== -1) {
+        const existing = memoryState.parkingSpots[idx];
+        if (req.body.spotNumber && String(req.body.spotNumber).trim() !== String(existing.spotNumber).trim()) {
+          const duplicate = memoryState.parkingSpots.some(
+            (p: any) => p.id !== id && p.propertyId === existing.propertyId && String(p.spotNumber).trim() === String(req.body.spotNumber).trim()
+          );
+          if (duplicate) {
+            return res.status(409).json({ success: false, message: `موقف سيارات بالرقم "${req.body.spotNumber}" مسجل بالفعل في هذا المبنى.` });
+          }
+        }
+
+        memoryState.parkingSpots[idx] = { ...existing, ...req.body };
+        persistFallbackState();
+        return res.json({ success: true, parkingSpot: memoryState.parkingSpots[idx], message: 'تم تحديث البيانات بنجاح.' });
+      }
+      return res.status(404).json({ success: false, message: 'الموقف غير موجود.' });
+    } catch (err: any) {
+      return res.status(400).json({ success: false, message: err?.message || 'فشل تحديث الموقف.' });
+    }
+  });
+
+  apiRouter.delete('/parking-spots/:id', authenticateToken, requireRoles(['SUPER_ADMIN', 'PROPERTY_MANAGER']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const user = req.user!;
+
+      let spotPropId: string | null = null;
+      if (process.env.DATABASE_URL) {
+        const s = await prisma.parkingSpot.findUnique({ where: { id } });
+        spotPropId = s?.propertyId || null;
+      } else {
+        const s = (memoryState?.parkingSpots || []).find((p: any) => p.id === id);
+        spotPropId = s?.propertyId || null;
+      }
+
+      if (!spotPropId) return res.status(404).json({ success: false, message: 'موقف السيارات غير موجود.' });
+
+      if (user.role !== 'SUPER_ADMIN' && !user.allowedProperties?.includes(spotPropId)) {
+        return res.status(403).json({ success: false, message: 'غير مصرح لك بحذف مواقف هذا العقار.' });
+      }
+
+      if (process.env.DATABASE_URL) {
+        await deleteParkingSpotInDb(id);
+        return res.json({ success: true, message: 'تم حذف موقف السيارات بنجاح.' });
+      }
+
+      if (memoryState.parkingSpots) {
+        const spot = memoryState.parkingSpots.find((p: any) => p.id === id);
+        if (spot?.assignedUnitId) {
+          const u = (memoryState.units || []).find((unit: any) => unit.id === spot.assignedUnitId);
+          if (u) u.assignedParkingId = null;
+        }
+        memoryState.parkingSpots = memoryState.parkingSpots.filter((p: any) => p.id !== id);
+        persistFallbackState();
+      }
+      return res.json({ success: true, message: 'تم حذف موقف السيارات بنجاح.' });
+    } catch (err: any) {
+      return res.status(400).json({ success: false, message: err?.message || 'فشل حذف موقف السيارات.' });
+    }
+  });
+
+  apiRouter.post('/parking-spots/:id/assign', authenticateToken, requireRoles(['SUPER_ADMIN', 'PROPERTY_MANAGER']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { unitId } = req.body;
+      if (!unitId) return res.status(400).json({ success: false, message: 'معرف الوحدة مطلوب للتخصيص.' });
+
+      const user = req.user!;
+
+      let spotPropId: string | null = null;
+      if (process.env.DATABASE_URL) {
+        const s = await prisma.parkingSpot.findUnique({ where: { id } });
+        spotPropId = s?.propertyId || null;
+      } else {
+        const s = (memoryState?.parkingSpots || []).find((p: any) => p.id === id);
+        spotPropId = s?.propertyId || null;
+      }
+
+      if (!spotPropId) return res.status(404).json({ success: false, message: 'موقف السيارات غير موجود.' });
+
+      if (user.role !== 'SUPER_ADMIN' && !user.allowedProperties?.includes(spotPropId)) {
+        return res.status(403).json({ success: false, message: 'غير مصرح لك بإدارة مواقف هذا العقار.' });
+      }
+
+      if (process.env.DATABASE_URL) {
+        const result = await assignParkingSpotInDb(id, unitId);
+        return res.json({ success: true, ...result, message: 'تم تخصيص موقف السيارات بنجاح.' });
+      }
+
+      const spot = (memoryState?.parkingSpots || []).find((p: any) => p.id === id);
+      const unit = (memoryState?.units || []).find((u: any) => u.id === unitId);
+
+      if (!spot || !unit) return res.status(404).json({ success: false, message: 'الموقف أو الوحدة غير متوفرة.' });
+
+      if (spot.propertyId !== unit.propertyId) {
+        return res.status(400).json({ success: false, message: 'الموقف والوحدة لا ينتميان إلى نفس المبنى.' });
+      }
+
+      if (spot.assignedUnitId && spot.assignedUnitId !== unitId) {
+        return res.status(400).json({ success: false, message: `موقف السيارات (${spot.spotNumber}) مخصص مسبقاً لوحدة أخرى. يجب فك التعيين أولاً.` });
+      }
+
+      if (unit.assignedParkingId && unit.assignedParkingId !== id) {
+        const prevSpot = (memoryState?.parkingSpots || []).find((p: any) => p.id === unit.assignedParkingId);
+        if (prevSpot) {
+          prevSpot.assignedUnitId = null;
+          prevSpot.status = 'vacant';
+        }
+      }
+
+      spot.assignedUnitId = unitId;
+      spot.status = 'assigned';
+      unit.assignedParkingId = id;
+
+      persistFallbackState();
+
+      return res.json({ success: true, parkingSpot: spot, unit, message: 'تم تخصيص موقف السيارات بنجاح.' });
+    } catch (err: any) {
+      return res.status(400).json({ success: false, message: err?.message || 'فشل تخصيص موقف السيارات.' });
+    }
+  });
+
+  apiRouter.post('/parking-spots/:id/unassign', authenticateToken, requireRoles(['SUPER_ADMIN', 'PROPERTY_MANAGER']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const user = req.user!;
+
+      let spotPropId: string | null = null;
+      if (process.env.DATABASE_URL) {
+        const s = await prisma.parkingSpot.findUnique({ where: { id } });
+        spotPropId = s?.propertyId || null;
+      } else {
+        const s = (memoryState?.parkingSpots || []).find((p: any) => p.id === id);
+        spotPropId = s?.propertyId || null;
+      }
+
+      if (!spotPropId) return res.status(404).json({ success: false, message: 'موقف السيارات غير موجود.' });
+
+      if (user.role !== 'SUPER_ADMIN' && !user.allowedProperties?.includes(spotPropId)) {
+        return res.status(403).json({ success: false, message: 'غير مصرح لك بإدارة مواقف هذا العقار.' });
+      }
+
+      if (process.env.DATABASE_URL) {
+        const spot = await unassignParkingSpotInDb(id);
+        return res.json({ success: true, parkingSpot: spot, message: 'تم فك تعيين موقف السيارات بنجاح.' });
+      }
+
+      const spot = (memoryState?.parkingSpots || []).find((p: any) => p.id === id);
+      if (!spot) return res.status(404).json({ success: false, message: 'الموقف غير موجود.' });
+
+      const currentUnitId = spot.assignedUnitId;
+      spot.assignedUnitId = null;
+      spot.status = 'vacant';
+
+      if (currentUnitId) {
+        const u = (memoryState?.units || []).find((unit: any) => unit.id === currentUnitId);
+        if (u) u.assignedParkingId = null;
+      }
+
+      persistFallbackState();
+
+      return res.json({ success: true, parkingSpot: spot, message: 'تم فك تعيين موقف السيارات بنجاح.' });
+    } catch (err: any) {
+      return res.status(400).json({ success: false, message: err?.message || 'فشل فك تعيين موقف السيارات.' });
     }
   });
 

@@ -156,6 +156,8 @@ model Floor {
   number      Int
   name        String
   units       Unit[]
+
+  @@unique([propertyId, number])
 }
 
 model Unit {
@@ -210,6 +212,8 @@ model Unit {
   leases            Lease[]
   expenses          OperationalExpense[]
   expenseShares     ExpenseAllocation[]
+
+  @@unique([propertyId, unitNumber])
 }
 
 model Amenity {
@@ -229,6 +233,8 @@ model ParkingSpot {
   hasEVCharger    Boolean  @default(false)
   status          String   @default("vacant")
   assignedUnitId  String?
+
+  @@unique([propertyId, spotNumber])
 }
 
 model UnitAllocation {

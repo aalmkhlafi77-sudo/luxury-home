@@ -389,6 +389,37 @@ export async function createUnitInDb(data: {
   return serializeDecimals(created);
 }
 
+export function computeServerRoomMetrics(spaces: any[] = []) {
+  if (!Array.isArray(spaces) || spaces.length === 0) return null;
+  let bedroomsCount = 0;
+  let bathroomsCount = 0;
+  let bedsCount = 0;
+
+  for (const space of spaces) {
+    if (space?.type === 'bedroom') {
+      bedroomsCount += 1;
+    } else if (space?.type === 'bathroom') {
+      bathroomsCount += 1;
+    }
+
+    if (space?.bedsCount && Number(space.bedsCount) > 0) {
+      bedsCount += Number(space.bedsCount);
+    } else if (Array.isArray(space?.fittings) && space.fittings.length > 0) {
+      for (const fit of space.fittings) {
+        if (fit?.category === 'bed') {
+          bedsCount += Number(fit.quantity) || 1;
+        }
+      }
+    }
+  }
+
+  return {
+    bedroomsCount: Math.max(bedroomsCount, 1),
+    bathroomsCount: Math.max(bathroomsCount, 1),
+    bedsCount: Math.max(bedsCount, 1),
+  };
+}
+
 export async function updateUnitInDb(id: string, data: any) {
   if (!process.env.DATABASE_URL) return null;
 
@@ -463,6 +494,15 @@ export async function updateUnitInDb(id: string, data: any) {
   if (data.assignedParkingId !== undefined) updateData.assignedParkingId = data.assignedParkingId;
   if (data.notes !== undefined) updateData.notes = data.notes;
   if (data.smartLockPin !== undefined) updateData.smartLockPin = data.smartLockPin;
+
+  if (Array.isArray(data.spaces)) {
+    const metrics = computeServerRoomMetrics(data.spaces);
+    if (metrics) {
+      updateData.bedroomsCount = metrics.bedroomsCount;
+      updateData.bathroomsCount = metrics.bathroomsCount;
+      updateData.bedsCount = metrics.bedsCount;
+    }
+  }
 
   const updated = await prisma.unit.update({
     where: { id },
@@ -721,6 +761,210 @@ export async function deleteUnitInDb(id: string) {
   }
 
   return serializeDecimals(deleted);
+}
+
+// --- Parking Spots Repository ---
+export async function getParkingSpotsFromDb(allowedPropertyIds?: string[]) {
+  if (!process.env.DATABASE_URL) return [];
+  const isUniversal = !allowedPropertyIds || allowedPropertyIds.includes('all');
+  const spots = await prisma.parkingSpot.findMany({
+    where: isUniversal ? {} : { propertyId: { in: allowedPropertyIds } },
+    include: { property: true },
+    orderBy: { spotNumber: 'asc' }
+  });
+  return serializeDecimals(spots);
+}
+
+export async function createParkingSpotInDb(data: {
+  propertyId: string;
+  spotNumber: string;
+  floor?: string;
+  hasEVCharger?: boolean;
+  status?: string;
+  assignedUnitId?: string;
+}) {
+  if (!process.env.DATABASE_URL) return null;
+
+  const prop = await prisma.property.findUnique({ where: { id: data.propertyId } });
+  if (!prop) throw new Error('المبنى المحدد غير موجود في قاعدة البيانات.');
+
+  const duplicate = await prisma.parkingSpot.findFirst({
+    where: {
+      propertyId: data.propertyId,
+      spotNumber: String(data.spotNumber).trim()
+    }
+  });
+  if (duplicate) {
+    throw new Error(`موقف سيارات بالرقم "${data.spotNumber}" مسجل بالفعل في هذا المبنى.`);
+  }
+
+  if (data.assignedUnitId) {
+    const unit = await prisma.unit.findUnique({ where: { id: data.assignedUnitId } });
+    if (!unit) throw new Error('الوحدة المحددة غير موجودة.');
+    if (unit.propertyId !== data.propertyId) {
+      throw new Error('الموقف والوحدة لا ينتميان إلى نفس المبنى.');
+    }
+  }
+
+  return await prisma.$transaction(async (tx) => {
+    const assignedUnitId = data.assignedUnitId || null;
+    const status = data.status || (assignedUnitId ? 'assigned' : 'vacant');
+
+    if (assignedUnitId) {
+      const currentSpot = await tx.parkingSpot.findFirst({
+        where: { assignedUnitId }
+      });
+      if (currentSpot) {
+        await tx.parkingSpot.update({
+          where: { id: currentSpot.id },
+          data: { assignedUnitId: null, status: 'vacant' }
+        });
+      }
+    }
+
+    const created = await tx.parkingSpot.create({
+      data: {
+        propertyId: data.propertyId,
+        spotNumber: String(data.spotNumber).trim(),
+        floor: data.floor || 'الدور الأرضي',
+        hasEVCharger: Boolean(data.hasEVCharger),
+        status,
+        assignedUnitId
+      }
+    });
+
+    if (assignedUnitId) {
+      await tx.unit.update({
+        where: { id: assignedUnitId },
+        data: { assignedParkingId: created.id }
+      });
+    }
+
+    return serializeDecimals(created);
+  });
+}
+
+export async function updateParkingSpotInDb(id: string, data: any) {
+  if (!process.env.DATABASE_URL) return null;
+
+  const existing = await prisma.parkingSpot.findUnique({ where: { id } });
+  if (!existing) throw new Error('موقف السيارات المحدد غير موجود.');
+
+  const propId = data.propertyId || existing.propertyId;
+
+  if (data.spotNumber && String(data.spotNumber).trim() !== existing.spotNumber.trim()) {
+    const duplicate = await prisma.parkingSpot.findFirst({
+      where: {
+        id: { not: id },
+        propertyId: propId,
+        spotNumber: String(data.spotNumber).trim()
+      }
+    });
+    if (duplicate) {
+      throw new Error(`موقف سيارات بالرقم "${data.spotNumber}" مسجل بالفعل في هذا المبنى.`);
+    }
+  }
+
+  const updateData: any = {};
+  if (data.spotNumber !== undefined) updateData.spotNumber = String(data.spotNumber).trim();
+  if (data.floor !== undefined) updateData.floor = data.floor;
+  if (data.hasEVCharger !== undefined) updateData.hasEVCharger = Boolean(data.hasEVCharger);
+  if (data.status !== undefined) updateData.status = data.status;
+
+  const updated = await prisma.parkingSpot.update({
+    where: { id },
+    data: updateData
+  });
+  return serializeDecimals(updated);
+}
+
+export async function deleteParkingSpotInDb(id: string) {
+  if (!process.env.DATABASE_URL) return null;
+
+  return await prisma.$transaction(async (tx) => {
+    const existing = await tx.parkingSpot.findUnique({ where: { id } });
+    if (!existing) throw new Error('موقف السيارات المحدد غير موجود.');
+
+    await tx.unit.updateMany({
+      where: { assignedParkingId: id },
+      data: { assignedParkingId: null }
+    });
+
+    const deleted = await tx.parkingSpot.delete({ where: { id } });
+    return serializeDecimals(deleted);
+  });
+}
+
+export async function assignParkingSpotInDb(spotId: string, unitId: string) {
+  if (!process.env.DATABASE_URL) return null;
+
+  return await prisma.$transaction(async (tx) => {
+    const spot = await tx.parkingSpot.findUnique({ where: { id: spotId } });
+    if (!spot) throw new Error('موقف السيارات المحدد غير موجود.');
+
+    const unit = await tx.unit.findUnique({ where: { id: unitId } });
+    if (!unit) throw new Error('الوحدة المحددة غير موجودة.');
+
+    if (spot.propertyId !== unit.propertyId) {
+      throw new Error('الموقف والوحدة لا ينتميان إلى نفس المبنى.');
+    }
+
+    if (spot.assignedUnitId && spot.assignedUnitId !== unitId) {
+      throw new Error(`موقف السيارات (${spot.spotNumber}) مخصص مسبقاً لوحدة أخرى. يجب فك التعيين أولاً.`);
+    }
+
+    if (unit.assignedParkingId && unit.assignedParkingId !== spotId) {
+      await tx.parkingSpot.update({
+        where: { id: unit.assignedParkingId },
+        data: { assignedUnitId: null, status: 'vacant' }
+      });
+    }
+
+    const updatedSpot = await tx.parkingSpot.update({
+      where: { id: spotId },
+      data: { assignedUnitId: unitId, status: 'assigned' }
+    });
+
+    const updatedUnit = await tx.unit.update({
+      where: { id: unitId },
+      data: { assignedParkingId: spotId }
+    });
+
+    return {
+      spot: serializeDecimals(updatedSpot),
+      unit: serializeDecimals(updatedUnit)
+    };
+  });
+}
+
+export async function unassignParkingSpotInDb(spotId: string) {
+  if (!process.env.DATABASE_URL) return null;
+
+  return await prisma.$transaction(async (tx) => {
+    const spot = await tx.parkingSpot.findUnique({ where: { id: spotId } });
+    if (!spot) throw new Error('موقف السيارات المحدد غير موجود.');
+
+    const currentUnitId = spot.assignedUnitId;
+
+    const updatedSpot = await tx.parkingSpot.update({
+      where: { id: spotId },
+      data: { assignedUnitId: null, status: 'vacant' }
+    });
+
+    if (currentUnitId) {
+      await tx.unit.update({
+        where: { id: currentUnitId },
+        data: { assignedParkingId: null }
+      });
+    }
+
+    await tx.unit.updateMany({
+      where: { assignedParkingId: spotId },
+      data: { assignedParkingId: null }
+    });
+
+    return serializeDecimals(updatedSpot);
+  });
 }
 
 // --- Bookings & Leases Repository ---
