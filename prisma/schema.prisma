@@ -213,7 +213,7 @@ model Unit {
   expenses          OperationalExpense[]
   expenseShares     ExpenseAllocation[]
 
-  @@unique([propertyId, unitNumber])
+  @@index([propertyId, unitNumber])
 }
 
 model Amenity {

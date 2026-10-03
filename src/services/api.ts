@@ -278,3 +278,38 @@ export const financialsService = {
     });
   }
 };
+
+// Parking Spots Service
+export const parkingService = {
+  async getParkingSpots() {
+    return apiFetch('/api/parking-spots');
+  },
+  async createParkingSpot(data: any) {
+    return apiFetch('/api/parking-spots', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  },
+  async updateParkingSpot(id: string, data: any) {
+    return apiFetch(`/api/parking-spots/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data)
+    });
+  },
+  async deleteParkingSpot(id: string) {
+    return apiFetch(`/api/parking-spots/${id}`, {
+      method: 'DELETE'
+    });
+  },
+  async assignParkingSpot(id: string, unitId: string) {
+    return apiFetch(`/api/parking-spots/${id}/assign`, {
+      method: 'POST',
+      body: JSON.stringify({ unitId })
+    });
+  },
+  async unassignParkingSpot(id: string) {
+    return apiFetch(`/api/parking-spots/${id}/unassign`, {
+      method: 'POST'
+    });
+  }
+};

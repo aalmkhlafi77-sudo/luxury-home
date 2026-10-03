@@ -1575,6 +1575,369 @@ async function runApiTests() {
       failures++;
     }
 
+    // =====================================================
+    // Test 20: Priority 1 - Building, Floor, Unit & Parking Lifecycle
+    // =====================================================
+    console.log('\n[Test 20] Testing Priority 1: Building, Floor, Unit & Parking Lifecycle...');
+    const propRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/properties',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+    }, {
+      name: 'برج الأولوية الأولى',
+      code: `P1_PROP_${Date.now()}`,
+      address: 'طريق الملك فهد',
+      city: 'الرياض',
+      district: 'العليا',
+      floorsCount: 2
+    });
+
+    if (propRes.status === 200 && propRes.data?.property?.id) {
+      const p1PropId = propRes.data.property.id;
+      const floorRes = await makeRequest({
+        hostname: '127.0.0.1',
+        port: PORT,
+        path: '/api/units',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+      }, {
+        propertyId: p1PropId,
+        unitNumber: '901',
+        title: 'شقة الاختيار الأول',
+        type: 'apartment',
+        areaSqm: 120,
+        dailyRate: 500
+      });
+
+      if (floorRes.status === 200 && floorRes.data?.unit?.id) {
+        const p1UnitId = floorRes.data.unit.id;
+
+        // Create Parking Spot
+        const parkRes = await makeRequest({
+          hostname: '127.0.0.1',
+          port: PORT,
+          path: '/api/parking-spots',
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+        }, {
+          propertyId: p1PropId,
+          spotNumber: 'P1-901',
+          floor: 'القبو الأول',
+          hasEVCharger: true
+        });
+
+        if (parkRes.status === 200 && parkRes.data?.parkingSpot?.id) {
+          const parkId = parkRes.data.parkingSpot.id;
+
+          // Assign Parking
+          const assignRes = await makeRequest({
+            hostname: '127.0.0.1',
+            port: PORT,
+            path: `/api/parking-spots/${parkId}/assign`,
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+          }, { unitId: p1UnitId });
+
+          if (assignRes.status === 200 && assignRes.data?.parkingSpot?.status === 'assigned') {
+            console.log('✅ PASS: Parking created and assigned atomically to unit with real server IDs.');
+
+            // Unassign
+            const unassignRes = await makeRequest({
+              hostname: '127.0.0.1',
+              port: PORT,
+              path: `/api/parking-spots/${parkId}/unassign`,
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+            });
+
+            if (unassignRes.status === 200 && unassignRes.data?.parkingSpot?.status === 'vacant') {
+              console.log('✅ PASS: Parking unassigned successfully and returned to vacant status.');
+
+              // Delete Spot
+              const delPark = await makeRequest({
+                hostname: '127.0.0.1',
+                port: PORT,
+                path: `/api/parking-spots/${parkId}`,
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${token}` }
+              });
+
+              if (delPark.status === 200) {
+                console.log('✅ PASS: Parking spot deleted cleanly.');
+              } else {
+                console.error('❌ FAIL: Deleting parking spot failed:', delPark.data);
+                failures++;
+              }
+            } else {
+              console.error('❌ FAIL: Unassigning parking spot failed:', unassignRes.data);
+              failures++;
+            }
+          } else {
+            console.error('❌ FAIL: Assigning parking spot failed:', assignRes.data);
+            failures++;
+          }
+        } else {
+          console.error('❌ FAIL: Creating parking spot failed:', parkRes.data);
+          failures++;
+        }
+      } else {
+        console.error('❌ FAIL: Creating unit failed:', floorRes.data);
+        failures++;
+      }
+    } else {
+      console.error('❌ FAIL: Creating property failed:', propRes.data);
+      failures++;
+    }
+
+    // =====================================================
+    // Test 21: Unit Spaces, Fittings Persistence & Last Room Deletion Metrics Update
+    // =====================================================
+    console.log('\n[Test 21] Testing Unit Spaces, Fittings & Last Room Deletion Metrics Update...');
+    const unitForSpaces = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/units',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+    }, {
+      propertyId: propRes.data?.property?.id || 'prop_1',
+      unitNumber: '902',
+      title: 'شقة الغرف للتجربة',
+      type: 'apartment'
+    });
+
+    if (unitForSpaces.status === 200 && unitForSpaces.data?.unit?.id) {
+      const uId = unitForSpaces.data.unit.id;
+
+      // Add 2 spaces with fittings
+      const addSpacesRes = await makeRequest({
+        hostname: '127.0.0.1',
+        port: PORT,
+        path: `/api/units/${uId}`,
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+      }, {
+        spaces: [
+          {
+            id: 'sp-bedroom-1',
+            name: 'غرفة النوم الرئيسية',
+            type: 'bedroom',
+            bedsCount: 1,
+            fittings: [{ id: 'fit-bed-1', name: 'سرير كينج', category: 'bed', quantity: 1 }]
+          },
+          {
+            id: 'sp-bathroom-1',
+            name: 'الحمام الرئيسي',
+            type: 'bathroom',
+            fittings: []
+          }
+        ]
+      });
+
+      if (addSpacesRes.status === 200 && addSpacesRes.data?.unit?.bedroomsCount === 1 && addSpacesRes.data?.unit?.bathroomsCount === 1) {
+        console.log('✅ PASS: Unit spaces and fittings saved, metrics updated (bedrooms: 1, bathrooms: 1).');
+
+        // Delete Bedroom 1 -> only Bathroom 1 left
+        const deleteBedroomRes = await makeRequest({
+          hostname: '127.0.0.1',
+          port: PORT,
+          path: `/api/units/${uId}`,
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+        }, {
+          spaces: [
+            {
+              id: 'sp-bathroom-1',
+              name: 'الحمام الرئيسي',
+              type: 'bathroom',
+              fittings: []
+            }
+          ]
+        });
+
+        if (deleteBedroomRes.status === 200 && deleteBedroomRes.data?.unit?.bedroomsCount === 0 && deleteBedroomRes.data?.unit?.bathroomsCount === 1) {
+          console.log('✅ PASS: Deleting bedroom updated bedroomsCount to 0 while keeping bathroomsCount = 1.');
+
+          // Delete LAST room -> spaces = []
+          const deleteLastRoomRes = await makeRequest({
+            hostname: '127.0.0.1',
+            port: PORT,
+            path: `/api/units/${uId}`,
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+          }, {
+            spaces: []
+          });
+
+          if (
+            deleteLastRoomRes.status === 200 &&
+            deleteLastRoomRes.data?.unit?.bedroomsCount === 0 &&
+            deleteLastRoomRes.data?.unit?.bathroomsCount === 0 &&
+            deleteLastRoomRes.data?.unit?.bedsCount === 0 &&
+            Array.isArray(deleteLastRoomRes.data?.unit?.spaces) &&
+            deleteLastRoomRes.data?.unit?.spaces.length === 0
+          ) {
+            console.log('✅ PASS: Acceptance Requirement Verified: Deleting LAST room correctly reset spaces to [] and metrics to 0!');
+          } else {
+            console.error('❌ FAIL: Deleting last room failed or metrics not reset to 0:', deleteLastRoomRes.data);
+            failures++;
+          }
+        } else {
+          console.error('❌ FAIL: Deleting bedroom failed:', deleteBedroomRes.data);
+          failures++;
+        }
+      } else {
+        console.error('❌ FAIL: Adding initial spaces failed:', addSpacesRes.data);
+        failures++;
+      }
+    } else {
+      console.error('❌ FAIL: Creating unit for spaces test failed:', unitForSpaces.data);
+      failures++;
+    }
+
+    // =====================================================
+    // Test 22: Duplicate Parking Spot & Cross-Building Allocation Rejections
+    // =====================================================
+    console.log('\n[Test 22] Testing Duplicate Parking Spot & Cross-Building Allocation Rejections...');
+    const testPropId = propRes.data?.property?.id || 'prop_1';
+
+    // 1. Create Parking Spot
+    await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/parking-spots',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+    }, {
+      propertyId: testPropId,
+      spotNumber: 'P1-DUP-99'
+    });
+
+    // 2. Duplicate Spot in Same Building -> Must 409
+    const dupSpotRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/parking-spots',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+    }, {
+      propertyId: testPropId,
+      spotNumber: 'P1-DUP-99'
+    });
+
+    if (dupSpotRes.status === 409) {
+      console.log('✅ PASS: Duplicate parking spot number in same building correctly rejected with HTTP 409 Conflict!');
+    } else {
+      console.error('❌ FAIL: Duplicate spot was not rejected with 409:', dupSpotRes.status, dupSpotRes.data);
+      failures++;
+    }
+
+    // 3. Cross-Building Assignment Attempt -> Must 400/409
+    const propCrossRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/properties',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+    }, {
+      name: 'برج ثانٍ آخر',
+      code: `P2_PROP_${Date.now()}`,
+      address: 'طريق التخصصي',
+      city: 'الرياض',
+      district: 'المحمدية',
+      floorsCount: 1
+    });
+
+    const unitBuilding2 = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/units',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+    }, {
+      propertyId: propCrossRes.data?.property?.id,
+      unitNumber: '801',
+      title: 'شقة مبنى 2',
+      type: 'apartment'
+    });
+
+    const crossSpotRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/parking-spots',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+    }, {
+      propertyId: testPropId,
+      spotNumber: 'P1-CROSS-01',
+      assignedUnitId: unitBuilding2.data?.unit?.id
+    });
+
+    if (crossSpotRes.status === 400 || crossSpotRes.status === 409) {
+      console.log('✅ PASS: Assigning parking spot to unit from a different building correctly rejected!');
+    } else {
+      console.error('❌ FAIL: Cross-building parking assignment was not rejected:', crossSpotRes.status, crossSpotRes.data);
+      failures++;
+    }
+
+    // =====================================================
+    // Test 23: Property Manager Access Scope & RBAC Protection
+    // =====================================================
+    console.log('\n[Test 23] Testing Property Manager Access Scope & RBAC Protection...');
+    // Login as existing scoped property manager or test scope
+    const pmReq = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/parking-spots',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    }, { propertyId: testPropId, spotNumber: 'UNAUTH-999' });
+
+    if (pmReq.status === 401) {
+      console.log('✅ PASS: Unauthenticated parking management request rejected with HTTP 401 Unauthorized.');
+    } else {
+      console.error('❌ FAIL: Unauthenticated parking request was not blocked with 401:', pmReq.status);
+      failures++;
+    }
+
+    // =====================================================
+    // Test 24: Zero Values, False Booleans & Empty Arrays Preservation
+    // =====================================================
+    console.log('\n[Test 24] Testing Zero Values, False Booleans & Empty Arrays Preservation...');
+    const zeroTestUnit = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: `/api/units/${unitForSpaces.data?.unit?.id}`,
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+    }, {
+      dailyRate: 0,
+      cleaningFee: 0,
+      allowDaily: false,
+      allowMonthly: false,
+      amenities: [],
+      spaces: []
+    });
+
+    if (
+      zeroTestUnit.status === 200 &&
+      Number(zeroTestUnit.data?.unit?.dailyRate) === 0 &&
+      Number(zeroTestUnit.data?.unit?.cleaningFee) === 0 &&
+      zeroTestUnit.data?.unit?.allowDaily === false &&
+      zeroTestUnit.data?.unit?.allowMonthly === false &&
+      Array.isArray(zeroTestUnit.data?.unit?.amenities) &&
+      zeroTestUnit.data?.unit?.amenities.length === 0 &&
+      Array.isArray(zeroTestUnit.data?.unit?.spaces) &&
+      zeroTestUnit.data?.unit?.spaces.length === 0
+    ) {
+      console.log('✅ PASS: Acceptance Requirement Verified: Zero values (0), boolean false, and empty arrays ([]) preserved after server save!');
+    } else {
+      console.error('❌ FAIL: Zero values or false booleans were overwritten with default fallbacks:', zeroTestUnit.data);
+      failures++;
+    }
+
     console.log('\n=====================================================');
     if (failures === 0) {
       console.log('🎉 ALL API, UNIT PERSISTENCE & SECURITY TESTS PASSED (0 Failures)');

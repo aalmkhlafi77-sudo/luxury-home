@@ -390,7 +390,14 @@ export async function createUnitInDb(data: {
 }
 
 export function computeServerRoomMetrics(spaces: any[] = []) {
-  if (!Array.isArray(spaces) || spaces.length === 0) return null;
+  if (!Array.isArray(spaces)) return null;
+  if (spaces.length === 0) {
+    return {
+      bedroomsCount: 0,
+      bathroomsCount: 0,
+      bedsCount: 0,
+    };
+  }
   let bedroomsCount = 0;
   let bathroomsCount = 0;
   let bedsCount = 0;
@@ -414,9 +421,9 @@ export function computeServerRoomMetrics(spaces: any[] = []) {
   }
 
   return {
-    bedroomsCount: Math.max(bedroomsCount, 1),
-    bathroomsCount: Math.max(bathroomsCount, 1),
-    bedsCount: Math.max(bedsCount, 1),
+    bedroomsCount: Math.max(bedroomsCount, 0),
+    bathroomsCount: Math.max(bathroomsCount, 0),
+    bedsCount: Math.max(bedsCount, 0),
   };
 }
 

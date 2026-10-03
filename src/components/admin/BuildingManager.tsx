@@ -183,15 +183,19 @@ export const BuildingManager: React.FC = () => {
     }
   };
 
-  const handleCreateParkingSubmit = (e: React.FormEvent) => {
+  const [isSubmittingParking, setIsSubmittingParking] = useState(false);
+
+  const handleCreateParkingSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentProperty || !newParkingForm.spotNumber) return;
     setErrorMsg(null);
+    setSuccessMsg(null);
+    setIsSubmittingParking(true);
     try {
-      createParkingSpot({
+      const created = await createParkingSpot({
         propertyId: currentProperty.id,
         ...newParkingForm,
-        status: 'available',
+        status: 'vacant',
       });
       setIsAddingParking(false);
       setNewParkingForm({
@@ -202,10 +206,35 @@ export const BuildingManager: React.FC = () => {
         usageType: 'dedicated_unit',
         instructions: '',
       });
-      setSuccessMsg('تم تسجيل موقف السيارة وإتاحته للتخصيص للوحدات بنجاح.');
+      setSuccessMsg(`تم تسجيل موقف السيارة ${created.spotNumber} وإتاحته للتخصيص للوحدات بنجاح.`);
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (err: any) {
-      setErrorMsg(err.message);
+      setErrorMsg(err.message || 'فشل إضافة موقف السيارات على الخادم.');
+    } finally {
+      setIsSubmittingParking(false);
+    }
+  };
+
+  const handleUnassignParking = async (spotId: string) => {
+    setErrorMsg(null);
+    try {
+      await unassignParking(spotId);
+      setSuccessMsg('تم فك ربط موقف السيارة بنجاح.');
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'فشل فك ربط موقف السيارة.');
+    }
+  };
+
+  const handleDeleteParking = async (ps: ParkingSpot) => {
+    if (!confirm(`هل أنت متأكد من رغبتك في حذف الموقف رقم ${ps.spotNumber} تماماً؟`)) return;
+    setErrorMsg(null);
+    try {
+      await deleteParkingSpot(ps.id);
+      setSuccessMsg('تم حذف موقف السيارات بنجاح.');
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'فشل حذف موقف السيارات.');
     }
   };
 
@@ -805,7 +834,9 @@ export const BuildingManager: React.FC = () => {
                   </div>
                   <div className="flex justify-end gap-2 pt-2 border-t border-[#E3DCCD]/60">
                     <button type="button" onClick={() => setIsAddingParking(false)} className="px-3 py-1.5 border border-[#E3DCCD] rounded-xl cursor-pointer">إلغاء</button>
-                    <button type="submit" className="px-4 py-1.5 bg-[#282824] text-white rounded-xl font-bold cursor-pointer">حفظ الموقف</button>
+                    <button type="submit" disabled={isSubmittingParking} className="px-4 py-1.5 bg-[#282824] text-white rounded-xl font-bold cursor-pointer disabled:opacity-50">
+                      {isSubmittingParking ? 'جاري الحفظ...' : 'حفظ الموقف'}
+                    </button>
                   </div>
                 </form>
               )}
@@ -857,18 +888,14 @@ export const BuildingManager: React.FC = () => {
                             <div className="flex items-center justify-end gap-2">
                               {ps.assignedUnitId && (
                                 <button
-                                  onClick={() => unassignParking(ps.id)}
+                                  onClick={() => handleUnassignParking(ps.id)}
                                   className="text-xs text-amber-700 hover:underline font-bold cursor-pointer"
                                 >
                                   فك الارتباط
                                 </button>
                               )}
                               <button
-                                onClick={() => {
-                                  if (confirm(`هل أنت متأكد من رغبتك في حذف الموقف رقم ${ps.spotNumber} تماماً؟`)) {
-                                    deleteParkingSpot(ps.id);
-                                  }
-                                }}
+                                onClick={() => handleDeleteParking(ps)}
                                 className="text-rose-600 hover:bg-rose-50 p-1.5 rounded transition-colors cursor-pointer"
                               >
                                 <Trash2 className="w-4 h-4" />

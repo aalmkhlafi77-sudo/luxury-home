@@ -95,6 +95,13 @@ export interface AppState {
 
 // Helper to compute room metrics dynamically from spaces & fittings
 export function calculateUnitRoomMetrics(spaces: UnitSpace[] = []) {
+  if (!Array.isArray(spaces) || spaces.length === 0) {
+    return {
+      bedroomsCount: 0,
+      bathroomsCount: 0,
+      bedsCount: 0,
+    };
+  }
   let bedroomsCount = 0;
   let bathroomsCount = 0;
   let bedsCount = 0;
@@ -118,9 +125,9 @@ export function calculateUnitRoomMetrics(spaces: UnitSpace[] = []) {
   }
 
   return {
-    bedroomsCount: Math.max(bedroomsCount, 1),
-    bathroomsCount: Math.max(bathroomsCount, 1),
-    bedsCount: Math.max(bedsCount, 1),
+    bedroomsCount: Math.max(bedroomsCount, 0),
+    bathroomsCount: Math.max(bathroomsCount, 0),
+    bedsCount: Math.max(bedsCount, 0),
   };
 }
 
@@ -2547,9 +2554,9 @@ export function useAppStore() {
   /**
    * --- 4. Spaces & Fittings Management ---
    */
-  const addUnitSpace = useCallback((unitId: string, space: Omit<UnitSpace, 'id' | 'fittings'> & { fittings?: SpaceFitting[] }) => {
+  const addUnitSpace = useCallback(async (unitId: string, space: Omit<UnitSpace, 'id' | 'fittings'> & { fittings?: SpaceFitting[] }) => {
     const unit = globalState.units.find(u => u.id === unitId);
-    if (!unit) return;
+    if (!unit) throw new Error('الوحدة المحددة غير موجودة.');
 
     const spaceId = `sp-${Date.now()}`;
     const newSpace: UnitSpace = {
@@ -2558,62 +2565,29 @@ export function useAppStore() {
       fittings: space.fittings || [],
     };
 
-    const newSpaces = [...unit.spaces, newSpace];
-    const metrics = calculateUnitRoomMetrics(newSpaces);
+    const newSpaces = [...(unit.spaces || []), newSpace];
+    await updateUnit(unitId, { spaces: newSpaces });
+  }, [updateUnit]);
 
-    globalState = {
-      ...globalState,
-      units: globalState.units.map(u => u.id === unitId ? {
-        ...u,
-        spaces: newSpaces,
-        ...metrics
-      } : u),
-    };
-
-    notify();
-  }, []);
-
-  const updateUnitSpace = useCallback((unitId: string, spaceId: string, updates: Partial<UnitSpace>) => {
+  const updateUnitSpace = useCallback(async (unitId: string, spaceId: string, updates: Partial<UnitSpace>) => {
     const unit = globalState.units.find(u => u.id === unitId);
-    if (!unit) return;
+    if (!unit) throw new Error('الوحدة المحددة غير موجودة.');
 
-    const newSpaces = unit.spaces.map(sp => sp.id === spaceId ? { ...sp, ...updates } : sp);
-    const metrics = calculateUnitRoomMetrics(newSpaces);
+    const newSpaces = (unit.spaces || []).map(sp => sp.id === spaceId ? { ...sp, ...updates } : sp);
+    await updateUnit(unitId, { spaces: newSpaces });
+  }, [updateUnit]);
 
-    globalState = {
-      ...globalState,
-      units: globalState.units.map(u => u.id === unitId ? {
-        ...u,
-        spaces: newSpaces,
-        ...metrics
-      } : u),
-    };
-
-    notify();
-  }, []);
-
-  const deleteUnitSpace = useCallback((unitId: string, spaceId: string) => {
+  const deleteUnitSpace = useCallback(async (unitId: string, spaceId: string) => {
     const unit = globalState.units.find(u => u.id === unitId);
-    if (!unit) return;
+    if (!unit) throw new Error('الوحدة المحددة غير موجودة.');
 
-    const newSpaces = unit.spaces.filter(sp => sp.id !== spaceId);
-    const metrics = calculateUnitRoomMetrics(newSpaces);
+    const newSpaces = (unit.spaces || []).filter(sp => sp.id !== spaceId);
+    await updateUnit(unitId, { spaces: newSpaces });
+  }, [updateUnit]);
 
-    globalState = {
-      ...globalState,
-      units: globalState.units.map(u => u.id === unitId ? {
-        ...u,
-        spaces: newSpaces,
-        ...metrics
-      } : u),
-    };
-
-    notify();
-  }, []);
-
-  const addSpaceFitting = useCallback((unitId: string, spaceId: string, fitting: Omit<SpaceFitting, 'id'>) => {
+  const addSpaceFitting = useCallback(async (unitId: string, spaceId: string, fitting: Omit<SpaceFitting, 'id'>) => {
     const unit = globalState.units.find(u => u.id === unitId);
-    if (!unit) return;
+    if (!unit) throw new Error('الوحدة المحددة غير موجودة.');
 
     const fittingId = `fit-${Date.now()}`;
     const newFitting: SpaceFitting = {
@@ -2621,91 +2595,57 @@ export function useAppStore() {
       id: fittingId,
     };
 
-    const newSpaces = unit.spaces.map(sp => {
+    const newSpaces = (unit.spaces || []).map(sp => {
       if (sp.id === spaceId) {
         return {
           ...sp,
-          fittings: [...sp.fittings, newFitting],
+          fittings: [...(sp.fittings || []), newFitting],
         };
       }
       return sp;
     });
 
-    const metrics = calculateUnitRoomMetrics(newSpaces);
+    await updateUnit(unitId, { spaces: newSpaces });
+  }, [updateUnit]);
 
-    globalState = {
-      ...globalState,
-      units: globalState.units.map(u => u.id === unitId ? {
-        ...u,
-        spaces: newSpaces,
-        ...metrics
-      } : u),
-    };
-
-    notify();
-  }, []);
-
-  const updateSpaceFitting = useCallback((unitId: string, spaceId: string, fittingId: string, updates: Partial<SpaceFitting>) => {
+  const updateSpaceFitting = useCallback(async (unitId: string, spaceId: string, fittingId: string, updates: Partial<SpaceFitting>) => {
     const unit = globalState.units.find(u => u.id === unitId);
-    if (!unit) return;
+    if (!unit) throw new Error('الوحدة المحددة غير موجودة.');
 
-    const newSpaces = unit.spaces.map(sp => {
+    const newSpaces = (unit.spaces || []).map(sp => {
       if (sp.id === spaceId) {
         return {
           ...sp,
-          fittings: sp.fittings.map(fit => fit.id === fittingId ? { ...fit, ...updates } : fit),
+          fittings: (sp.fittings || []).map(fit => fit.id === fittingId ? { ...fit, ...updates } : fit),
         };
       }
       return sp;
     });
 
-    const metrics = calculateUnitRoomMetrics(newSpaces);
+    await updateUnit(unitId, { spaces: newSpaces });
+  }, [updateUnit]);
 
-    globalState = {
-      ...globalState,
-      units: globalState.units.map(u => u.id === unitId ? {
-        ...u,
-        spaces: newSpaces,
-        ...metrics
-      } : u),
-    };
-
-    notify();
-  }, []);
-
-  const deleteSpaceFitting = useCallback((unitId: string, spaceId: string, fittingId: string) => {
+  const deleteSpaceFitting = useCallback(async (unitId: string, spaceId: string, fittingId: string) => {
     const unit = globalState.units.find(u => u.id === unitId);
-    if (!unit) return;
+    if (!unit) throw new Error('الوحدة المحددة غير موجودة.');
 
-    const newSpaces = unit.spaces.map(sp => {
+    const newSpaces = (unit.spaces || []).map(sp => {
       if (sp.id === spaceId) {
         return {
           ...sp,
-          fittings: sp.fittings.filter(fit => fit.id !== fittingId),
+          fittings: (sp.fittings || []).filter(fit => fit.id !== fittingId),
         };
       }
       return sp;
     });
 
-    const metrics = calculateUnitRoomMetrics(newSpaces);
-
-    globalState = {
-      ...globalState,
-      units: globalState.units.map(u => u.id === unitId ? {
-        ...u,
-        spaces: newSpaces,
-        ...metrics
-      } : u),
-    };
-
-    notify();
-  }, []);
+    await updateUnit(unitId, { spaces: newSpaces });
+  }, [updateUnit]);
 
   /**
    * --- 5. Parking Spots Management ---
    */
-  const createParkingSpot = useCallback((payload: Omit<ParkingSpot, 'id' | 'createdAt'>) => {
-    // Unique spot number check within the property
+  const createParkingSpot = useCallback(async (payload: Omit<ParkingSpot, 'id' | 'createdAt'>) => {
     const duplicate = globalState.parkingSpots.some(
       p => p.propertyId === payload.propertyId && p.spotNumber.trim() === payload.spotNumber.trim()
     );
@@ -2713,157 +2653,113 @@ export function useAppStore() {
       throw new Error(`موقف سيارات بالرقم "${payload.spotNumber}" مسجل ومعتمد مسبقاً في هذا البرج!`);
     }
 
-    const spotId = `prk-${Date.now()}`;
+    const res = await apiCall('/api/parking-spots', 'POST', payload);
+    if (!res || !res.success || !res.parkingSpot) {
+      throw new Error(res?.message || 'فشل حفظ موقف السيارات على الخادم.');
+    }
+
     const newSpot: ParkingSpot = {
-      ...payload,
-      id: spotId,
-      createdAt: new Date().toISOString(),
+      ...res.parkingSpot,
+      status: res.parkingSpot.status || (res.parkingSpot.assignedUnitId ? 'assigned' : 'vacant'),
     };
 
-    // If dedicated to a unit on creation
     let updatedUnits = globalState.units;
-    if (payload.assignedUnitId) {
-      // Check if unit already has parking
-      const unit = globalState.units.find(u => u.id === payload.assignedUnitId);
-      if (unit?.assignedParkingId) {
-        // Free the previous spot
-        globalState.parkingSpots = globalState.parkingSpots.map(p =>
-          p.id === unit.assignedParkingId ? { ...p, status: 'available' as const, assignedUnitId: undefined } : p
-        );
-      }
+    if (newSpot.assignedUnitId) {
       updatedUnits = globalState.units.map(u =>
-        u.id === payload.assignedUnitId ? { ...u, assignedParkingId: spotId } : u
+        u.id === newSpot.assignedUnitId ? { ...u, assignedParkingId: newSpot.id } : u
       );
     }
 
     globalState = {
       ...globalState,
-      parkingSpots: [...globalState.parkingSpots, newSpot],
+      parkingSpots: [...globalState.parkingSpots.filter(p => p.id !== newSpot.id), newSpot],
       units: updatedUnits,
-      auditLogs: [
-        {
-          id: `log-${Date.now()}`,
-          action: 'تخصيص موقف سيارات إضافي',
-          entity: 'ParkingSpot',
-          entityId: spotId,
-          performedBy: 'أحمد المفلح',
-          role: 'Admin',
-          details: `موقف جديد برقم ${newSpot.spotNumber} في (${newSpot.location}) متاح للحجز أو تعيينه لشقة فندقية.`,
-          timestamp: new Date().toISOString(),
-        },
-        ...globalState.auditLogs
-      ]
     };
 
+    saveState(globalState);
     notify();
     return newSpot;
   }, []);
 
-  const updateParkingSpot = useCallback((spotId: string, updates: Partial<ParkingSpot>) => {
-    const existing = globalState.parkingSpots.find(p => p.id === spotId);
-    if (!existing) return;
-
-    if (updates.spotNumber && updates.spotNumber.trim() !== existing.spotNumber.trim()) {
-      const duplicate = globalState.parkingSpots.some(
-        p => p.id !== spotId && p.propertyId === existing.propertyId && p.spotNumber.trim() === updates.spotNumber?.trim()
-      );
-      if (duplicate) {
-        throw new Error(`موقف سيارات بالرقم "${updates.spotNumber}" مسجل بالفعل!`);
-      }
+  const updateParkingSpot = useCallback(async (spotId: string, updates: Partial<ParkingSpot>) => {
+    const res = await apiCall(`/api/parking-spots/${spotId}`, 'PUT', updates);
+    if (!res || !res.success) {
+      throw new Error(res?.message || 'فشل تحديث بيانات موقف السيارات على الخادم.');
     }
 
+    const updatedSpot = res.parkingSpot;
     globalState = {
       ...globalState,
-      parkingSpots: globalState.parkingSpots.map(p => p.id === spotId ? { ...p, ...updates } : p),
+      parkingSpots: globalState.parkingSpots.map(p => p.id === spotId ? { ...p, ...updatedSpot } : p),
     };
 
+    saveState(globalState);
     notify();
+    return updatedSpot;
   }, []);
 
-  const assignParkingToUnit = useCallback((spotId: string, unitId: string) => {
-    const spot = globalState.parkingSpots.find(p => p.id === spotId);
-    const unit = globalState.units.find(u => u.id === unitId);
-
-    if (!spot || !unit) throw new Error('الموقف أو الشقة غير متوفرة');
-
-    // Strict constraint: Prevent assigning parking spot exclusively to two units simultaneously!
-    if (spot.assignedUnitId && spot.assignedUnitId !== unitId) {
-      const currentUnit = globalState.units.find(u => u.id === spot.assignedUnitId);
-      throw new Error(`موقف السيارات ${spot.spotNumber} مخصص حصرياً حالياً للشقة رقم (${currentUnit?.unitNumber || spot.assignedUnitId})! يجب فك التعيين أولاً.`);
+  const assignParkingToUnit = useCallback(async (spotId: string, unitId: string) => {
+    const res = await apiCall(`/api/parking-spots/${spotId}/assign`, 'POST', { unitId });
+    if (!res || !res.success) {
+      throw new Error(res?.message || 'فشل تخصيص موقف السيارة على الخادم.');
     }
 
-    // If unit already has a different parking, free the previous parking spot
-    let updatedSpots = globalState.parkingSpots;
-    if (unit.assignedParkingId && unit.assignedParkingId !== spotId) {
-      updatedSpots = updatedSpots.map(p =>
-        p.id === unit.assignedParkingId ? { ...p, status: 'available' as const, assignedUnitId: undefined } : p
-      );
-    }
+    const updatedSpot = res.parkingSpot;
+    const updatedUnit = res.unit;
 
-    // Now assign
-    updatedSpots = updatedSpots.map(p =>
-      p.id === spotId ? { ...p, status: 'assigned' as const, usageType: 'dedicated_unit' as const, assignedUnitId: unitId } : p
-    );
+    let updatedSpots = globalState.parkingSpots.map(p => {
+      if (p.id === spotId) return { ...p, ...updatedSpot, status: 'assigned' as const, assignedUnitId: unitId };
+      if (p.assignedUnitId === unitId && p.id !== spotId) return { ...p, status: 'vacant' as const, assignedUnitId: undefined };
+      return p;
+    });
+
+    let updatedUnits = globalState.units.map(u => {
+      if (u.id === unitId) return { ...u, assignedParkingId: spotId };
+      if (updatedUnit && u.id === updatedUnit.id) return { ...u, ...updatedUnit };
+      return u;
+    });
 
     globalState = {
       ...globalState,
       parkingSpots: updatedSpots,
-      units: globalState.units.map(u => u.id === unitId ? { ...u, assignedParkingId: spotId } : u),
-      auditLogs: [
-        {
-          id: `log-${Date.now()}`,
-          action: 'تخصيص موقف سيارة لشقة',
-          entity: 'ParkingSpot',
-          entityId: spotId,
-          performedBy: 'أحمد المفلح',
-          role: 'Admin',
-          details: `تمت تسوية تخصيص الموقف الخاص برقم ${spot.spotNumber} حصرياً لصالح الشقة رقم #${unit.unitNumber}`,
-          timestamp: new Date().toISOString(),
-        },
-        ...globalState.auditLogs
-      ]
+      units: updatedUnits,
     };
 
+    saveState(globalState);
     notify();
   }, []);
 
-  const unassignParking = useCallback((spotId: string) => {
-    const spot = globalState.parkingSpots.find(p => p.id === spotId);
-    if (!spot) return;
+  const unassignParking = useCallback(async (spotId: string) => {
+    const res = await apiCall(`/api/parking-spots/${spotId}/unassign`, 'POST');
+    if (!res || !res.success) {
+      throw new Error(res?.message || 'فشل فك تعيين موقف السيارة على الخادم.');
+    }
 
-    const unitId = spot.assignedUnitId;
+    const spot = globalState.parkingSpots.find(p => p.id === spotId);
+    const unitId = spot?.assignedUnitId;
 
     globalState = {
       ...globalState,
       parkingSpots: globalState.parkingSpots.map(p =>
-        p.id === spotId ? { ...p, status: 'available' as const, assignedUnitId: undefined } : p
+        p.id === spotId ? { ...p, status: 'vacant' as const, assignedUnitId: undefined } : p
       ),
-      units: unitId ? globalState.units.map(u =>
-        u.id === unitId ? { ...u, assignedParkingId: undefined } : u
-      ) : globalState.units,
-      auditLogs: [
-        {
-          id: `log-${Date.now()}`,
-          action: 'إلغاء تعيين موقف سيارة',
-          entity: 'ParkingSpot',
-          entityId: spotId,
-          performedBy: 'أحمد المفلح',
-          role: 'Admin',
-          details: `تم فك ربط الموقف المخصص رقم ${spot.spotNumber} وإرجاعه شاغراً متاحاً للكل.`,
-          timestamp: new Date().toISOString(),
-        },
-        ...globalState.auditLogs
-      ]
+      units: globalState.units.map(u =>
+        u.assignedParkingId === spotId || (unitId && u.id === unitId) ? { ...u, assignedParkingId: undefined } : u
+      ),
     };
 
+    saveState(globalState);
     notify();
   }, []);
 
-  const deleteParkingSpot = useCallback((spotId: string) => {
-    const spot = globalState.parkingSpots.find(p => p.id === spotId);
-    if (!spot) return;
+  const deleteParkingSpot = useCallback(async (spotId: string) => {
+    const res = await apiCall(`/api/parking-spots/${spotId}`, 'DELETE');
+    if (!res || !res.success) {
+      throw new Error(res?.message || 'فشل حذف موقف السيارات من الخادم.');
+    }
 
-    const unitId = spot.assignedUnitId;
+    const spot = globalState.parkingSpots.find(p => p.id === spotId);
+    const unitId = spot?.assignedUnitId;
 
     globalState = {
       ...globalState,
@@ -2873,6 +2769,7 @@ export function useAppStore() {
       ) : globalState.units,
     };
 
+    saveState(globalState);
     notify();
   }, []);
 

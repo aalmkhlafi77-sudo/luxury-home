@@ -128,39 +128,76 @@ export const UnitEditorModal: React.FC<UnitEditorModalProps> = ({
     }
   };
 
-  const handleCreateSpace = (e: React.FormEvent) => {
+  const handleCreateSpace = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newSpaceForm.name) return;
-    addUnitSpace(unit.id, {
-      ...newSpaceForm,
-      fittings: [],
-    });
-    setIsAddingSpace(false);
-    setNewSpaceForm({ name: '', type: 'bedroom', areaSqm: 20, description: '' });
+    setErrorMsg(null);
+    try {
+      await addUnitSpace(unit.id, {
+        ...newSpaceForm,
+        fittings: [],
+      });
+      setIsAddingSpace(false);
+      setNewSpaceForm({ name: '', type: 'bedroom', areaSqm: 20, description: '' });
+      setSuccessMsg('تمت إضافة الفراغ والغرفة بنجاح وتحديث بيانات الوحدة.');
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'فشل إضافة الفراغ.');
+    }
   };
 
-  const handleCreateFitting = (e: React.FormEvent) => {
+  const handleDeleteSpace = async (spaceId: string, spaceName: string) => {
+    if (!confirm(`هل أنت متأكد من رغبتك في حذف الفراغ "${spaceName}" بكافة محتوياته وأثاثه؟`)) return;
+    setErrorMsg(null);
+    try {
+      await deleteUnitSpace(unit.id, spaceId);
+      setSuccessMsg('تم حذف الفراغ بنجاح وتحديث بيانات الوحدة.');
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'فشل حذف الفراغ.');
+    }
+  };
+
+  const handleCreateFitting = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentSpace || !newFittingForm.name) return;
-    addSpaceFitting(unit.id, currentSpace.id, newFittingForm);
-    setIsAddingFitting(false);
-    setNewFittingForm({ name: '', category: 'furniture', quantity: 1, specifications: '' });
+    setErrorMsg(null);
+    try {
+      await addSpaceFitting(unit.id, currentSpace.id, newFittingForm);
+      setIsAddingFitting(false);
+      setNewFittingForm({ name: '', category: 'furniture', quantity: 1, specifications: '' });
+      setSuccessMsg('تمت إضافة قطعة الأثاث والجرد بنجاح.');
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'فشل إضافة قطعة الجرد.');
+    }
   };
 
-  const handleAssignParking = (parkingSpotId: string) => {
+  const handleDeleteFitting = async (spaceId: string, fittingId: string) => {
+    setErrorMsg(null);
+    try {
+      await deleteSpaceFitting(unit.id, spaceId, fittingId);
+      setSuccessMsg('تم حذف قطعة الجرد بنجاح.');
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'فشل حذف قطعة الجرد.');
+    }
+  };
+
+  const handleAssignParking = async (parkingSpotId: string) => {
     setErrorMsg(null);
     try {
       if (parkingSpotId === 'none') {
         if (unit.assignedParkingId) {
-          unassignParking(unit.assignedParkingId);
+          await unassignParking(unit.assignedParkingId);
         }
       } else {
-        assignParkingToUnit(parkingSpotId, unit.id);
+        await assignParkingToUnit(parkingSpotId, unit.id);
       }
       setSuccessMsg('تم تسوية تخصيص موقف السيارة بنجاح.');
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (err: any) {
-      setErrorMsg(err.message);
+      setErrorMsg(err.message || 'فشل تخصيص موقف السيارة.');
     }
   };
 
@@ -529,9 +566,7 @@ export const UnitEditorModal: React.FC<UnitEditorModalProps> = ({
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          if (confirm(`هل أنت متأكد من رغبتك في حذف الفراغ "${sp.name}" بكافة محتوياته وأثاثه؟`)) {
-                            deleteUnitSpace(unit.id, sp.id);
-                          }
+                          handleDeleteSpace(sp.id, sp.name);
                         }}
                         className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
                         title="حذف الفراغ"
@@ -631,7 +666,7 @@ export const UnitEditorModal: React.FC<UnitEditorModalProps> = ({
                                   الكمية: {fit.quantity}
                                 </span>
                                 <button
-                                  onClick={() => deleteSpaceFitting(unit.id, currentSpace.id, fit.id)}
+                                  onClick={() => handleDeleteFitting(currentSpace.id, fit.id)}
                                   className="text-rose-600 hover:bg-rose-50 p-1.5 rounded transition-colors cursor-pointer"
                                 >
                                   <Trash2 className="w-4 h-4" />

@@ -92,7 +92,7 @@ export interface UnitSpace {
 
 export type ParkingLocation = 'basement' | 'ground' | 'outdoor' | 'custom';
 export type ParkingType = 'covered' | 'open' | 'accessible' | 'ev_charging';
-export type ParkingStatus = 'available' | 'assigned' | 'maintenance';
+export type ParkingStatus = 'available' | 'assigned' | 'maintenance' | 'vacant';
 export type ParkingUsage = 'shared_building' | 'dedicated_unit';
 
 export interface ParkingSpot {
