@@ -394,9 +394,8 @@ async function runPhase4Integration() {
     });
 
     // ----------------------------------------------------
-    // Step 5: Documented Rent Collection & Isolated Deposit Collection
+    // Step 5: Deposit Available Balance Calculation (Unit / Math Test)
     // ----------------------------------------------------
-    // Collect Deposit of 5,000 for Annual Lease (Verified reference, isolated from rent revenues)
     const depositAvailBefore = availableDeposit({
       collectedAmount: '5000.00',
       refundedAmount: '0.00',
@@ -407,19 +406,17 @@ async function runPhase4Integration() {
     const step5Success = depositAvailBefore.eq(5000);
     resultsTable.push({
       step: 5,
-      title: 'تسجيل تحصيل إيجار وتحصيل تأمين فعليين منفصلين',
-      inputs: 'Deposit Collection: 5,000 SAR (Ref: DEP-REC-8841)',
-      expected: 'عزل التأمين بالكامل عن الإيراد التشغيلي وحساب الرصيد المتاح 5000 ر.س',
-      actual: `Available Balance: ${depositAvailBefore.toFixed(2)} SAR (Zero revenue added)`,
-      environment: 'Server Financial Ledger',
+      title: 'حساب رصيد التأمين المتاح (اختبار دالة حسابية)',
+      inputs: 'Collected: 5000, Refunded: 0, Deducted: 0, RentApplied: 0',
+      expected: 'الرصيد المتاح = 5000.00 ر.س بدقة Decimal',
+      actual: `Available Balance: ${depositAvailBefore.toFixed(2)} SAR`,
+      environment: 'Financial Math Engine (Decimal)',
       status: step5Success ? 'ناجح' : 'فاشل',
     });
 
     // ----------------------------------------------------
-    // Step 6: Company OPEX, Building OPEX, Unit OPEX & Cost Allocation
+    // Step 6: Cost Allocation Mathematical Distribution Engine
     // ----------------------------------------------------
-    // Distribute 10,000 SAR monthly building rent between Unit A1 (70m²) and Unit A2 (140m²)
-    // Total area = 210m². A1 (1/3) = 3333.33 SAR, A2 (2/3) = 6666.67 SAR. Total = 10,000.00 SAR (0 halala diff)
     const costAllocResult = computeCostAllocation({
       title: 'إيجار المبنى الشهري المشترك',
       amount: 10000,
@@ -440,18 +437,17 @@ async function runPhase4Integration() {
 
     resultsTable.push({
       step: 6,
-      title: 'إضافة وتوزيع مصاريف الشركة والمبنى والوحدة',
+      title: 'توزيع المصروفات حسب المساحة (اختبار دالة حسابية)',
       inputs: 'Building Rent: 10,000 SAR across Unit A1 (70m²) & Unit A2 (140m²)',
-      expected: 'توزيع التكلفة حسب المساحة بدقة الهللة دون كسر أو تكرار (مجموع 10000.00 ر.س)',
+      expected: 'توزيع التكلفة بدقة الهللة دون كسر ومجموع 10000.00 ر.س',
       actual: `Distributed: ${costAllocResult.distributedAmount} SAR, Shares: [${costAllocResult.shares.map(s => s.shareAmount).join(', ')}]`,
-      environment: 'Server Financial Engine',
+      environment: 'Financial Math Engine (Decimal)',
       status: step6Success ? 'ناجح' : 'فاشل',
     });
 
     // ----------------------------------------------------
-    // Step 7: Deposit Rent Settlement, Damage Deduction, & Partial Refund
+    // Step 7: Deposit Settlement and Deductions Math Calculation
     // ----------------------------------------------------
-    // Initial 5000 -> Settle 2000 towards rent -> Deduct 500 damage -> Refund 1000 cash -> Available: 1500
     const availAfterSettlement = availableDeposit({
       collectedAmount: '5000.00',
       refundedAmount: '1000.00',
@@ -462,16 +458,16 @@ async function runPhase4Integration() {
     const step7Success = availAfterSettlement.eq(1500);
     resultsTable.push({
       step: 7,
-      title: 'تسوية تأمين مقابل قسط، وخصم تلفيات، واسترداد جزئي',
+      title: 'حساب تسوية التأمين والخصم والاسترداد (اختبار دالة حسابية)',
       inputs: 'Collected: 5000 | Rent Settlement: 2000 | Damage: 500 | Refund: 1000',
-      expected: 'الرصيد المتاح المتبقي للتأمين يساوي 1500.00 ر.س دون إنشاء نقد وهمي',
+      expected: 'الرصيد المتاح المتبقي للتأمين يساوي 1500.00 ر.س بدقة Decimal',
       actual: `Available Deposit Balance: ${availAfterSettlement.toFixed(2)} SAR`,
-      environment: 'Deposit Engine (Prisma Decimal)',
+      environment: 'Financial Math Engine (Decimal)',
       status: step7Success ? 'ناجح' : 'فاشل',
     });
 
     // ----------------------------------------------------
-    // Step 8: Tenant Ledger Reconciliation, Dues, and Reports
+    // Step 8: Distribution Calculation Endpoint (Math API)
     // ----------------------------------------------------
     const distCalcReq = await makeRequest({
       hostname: '127.0.0.1',
@@ -495,11 +491,11 @@ async function runPhase4Integration() {
 
     resultsTable.push({
       step: 8,
-      title: 'مطابقة كشف المستأجر ورصيد التأمين وتقارير التكاليف',
-      inputs: 'Unified Ledger, Cash Flow Accrual Check, Discrepancy Verification',
-      expected: 'فارق الهلالات = 0 ر.س وتطابق كلي بين التكاليف التشغيلية والتوزيعات',
-      actual: `Discrepancy: ${distCalcReq.data?.summary?.discrepancyHalalas} SAR, Total OPEX: ${distCalcReq.data?.summary?.companyTotalOPEX} SAR`,
-      environment: 'Reporting & Ledger Suite',
+      title: 'فحص موازنة توزيع التكاليف وفارق الهلالات (مسار API حسابي)',
+      inputs: 'OPEX Distribution Calculation Request',
+      expected: 'فارق الهلالات = 0 ر.س وتطابق المجموع الموزع',
+      actual: `Discrepancy: ${distCalcReq.data?.summary?.discrepancyHalalas} SAR, Total: ${distCalcReq.data?.summary?.companyTotalOPEX} SAR`,
+      environment: 'Server API (Calculation Route)',
       status: step8Success ? 'ناجح' : 'فاشل',
     });
 
@@ -571,7 +567,7 @@ async function runPhase4Integration() {
     });
 
     // ----------------------------------------------------
-    // Step 10: Server Restart & Session Persistence
+    // Step 10: Server Health Endpoint Probe (Health Check)
     // ----------------------------------------------------
     const healthRes = await makeRequest({
       hostname: '127.0.0.1',
@@ -583,16 +579,16 @@ async function runPhase4Integration() {
     const step10Success = healthRes.status === 200 && healthRes.data?.status === 'healthy';
     resultsTable.push({
       step: 10,
-      title: 'إعادة تشغيل الخادم والتحقق من استمرارية الجلسة',
+      title: 'فحص استجابة الخادم (/api/health)',
       inputs: 'Server Health & State Introspection',
-      expected: 'استجابة الخادم بحالة healthy واستمرارية المعرفات الحقيقية',
+      expected: 'استجابة الخادم بحالة healthy وإرجاع بيانات التشغيل',
       actual: `Status: ${healthRes.data?.status}, Version: ${healthRes.data?.version}`,
-      environment: 'Server Process Lifecycle',
+      environment: 'Server HTTP Probe',
       status: step10Success ? 'ناجح' : 'فاشل',
     });
 
     // ----------------------------------------------------
-    // Step 11: Comprehensive Backup Export & Strict Restore Package
+    // Step 11: Export & Incomplete Package Restore Rejection
     // ----------------------------------------------------
     const exportReq = await makeRequest({
       hostname: '127.0.0.1',
@@ -632,25 +628,25 @@ async function runPhase4Integration() {
 
     resultsTable.push({
       step: 11,
-      title: 'تصدير نسخة شاملة والتحقق من سلامة حزم الاستعادة',
-      inputs: 'Export JSON Package, Attempt Restore with Incomplete Package',
+      title: 'تصدير نسخة واختبار رفض استعادة الحزم الناقصة',
+      inputs: 'Export Package & Attempt Corrupted Restore Missing Financials',
       expected: 'تصدير ناجح ورفض استعادة الحزمة الناقصة برمز 400 لحماية البيانات',
       actual: `Export: ${backupFile}, Corrupted Restore: HTTP ${corruptedRestoreReq.status}`,
-      environment: 'Backup & Recovery Subsystem',
+      environment: 'Backup Validation Layer',
       status: step11Success ? 'ناجح' : 'فاشل',
     });
 
     // ----------------------------------------------------
-    // Step 12: PostgreSQL Database Engine Execution Status
+    // Step 12: PostgreSQL Real Database Transactions Execution Status
     // ----------------------------------------------------
     const hasPostgres = Boolean(process.env.TEST_DATABASE_URL || process.env.DATABASE_URL);
     if (!hasPostgres) {
       resultsTable.push({
         step: 12,
-        title: 'تنفيذ دورة التكامل على PostgreSQL اختبارية منفصلة',
-        inputs: 'DATABASE_URL / TEST_DATABASE_URL Environment Variable',
-        expected: 'الاتصال بقاعدة PostgreSQL معزولة وتنفيذ الترحيلات والقيود',
-        actual: 'لم يتم الاتصال لعدم توفر خادم PostgreSQL في بيئة المعاينة (الالتزام بعدم الادعاء الزائف)',
+        title: 'تسجيل التحصيل والتسوية والاسترداد في PostgreSQL معزولة',
+        inputs: 'TEST_DATABASE_URL / DATABASE_URL',
+        expected: 'الاتصال بقاعدة PostgreSQL معزولة وتنفيذ المعاملات والأقفال السطرية',
+        actual: 'لم يتم التنفيذ لعدم توفر خادم PostgreSQL في بيئة المعاينة',
         environment: 'Isolated PostgreSQL Engine',
         status: 'غير منفذ',
       });
@@ -663,10 +659,10 @@ async function runPhase4Integration() {
       await prisma.$disconnect();
       resultsTable.push({
         step: 12,
-        title: 'تنفيذ دورة التكامل على PostgreSQL اختبارية منفصلة',
+        title: 'تسجيل التحصيل والتسوية والاسترداد في PostgreSQL معزولة',
         inputs: 'DATABASE_URL connected',
-        expected: 'الاتصال بقاعدة PostgreSQL معزولة وتنفيذ العمليات',
-        actual: 'تم الاتصال والتنفيذ بنجاح على قاعدة البيانات',
+        expected: 'الاتصال بقاعدة PostgreSQL معزولة وتنفيذ المعاملات',
+        actual: 'تم الاتصال والتنفيذ بنجاح على قاعدة البيانات المعزولة',
         environment: 'Isolated PostgreSQL Engine',
         status: 'ناجح',
       });
