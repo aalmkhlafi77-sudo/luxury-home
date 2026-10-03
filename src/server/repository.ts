@@ -1382,12 +1382,54 @@ export function validateBackupPackageIntegrity(backupData: any): { isValid: bool
   }
 
   // 2. Validate Relational Consistency Across Entities Before Any Deletion
-  const propIdSet = new Set<string>((backupData.properties || []).map((p: any) => String(p.id)));
-  const unitIdSet = new Set<string>((backupData.units || []).map((u: any) => String(u.id)));
-  const bookingIdSet = new Set<string>((backupData.bookings || []).map((b: any) => String(b.id)));
-  const leaseIdSet = new Set<string>((backupData.leases || []).map((l: any) => String(l.id)));
-  const depositIdSet = new Set<string>((backupData.securityDeposits || []).map((d: any) => String(d.id)));
+  const propIdSet = new Set<string>();
+  for (const p of backupData.properties || []) {
+    if (propIdSet.has(String(p.id))) errors.push(`معرف مبنى مكرر في الحزمة: ${p.id}`);
+    propIdSet.add(String(p.id));
+  }
+
+  const unitIdSet = new Set<string>();
+  for (const u of backupData.units || []) {
+    if (unitIdSet.has(String(u.id))) errors.push(`معرف وحدة مكرر في الحزمة: ${u.id}`);
+    unitIdSet.add(String(u.id));
+  }
+
+  const bookingIdSet = new Set<string>();
+  for (const b of backupData.bookings || []) {
+    if (bookingIdSet.has(String(b.id))) errors.push(`معرف حجز مكرر في الحزمة: ${b.id}`);
+    bookingIdSet.add(String(b.id));
+  }
+
+  const leaseIdSet = new Set<string>();
+  for (const l of backupData.leases || []) {
+    if (leaseIdSet.has(String(l.id))) errors.push(`معرف عقد مكرر في الحزمة: ${l.id}`);
+    leaseIdSet.add(String(l.id));
+  }
+
+  const depositIdSet = new Set<string>();
+  for (const d of backupData.securityDeposits || []) {
+    if (depositIdSet.has(String(d.id))) errors.push(`معرف تأمين مكرر في الحزمة: ${d.id}`);
+    depositIdSet.add(String(d.id));
+  }
+
+  const installmentIdSet = new Set<string>();
+  for (const inst of backupData.installments || []) {
+    if (installmentIdSet.has(String(inst.id))) errors.push(`معرف قسط مكرر في الحزمة: ${inst.id}`);
+    installmentIdSet.add(String(inst.id));
+  }
+
   const expenseIdSet = new Set<string>((backupData.expenses || []).map((e: any) => String(e.id)));
+
+  type BackupInstallment = { id: string; leaseId: string };
+  type BackupDeposit = { id: string; leaseId: string | null; bookingId: string | null };
+
+  const installmentsById = new Map<string, BackupInstallment>(
+    (backupData.installments || []).map((item: BackupInstallment) => [item.id, item])
+  );
+
+  const depositsById = new Map<string, BackupDeposit>(
+    (backupData.securityDeposits || []).map((item: BackupDeposit) => [item.id, item])
+  );
 
   for (const f of backupData.floors || []) {
     if (f.propertyId && !propIdSet.has(String(f.propertyId))) {
@@ -1480,32 +1522,81 @@ export function validateBackupPackageIntegrity(backupData: any): { isValid: bool
         }
       }
 
-      // Check transaction sums matching rentAppliedAmount
-      const depositSettlementMovements = (backupData.securityDepositTransactions || []).filter(
-        (t: any) => t.depositId === sd.id && t.type === 'rent_application' && t.status === 'completed'
+      // Check transaction sums matching rentAppliedAmount always (even if empty)
+      const settlementMovements = (backupData.securityDepositTransactions || []).filter(
+        (movement: any) =>
+          movement.depositId === sd.id &&
+          movement.type === 'rent_application' &&
+          movement.status === 'completed'
       );
-      if (depositSettlementMovements.length > 0) {
-        const sumSettlements = depositSettlementMovements.reduce(
-          (sum: Decimal, t: any) => sum.plus(new Decimal(t.amount || 0)),
-          new Decimal(0)
-        );
-        if (!sumSettlements.eq(rentApplied)) {
-          errors.push(`التأمين ${sd.id}: مجموع حركات تسوية التأمين (${sumSettlements.toFixed(2)}) لا يطابق rentAppliedAmount (${rentApplied.toFixed(2)}).`);
+
+      let settlementTotal = new Decimal(0);
+      let settlementAmountsValid = true;
+
+      for (const movement of settlementMovements) {
+        const value = movement.amount;
+        if (
+          !['string', 'number'].includes(typeof value) ||
+          !/^\d{1,10}(?:\.\d{1,2})?$/.test(String(value))
+        ) {
+          errors.push(`حركة التسوية ${movement.id}: مبلغ غير صالح.`);
+          settlementAmountsValid = false;
+          continue;
         }
+        const amount = new Decimal(String(value));
+        if (amount.lte(0)) {
+          errors.push(`حركة التسوية ${movement.id}: المبلغ يجب أن يكون موجباً.`);
+          settlementAmountsValid = false;
+          continue;
+        }
+        settlementTotal = settlementTotal.plus(amount);
+      }
+
+      if (settlementAmountsValid && !settlementTotal.eq(rentApplied)) {
+        errors.push(
+          `التأمين ${sd.id}: مجموع التسويات ${settlementTotal.toFixed(2)} لا يطابق الرصيد المستخدم للإيجار ${rentApplied.toFixed(2)}.`
+        );
       }
     }
   }
 
-  for (const sdt of backupData.securityDepositTransactions || []) {
-    if (sdt.depositId && !depositIdSet.has(String(sdt.depositId))) {
-      errors.push(`علاقة غير متطابقة: حركة التأمين ${sdt.id} تشير إلى سجل تأمين غير موجود (${sdt.depositId}).`);
+  for (const movement of backupData.securityDepositTransactions || []) {
+    if (movement.depositId && !depositIdSet.has(String(movement.depositId))) {
+      errors.push(`علاقة غير متطابقة: حركة التأمين ${movement.id} تشير إلى سجل تأمين غير موجود (${movement.depositId}).`);
     }
-    if (sdt.targetLeaseId && !leaseIdSet.has(String(sdt.targetLeaseId))) {
-      errors.push(`علاقة غير متطابقة: حركة التأمين ${sdt.id} تشير إلى عقد مستهدف غير موجود (${sdt.targetLeaseId}).`);
+
+    if (movement.targetInstallmentId) {
+      const installment = installmentsById.get(movement.targetInstallmentId);
+      if (!installment) {
+        errors.push(`الحركة ${movement.id}: القسط المستهدف غير موجود (${movement.targetInstallmentId}).`);
+      } else if (installment.leaseId !== movement.targetLeaseId) {
+        errors.push(`الحركة ${movement.id}: القسط لا يتبع العقد المستهدف (${movement.targetLeaseId}).`);
+      }
     }
+
+    if (movement.type === 'rent_application') {
+      const deposit = depositsById.get(movement.depositId);
+      if (
+        !movement.targetLeaseId ||
+        !movement.targetInstallmentId ||
+        !deposit?.leaseId ||
+        deposit.bookingId ||
+        deposit.leaseId !== movement.targetLeaseId
+      ) {
+        errors.push(`الحركة ${movement.id}: ارتباطات تسوية التأمين غير متسقة.`);
+      }
+    }
+
+    if (
+      typeof movement.reference !== 'string' ||
+      !movement.reference.trim()
+    ) {
+      errors.push(`الحركة ${movement.id}: مرجع الإثبات مفقود.`);
+    }
+
     for (const field of ['targetLeaseId', 'targetInstallmentId']) {
-      if (!Object.prototype.hasOwnProperty.call(sdt, field)) {
-        errors.push(`حركة التأمين ${sdt.id}: الحقل ${field} مفقود.`);
+      if (!Object.prototype.hasOwnProperty.call(movement, field)) {
+        errors.push(`حركة التأمين ${movement.id}: الحقل ${field} مفقود.`);
       }
     }
   }
@@ -1516,6 +1607,15 @@ export function validateBackupPackageIntegrity(backupData: any): { isValid: bool
     }
     if (pay.leaseId && !leaseIdSet.has(String(pay.leaseId))) {
       errors.push(`علاقة غير متطابقة: الدفعة ${pay.id} تشير إلى عقد غير موجود (${pay.leaseId}).`);
+    }
+
+    if (pay.installmentId) {
+      const installment = installmentsById.get(pay.installmentId);
+      if (!installment) {
+        errors.push(`السداد ${pay.id}: القسط المرتبط غير موجود (${pay.installmentId}).`);
+      } else if (installment.leaseId !== pay.leaseId) {
+        errors.push(`السداد ${pay.id}: القسط لا يتبع عقد السداد (${pay.leaseId}).`);
+      }
     }
 
     for (const field of ['installmentId', 'sourceType', 'affectsCash']) {
@@ -1926,7 +2026,7 @@ export async function restoreFullDatabaseInDb(backupData: any) {
             type: sdt.type || 'refund',
             amount: new Decimal(sdt.amount ?? 0),
             method: sdt.method || 'bank_transfer',
-            reference: sdt.reference || `REF-${Date.now()}`,
+            reference: sdt.reference,
             reason: sdt.reason ?? null,
             targetLeaseId: sdt.targetLeaseId ?? null,
             targetInstallmentId: sdt.targetInstallmentId ?? null,

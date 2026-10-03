@@ -9,6 +9,82 @@ interface Props {
   onSuccess?: () => void;
 }
 
+interface SettlementPayload {
+  leaseId: string;
+  installmentId: string;
+  amount: number;
+  reason?: string;
+  approvalReference: string;
+  authorizedBy: string;
+}
+
+type PendingOperation<T> = {
+  version: 1;
+  userId: string;
+  depositId: string;
+  key: string;
+  payload: T;
+};
+
+function requireUserId(userId: unknown): string {
+  if (typeof userId !== 'string' || !userId.trim()) {
+    throw new Error('تعذر التحقق من المستخدم الحالي. سجّل الدخول مجدداً.');
+  }
+  return userId.trim();
+}
+
+function pendingStorageKey(userId: string): string {
+  return `luxury:deposit-settlement:pending:v1:${userId}`;
+}
+
+function savePending<T>(
+  currentUserId: string,
+  operation: PendingOperation<T>,
+) {
+  const userId = requireUserId(currentUserId);
+  if (operation.userId !== userId) {
+    throw new Error('لا يمكن حفظ طلب يخص مستخدماً آخر.');
+  }
+  localStorage.setItem(
+    pendingStorageKey(userId),
+    JSON.stringify(operation),
+  );
+}
+
+function loadPending<T>(currentUserId: string): PendingOperation<T> | null {
+  try {
+    const userId = requireUserId(currentUserId);
+    const saved = localStorage.getItem(pendingStorageKey(userId));
+    if (!saved) return null;
+    const parsed = JSON.parse(saved);
+    if (parsed.version === 1 && parsed.userId === userId) {
+      return parsed;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function removePending(currentUserId: string) {
+  try {
+    const userId = requireUserId(currentUserId);
+    localStorage.removeItem(pendingStorageKey(userId));
+  } catch {
+    // Ignore error on invalid user
+  }
+}
+
+function assertPendingOwner<T>(
+  currentUserId: unknown,
+  operation: PendingOperation<T>,
+) {
+  const userId = requireUserId(currentUserId);
+  if (operation.userId !== userId) {
+    throw new Error('هذه العملية تخص جلسة مستخدم آخر. لم يُرسل أي طلب.');
+  }
+}
+
 export const DepositSettlementModal: React.FC<Props> = ({
   initialDepositId,
   initialLeaseId,
@@ -26,44 +102,22 @@ export const DepositSettlementModal: React.FC<Props> = ({
     }
   };
 
-  const [pendingSettleOp, setPendingSettleOp] = useState<{
-    depositId: string;
-    key: string;
-    userId?: string;
-    payload: {
-      leaseId: string;
-      installmentId: string;
-      amount: number;
-      reason?: string;
-      approvalReference: string;
-      authorizedBy: string;
-    };
-  } | null>(() => {
-    try {
-      const saved = localStorage.getItem('luxury_pending_settle_op');
-      if (!saved) return null;
-      const parsed = JSON.parse(saved);
-      // Ensure pending op belongs to current user
-      const currentUser = getCurrentUser();
-      if (parsed.userId && currentUser?.id && parsed.userId !== currentUser.id) {
-        return null;
-      }
-      return parsed;
-    } catch {
-      return null;
-    }
+  const currentAuthUser = getCurrentUser();
+  const currentUserId = currentAuthUser?.id || currentAuthUser?.userId || currentAuthUser?.username || '';
+
+  const [pendingSettleOp, setPendingSettleOp] = useState<PendingOperation<SettlementPayload> | null>(() => {
+    if (!currentUserId) return null;
+    return loadPending<SettlementPayload>(currentUserId);
   });
 
-  const updatePendingSettleOp = (op: typeof pendingSettleOp) => {
+  const updatePendingSettleOp = (op: PendingOperation<SettlementPayload> | null) => {
     setPendingSettleOp(op);
-    if (op) {
-      const currentUser = getCurrentUser();
-      localStorage.setItem('luxury_pending_settle_op', JSON.stringify({
-        ...op,
-        userId: currentUser?.id || currentUser?.username || 'admin'
-      }));
-    } else {
-      localStorage.removeItem('luxury_pending_settle_op');
+    const user = getCurrentUser();
+    const uid = user?.id || user?.userId || user?.username || '';
+    if (op && uid) {
+      savePending(uid, op);
+    } else if (uid) {
+      removePending(uid);
     }
   };
 
@@ -104,6 +158,10 @@ export const DepositSettlementModal: React.FC<Props> = ({
     let isConfirmedRejection = false;
 
     try {
+      const activeUser = getCurrentUser();
+      const activeUid = activeUser?.id || activeUser?.userId || activeUser?.username || '';
+      assertPendingOwner(activeUid, op);
+
       await settleSecurityDepositAgainstRent({
         depositId: op.depositId,
         leaseId: op.payload.leaseId,
@@ -111,7 +169,7 @@ export const DepositSettlementModal: React.FC<Props> = ({
         amount: op.payload.amount,
         reason: op.payload.reason || 'تسوية قسط إيجار',
         approvalReference: op.payload.approvalReference,
-        authorizedBy: getCurrentUser()?.name || getCurrentUser()?.username || 'المسؤول المالي',
+        authorizedBy: activeUser?.name || activeUser?.username || 'المسؤول المالي',
         idempotencyKey: op.key,
       });
 
@@ -177,16 +235,25 @@ export const DepositSettlementModal: React.FC<Props> = ({
       return;
     }
 
-    const op = {
+    const activeUser = getCurrentUser();
+    const activeUid = activeUser?.id || activeUser?.userId || activeUser?.username || '';
+    if (!activeUid) {
+      setErrorMsg('تعذر التحقق من المستخدم الحالي. يرجى تسجيل الدخول مجدداً.');
+      return;
+    }
+
+    const op: PendingOperation<SettlementPayload> = {
+      version: 1,
+      userId: activeUid,
       depositId,
       key: crypto.randomUUID(),
       payload: {
         leaseId: targetLease.id,
         installmentId,
         amount,
-        reason,
+        reason: reason.trim(),
         approvalReference: approvalReference.trim(),
-        authorizedBy: approvalReference.trim(),
+        authorizedBy: activeUser?.name || activeUser?.username || 'المسؤول المالي',
       },
     };
 
