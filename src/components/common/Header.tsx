@@ -47,6 +47,19 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const { state } = useAppStore();
   const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
+  const [isScrolled, setIsScrolled] = useState(false);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      if (window.scrollY > 15) {
+        setIsScrolled(true);
+      } else {
+        setIsScrolled(false);
+      }
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
 
   const navConfig = state.settings.navigation;
   const navLinks = navConfig?.navLinks?.filter(l => l.visible).sort((a, b) => a.order - b.order) || [
@@ -85,7 +98,11 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <>
       <header 
-        className="sticky top-0 z-40 w-full glass-ivory border-b border-[#E3DCCD]/80 transition-all duration-200 bg-[#FFFCF6]/90 backdrop-blur-md"
+        className={`sticky top-0 z-40 w-full transition-all duration-300 border-b border-[#E3DCCD]/80 ${
+          isScrolled 
+            ? 'bg-[#FFFCF6]/95 backdrop-blur-md shadow-sm' 
+            : 'bg-[#FFFCF6]/85 backdrop-blur-xs'
+        }`}
         style={{ height: `${navConfig?.headerHeightPx || 80}px` }}
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-full flex items-center justify-between gap-4">

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { ArrowUp } from 'lucide-react';
 import { useAppStore } from './store/useAppStore';
 import { Header } from './components/common/Header';
 import { Footer } from './components/common/Footer';
@@ -29,6 +30,26 @@ export default function App() {
   // Navigation & Active Section State
   const [activeSection, setActiveSection] = useState<string>('hero');
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState<boolean>(false);
+  const [showScrollTop, setShowScrollTop] = useState(false);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      if (window.scrollY > 300) {
+        setShowScrollTop(true);
+      } else {
+        setShowScrollTop(false);
+      }
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  const handleScrollToTop = () => {
+    window.scrollTo({
+      top: 0,
+      behavior: 'smooth'
+    });
+  };
 
   // Search Bar State
   const tomorrow = new Date();
@@ -325,6 +346,18 @@ export default function App() {
         onOpenMoreMenu={() => setIsMobileDrawerOpen(true)}
         isVisible={viewMode === 'public'}
       />
+
+      {/* 13. Floating Back to Top Button */}
+      {showScrollTop && viewMode === 'public' && (
+        <button
+          onClick={handleScrollToTop}
+          className="fixed bottom-24 md:bottom-8 left-6 md:left-8 z-30 p-3.5 rounded-full bg-[#282824] hover:bg-[#1a1a18] text-[#B69A68] hover:text-[#FFFCF6] shadow-xl border border-[#E3DCCD]/25 transition-all duration-300 animate-in fade-in zoom-in-75 cursor-pointer focus-visible:ring-2 focus-visible:ring-[#B69A68] outline-none motion-reduce:transition-none"
+          aria-label="العودة إلى أعلى الصفحة"
+          title="العودة إلى أعلى الصفحة"
+        >
+          <ArrowUp className="w-5 h-5" />
+        </button>
+      )}
 
     </div>
   );
