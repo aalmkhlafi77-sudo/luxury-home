@@ -32,7 +32,7 @@ export interface UnitAllocation {
   startDate: string; // ISO string YYYY-MM-DDTHH:mm:ss
   endDate: string;   // ISO string YYYY-MM-DDTHH:mm:ss
   prepBufferHours: number; // ساعات التحضير
-  status: 'active' | 'released' | 'expired';
+  status: 'active' | 'released' | 'expired' | 'cancelled' | 'terminated';
   createdAt: string;
   notes?: string;
 }

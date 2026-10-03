@@ -613,7 +613,11 @@ export async function processLeaseContract(
       }
 
       // 3. احتساب السعر المعتمد بالخادم دون الاعتماد على مدخلات العميل
-      const annualRentRate = Number(unit.annualRate) || 85000;
+      const baseAnnualRent = Number(unit.annualRate) || 85000;
+      const surchargePercent = (rentalType === 'annual' && paymentFrequency === '2_payments' && unit.semiAnnualSurchargePercent)
+        ? Number(unit.semiAnnualSurchargePercent)
+        : 0;
+      const annualRentRate = baseAnnualRent * (1 + surchargePercent / 100);
       const monthlyRentRate = Number(unit.monthlyRate) || 8500;
       const totalRentForPeriod = rentalType === 'annual'
         ? annualRentRate
@@ -769,7 +773,11 @@ export async function processLeaseContract(
   }
 
   // Server Authoritative Rate
-  const annualRentRate = Number(unit.annualRate) || 85000;
+  const baseAnnualRent = Number(unit.annualRate) || 85000;
+  const surchargePercent = (rentalType === 'annual' && paymentFrequency === '2_payments' && unit.semiAnnualSurchargePercent)
+    ? Number(unit.semiAnnualSurchargePercent)
+    : 0;
+  const annualRentRate = baseAnnualRent * (1 + surchargePercent / 100);
   const monthlyRentRate = Number(unit.monthlyRate) || 8500;
   const totalRentForPeriod = rentalType === 'annual'
     ? annualRentRate

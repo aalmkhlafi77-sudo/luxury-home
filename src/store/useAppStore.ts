@@ -547,152 +547,6 @@ export function useAppStore() {
   }, [checkUnitAvailability]);
 
   /**
-   * Create a new daily booking with immediate atomic allocation
-   */
-  const createBooking = useCallback((payload: {
-    unitId: string;
-    guest: {
-      fullName: string;
-      email: string;
-      phone: string;
-      nationalIdOrPassport: string;
-    };
-    checkIn: string;
-    checkOut: string;
-    guestsCount: number;
-    paymentMethod: 'mada' | 'visa_mastercard' | 'apple_pay';
-  }) => {
-    // 1. Verify availability inside transaction
-    const availCheck = checkUnitAvailability(payload.unitId, payload.checkIn, payload.checkOut);
-    if (!availCheck.available) {
-      throw new Error(availCheck.conflictReason || 'الوحدة السكنية لم تعد متاحة لهذه التواريخ.');
-    }
-
-    const unit = globalState.units.find(u => u.id === payload.unitId);
-    if (!unit) throw new Error('الشقة غير متوفرة');
-
-    const checkInDate = new Date(`${payload.checkIn}T15:00:00`);
-    const checkOutDate = new Date(`${payload.checkOut}T12:00:00`);
-    const totalNights = Math.max(1, Math.round((checkOutDate.getTime() - checkInDate.getTime()) / (1000 * 60 * 60 * 24)));
-
-    const nightlyRate = unit.dailyRate;
-    const subtotal = nightlyRate * totalNights;
-    const cleaningFee = unit.cleaningFee;
-    const taxes = Math.round((subtotal + cleaningFee) * (unit.taxPercentage / 100));
-    const securityDeposit = unit.securityDeposit;
-    const totalAmount = subtotal + cleaningFee + taxes + securityDeposit;
-
-    const bookingId = `bk-${Date.now()}`;
-    const allocId = `alloc-${Date.now()}`;
-    const bookingNumber = `IVR-${new Date().getFullYear().toString().slice(-2)}-${Math.floor(1000 + Math.random() * 9000)}`;
-
-    // Generate smart lock pin
-    const pin = `${Math.floor(100000 + Math.random() * 900000)}#`;
-
-    const newAllocation: UnitAllocation = {
-      id: allocId,
-      unitId: unit.id,
-      type: 'booking',
-      referenceId: bookingId,
-      startDate: `${payload.checkIn}T15:00:00`,
-      endDate: `${payload.checkOut}T12:00:00`,
-      prepBufferHours: globalState.settings.defaultPrepBufferHours,
-      status: 'active',
-      createdAt: new Date().toISOString(),
-      notes: `حجز يومي ${bookingNumber} للضيف ${payload.guest.fullName}`
-    };
-
-    const newBooking: Booking = {
-      id: bookingId,
-      bookingNumber,
-      unitId: unit.id,
-      propertyId: unit.propertyId,
-      guest: {
-        ...payload.guest,
-        idVerified: false, // Verification pending official check
-      },
-      checkIn: payload.checkIn,
-      checkOut: payload.checkOut,
-      totalNights,
-      guestsCount: payload.guestsCount,
-      status: 'confirmed',
-      rentalType: 'daily',
-      nightlyRate,
-      subtotal,
-      cleaningFee,
-      taxes,
-      securityDeposit,
-      totalAmount,
-      smartLockPin: undefined, // PIN is securely provided upon check-in verification only
-      smartLockPinValidFrom: `${payload.checkIn}T15:00:00`,
-      smartLockPinValidTo: `${payload.checkOut}T12:00:00`,
-      createdAt: new Date().toISOString(),
-      allocationId: allocId,
-    };
-
-    const newPayment: PaymentRecord = {
-      id: `pay-${Date.now()}`,
-      referenceType: 'booking',
-      referenceId: bookingId,
-      amount: totalAmount - securityDeposit,
-      method: payload.paymentMethod,
-      status: 'pending', // Pending official payment confirmation
-      transactionId: `TX_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`,
-      createdAt: new Date().toISOString(),
-      notes: `حجز فندقي #${bookingNumber} - بانتظار التحصيل والتأكيد`
-    };
-
-    const newDeposit: SecurityDepositRecord = {
-      id: `dep-${Date.now()}`,
-      bookingOrLeaseId: bookingId,
-      unitId: unit.id,
-      guestName: payload.guest.fullName,
-      amount: securityDeposit,
-      heldType: 'authorized_hold',
-      status: 'held',
-      deductions: [],
-      refundAmount: 0,
-      createdAt: new Date().toISOString(),
-    };
-
-    const newLog: AuditLog = {
-      id: `log-${Date.now()}`,
-      action: 'إنشاء حجز فندقي فوري',
-      entity: 'Booking',
-      entityId: bookingId,
-      performedBy: payload.guest.fullName,
-      role: 'Guest Online',
-      details: `تم حجز شقة #${unit.unitNumber} من تاريخ ${payload.checkIn} إلى ${payload.checkOut} بقيمة إجمالية ${totalAmount} ر.س تشمل التأمين والضريبة.`,
-      timestamp: new Date().toISOString(),
-    };
-
-    // If checkIn is today, set unit todayArrival flag
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const isToday = payload.checkIn === todayStr;
-
-    globalState = {
-      ...globalState,
-      allocations: [newAllocation, ...globalState.allocations],
-      bookings: [newBooking, ...globalState.bookings],
-      payments: [newPayment, ...globalState.payments],
-      securityDeposits: [newDeposit, ...globalState.securityDeposits],
-      auditLogs: [newLog, ...globalState.auditLogs],
-      units: globalState.units.map(u => {
-        if (u.id === unit.id) {
-          return {
-            ...u,
-            todayArrival: isToday ? true : u.todayArrival,
-          };
-        }
-        return u;
-      })
-    };
-
-    notify();
-    return newBooking;
-  }, [checkUnitAvailability]);
-
-  /**
    * Add Authoritative Server-Created Booking directly to Store
    */
   const addServerBooking = useCallback((serverBooking: any) => {
@@ -821,19 +675,65 @@ export function useAppStore() {
   }, []);
 
   /**
-   * Comprehensive Contract & Lease Creator (Supports Monthly and Yearly)
-   * Enforces 12-month calendar allocation, exact installments, service responsibilities, and immutable terms snapshot
+   * Create a new daily booking with immediate atomic allocation on server
    */
-  const createContractLease = useCallback((payload: {
+  const createBooking = useCallback(async (payload: {
+    unitId: string;
+    guest: {
+      fullName: string;
+      email: string;
+      phone: string;
+      nationalIdOrPassport: string;
+    };
+    checkIn: string;
+    checkOut: string;
+    guestsCount: number;
+    paymentMethod?: 'mada' | 'visa_mastercard' | 'apple_pay';
+  }) => {
+    const res = await apiCall('/api/bookings/daily', 'POST', {
+      unitId: payload.unitId,
+      checkIn: payload.checkIn,
+      checkOut: payload.checkOut,
+      guestsCount: payload.guestsCount,
+      guestName: payload.guest.fullName,
+      guestPhone: payload.guest.phone,
+      guestEmail: payload.guest.email,
+      guestIdNumber: payload.guest.nationalIdOrPassport
+    });
+
+    if (!res || !res.success || !res.booking) {
+      throw new Error(res?.message || 'فشل تسجيل الحجز الفندقي على الخادم.');
+    }
+
+    const serverBooking = res.booking;
+    const serverAllocation = res.allocation;
+
+    addServerBooking(serverBooking);
+    if (serverAllocation) {
+      globalState = {
+        ...globalState,
+        allocations: [serverAllocation, ...globalState.allocations.filter(a => a.id !== serverAllocation.id)]
+      };
+      saveState(globalState);
+    }
+    notify();
+    return serverBooking;
+  }, [addServerBooking]);
+
+  /**
+   * Comprehensive Contract & Lease Creator (Supports Monthly and Yearly)
+   * Calls authoritative server endpoint with server-side pricing & atomic locks
+   */
+  const createContractLease = useCallback(async (payload: {
     unitId: string;
     tenant: GuestInfo;
     startDate: string;
     endDate?: string;
-    monthsCount: number; // 12 for yearly
+    monthsCount: number;
     rentalType: 'monthly' | 'yearly';
     yearlyPaymentOption?: AnnualPaymentOption;
-    totalContractValue: number;
-    securityDeposit: number;
+    totalContractValue?: number;
+    securityDeposit?: number;
     services?: ContractServiceItem[];
     inclusionType?: ContractInclusionType;
     latePolicy?: string;
@@ -843,161 +743,44 @@ export function useAppStore() {
     meterReadings?: { meterType: string; meterNumber: string; reading: number; photoUrl?: string }[];
     notes?: string;
   }) => {
-    const unit = globalState.units.find(u => u.id === payload.unitId);
-    if (!unit) throw new Error('الشقة غير متوفرة');
+    const paymentFrequency = (payload.rentalType as any === 'annual' || payload.rentalType === 'yearly')
+      ? (payload.yearlyPaymentOption === 'semi_annual' ? '2_payments' : '1_payment')
+      : 'monthly';
 
-    // Compute end date if not provided (calendar months logic)
-    const endDateStr = payload.endDate || calculateLeaseEndDate(payload.startDate, payload.monthsCount);
-
-    // Strict availability check for the ENTIRE duration of the contract!
-    const availCheck = checkUnitAvailability(unit.id, payload.startDate, endDateStr);
-    if (!availCheck.available) {
-      throw new Error(availCheck.conflictReason || 'التواريخ المطلوبة لعقد الإيجار متداخلة مع التزامات أخرى للشقة.');
-    }
-
-    const leaseId = `lease-${Date.now()}`;
-    const allocId = `alloc-${Date.now()}`;
-    const yr = new Date().getFullYear();
-    const contractNumber = `IVR-LSE-${yr}-${payload.rentalType === 'yearly' ? 'YR' : 'MN'}${Math.floor(10 + Math.random() * 90)}`;
-
-    // Allocation covers the full contract duration
-    const newAllocation: UnitAllocation = {
-      id: allocId,
-      unitId: unit.id,
-      type: 'lease',
-      referenceId: leaseId,
-      startDate: `${payload.startDate}T15:00:00`,
-      endDate: `${endDateStr}T12:00:00`,
-      prepBufferHours: 6,
-      status: 'active',
-      createdAt: new Date().toISOString(),
-      notes: `عقد إيجار ${payload.rentalType === 'yearly' ? 'سنوي' : 'شهري'} رقم ${contractNumber}`
-    };
-
-    // Generate exact installments with zero rounding discrepancy
-    const installments = generateInstallmentSchedule({
-      leaseId,
-      rentalType: payload.rentalType,
-      yearlyPaymentOption: payload.yearlyPaymentOption,
+    const res = await apiCall('/api/leases/contract', 'POST', {
+      unitId: payload.unitId,
+      rentalType: (payload.rentalType as any === 'annual' || payload.rentalType === 'yearly') ? 'annual' : 'monthly',
       startDate: payload.startDate,
-      totalContractValue: payload.totalContractValue,
-      monthsCount: payload.monthsCount
+      endDate: payload.endDate,
+      durationMonths: payload.monthsCount,
+      paymentFrequency,
+      tenantName: payload.tenant.fullName,
+      tenantPhone: payload.tenant.phone,
+      tenantEmail: payload.tenant.email,
+      tenantIdNumber: payload.tenant.nationalIdOrPassport || (payload.tenant as any).nationalIdOrIqama || '1000000000',
+      contractServices: payload.services,
+      termsConditions: 'عقد إيجار موحد معتمد لدى منزل الفخامة'
     });
 
-    const services = payload.services || getDefaultContractServices();
-    const inclusionType = payload.inclusionType || determineInclusionType(services);
-
-    // Handover protocol if items or meter readings provided
-    let handoverId: string | undefined = undefined;
-    let newProtocols = globalState.handoverProtocols || [];
-
-    if ((payload.handoverItems && payload.handoverItems.length > 0) || (payload.meterReadings && payload.meterReadings.length > 0)) {
-      handoverId = `proto-del-${Date.now()}`;
-      const newProto: HandoverProtocol = {
-        id: handoverId,
-        leaseId,
-        unitId: unit.id,
-        protocolType: 'delivery',
-        date: payload.startDate,
-        deliveredBy: 'مسؤول التشغيل والمستودع',
-        receivedBy: payload.tenant.fullName,
-        keysHandedCount: 2,
-        accessCardsCount: 2,
-        remotesCount: 1,
-        meterReadings: payload.meterReadings || [],
-        items: payload.handoverItems || [],
-        tenantSignatureConfirmed: true,
-        supervisorSignatureConfirmed: true,
-        createdAt: new Date().toISOString(),
-      };
-      newProtocols = [newProto, ...newProtocols];
+    if (!res || !res.success || !res.lease) {
+      throw new Error(res?.message || 'فشل توثيق واعتماد عقد الإيجار على الخادم.');
     }
 
-    const newLease: Lease = {
-      id: leaseId,
-      contractNumber,
-      unitId: unit.id,
-      propertyId: unit.propertyId,
-      tenant: {
-        ...payload.tenant,
-        idVerified: true,
-      },
-      startDate: payload.startDate,
-      endDate: endDateStr,
-      monthsCount: payload.monthsCount,
-      rentalType: payload.rentalType,
-      yearlyPaymentOption: payload.yearlyPaymentOption,
-      status: 'active',
-      monthlyRent: payload.rentalType === 'yearly' ? Math.round(payload.totalContractValue / 12) : Math.round(payload.totalContractValue / payload.monthsCount),
-      yearlyRent: payload.rentalType === 'yearly' ? payload.totalContractValue : undefined,
-      securityDeposit: payload.securityDeposit,
-      totalContractValue: payload.totalContractValue,
-      installments,
-      allocationId: allocId,
-      inclusionType,
-      services,
-      handoverProtocolId: handoverId,
-      termsSnapshot: {
-        frozenAt: new Date().toISOString(),
-        approvedBy: 'مدير عمليات الحسابات والتعاقدات',
-        latePolicy: payload.latePolicy || 'تطبق رسوم غرامة تأخير بقيمة ١٠٪ في حال فوات ٧ أيام.',
-        renewalPolicy: payload.renewalPolicy || 'الإشعار بالرغبة بالتجديد قبل ٦٠ يوماً على الأقل للسنوي و ٣٠ يوماً للشهري.',
-        earlyTerminationPolicy: payload.earlyTerminationPolicy || 'فسخ العقد المبكر يتطلب شرطاً جزائياً يعادل شهرين من القيمة الحالية.',
-        agreedRent: payload.totalContractValue,
-        agreedDeposit: payload.securityDeposit,
-      },
-      amendments: [],
-      createdAt: new Date().toISOString(),
-    };
+    const serverLease = res.lease;
+    const serverAllocation = res.allocation;
+    const serverInstallments = res.installments || [];
 
-    const newDeposit: SecurityDepositRecord = {
-      id: `dep-${Date.now()}`,
-      bookingOrLeaseId: leaseId,
-      unitId: unit.id,
-      guestName: payload.tenant.fullName,
-      amount: payload.securityDeposit,
-      heldType: 'collected_cash_card',
-      status: 'held',
-      deductions: [],
-      refundAmount: 0,
-      createdAt: new Date().toISOString(),
-    };
-
-    const targetOccupancy: OccupancyStatus = payload.rentalType === 'yearly' ? 'occupied_yearly' : 'monthly_occupied';
-
-    const newLog: AuditLog = {
-      id: `log-${Date.now()}`,
-      action: payload.rentalType === 'yearly' ? 'اعتماد عقد تأجير سنوي جديد' : 'اعتماد عقد تأجير شهري مخصص',
-      entity: 'Lease',
-      entityId: leaseId,
-      performedBy: 'سعد القحطاني',
-      role: 'Operations Admin',
-      details: `تم تفعيل عقد الإيجار للوحدة #${unit.unitNumber} بقيمة تعاقد إجمالية ${payload.totalContractValue} ر.س ممتداً من تاريخ ${payload.startDate} إلى ${endDateStr}`,
-      timestamp: new Date().toISOString(),
-    };
-
-    globalState = {
-      ...globalState,
-      allocations: [newAllocation, ...globalState.allocations],
-      leases: [newLease, ...globalState.leases],
-      securityDeposits: [newDeposit, ...globalState.securityDeposits],
-      handoverProtocols: newProtocols,
-      auditLogs: [newLog, ...globalState.auditLogs],
-      units: globalState.units.map(u => {
-        if (u.id === unit.id) {
-          return {
-            ...u,
-            occupancyStatus: targetOccupancy,
-            currentLeaseId: leaseId,
-          };
-        }
-        return u;
-      })
-    };
-
+    addServerLease(serverLease, serverInstallments);
+    if (serverAllocation) {
+      globalState = {
+        ...globalState,
+        allocations: [serverAllocation, ...globalState.allocations.filter(a => a.id !== serverAllocation.id)]
+      };
+      saveState(globalState);
+    }
     notify();
-    return newLease;
-  }, [checkUnitAvailability]);
+    return serverLease;
+  }, [addServerLease]);
 
   /**
    * Create a monthly lease agreement (legacy helper mapping to createContractLease)
@@ -1127,7 +910,7 @@ export function useAppStore() {
   /**
    * Renew a lease for a new period linked to the previous contract
    */
-  const renewLease = useCallback((params: {
+  const renewLease = useCallback(async (params: {
     leaseId: string;
     newStartDate: string;
     monthsCount: number;
@@ -1148,7 +931,7 @@ export function useAppStore() {
     }
 
     // Create renewed lease via createContractLease
-    const newLease = createContractLease({
+    const newLease = await createContractLease({
       unitId: oldLease.unitId,
       tenant: oldLease.tenant,
       startDate: params.newStartDate,
@@ -1195,113 +978,62 @@ export function useAppStore() {
   }, [checkUnitAvailability, createContractLease]);
 
   /**
-   * Early contract termination with financial settlement and freeing unit allocation
+   * Early contract termination with financial settlement and freeing unit allocation on server
    */
-  const earlyTerminateLease = useCallback((params: {
+  const earlyTerminateLease = useCallback(async (params: {
     leaseId: string;
     effectiveDate: string;
     reason: string;
-    financialSettlementAmount: number;
-    depositRefunded: number;
+    financialSettlementAmount?: number;
+    depositRefunded?: number;
     notes?: string;
     processedBy?: string;
   }) => {
-    const lease = globalState.leases.find(l => l.id === params.leaseId);
-    if (!lease) throw new Error('العقد غير متوفر');
+    const res = await apiCall(`/api/leases/${params.leaseId}/terminate-early`, 'POST', {
+      terminationDate: params.effectiveDate,
+      reason: params.reason
+    });
 
-    // Update allocation end date to early termination date + prep buffer!
-    const updatedAllocations = globalState.allocations.map(a => {
-      if (a.referenceId === lease.id || a.id === lease.allocationId) {
-        return {
-          ...a,
-          endDate: `${params.effectiveDate}T12:00:00`,
-          notes: `تم إنهاء العقد مبكراً وتعديل ليتنتهي في ${params.effectiveDate}`
-        };
+    if (!res || !res.success) {
+      throw new Error(res?.message || 'فشل توثيق أرشفة وإلغاء العقد على الخادم.');
+    }
+
+    const lease = globalState.leases.find(l => l.id === params.leaseId);
+    if (lease) {
+      lease.status = 'terminated';
+    }
+    globalState.allocations = globalState.allocations.map(a => {
+      if (a.referenceId === params.leaseId) {
+        return { ...a, status: 'cancelled' };
       }
       return a;
     });
-
-    const nowIso = new Date().toISOString();
-    const todayStr = nowIso.slice(0, 10);
-    const isPastOrToday = todayStr >= params.effectiveDate;
-
-    // Mark remaining unpaid installments as cancelled/settled
-    const updatedInstallments = lease.installments.map(inst => {
-      if (inst.status !== 'paid') {
-        return {
-          ...inst,
-          notes: `${inst.notes || ''} (تسوية إنهاء العقد مبكراً ومسح المتبقي)`.trim(),
-        };
-      }
-      return inst;
-    });
-
-    const updatedLease: Lease = {
-      ...lease,
-      status: 'terminated',
-      installments: updatedInstallments,
-      earlyTermination: {
-        terminatedAt: nowIso,
-        effectiveDate: params.effectiveDate,
-        reason: params.reason,
-        financialSettlementAmount: params.financialSettlementAmount,
-        depositRefunded: params.depositRefunded,
-        processedBy: params.processedBy || 'المدير المالي',
-        notes: params.notes,
-      }
-    };
-
-    // If deposit refunded
-    let updatedDeposits = globalState.securityDeposits;
-    if (params.depositRefunded > 0) {
-      updatedDeposits = updatedDeposits.map(d => {
-        if (d.bookingOrLeaseId === lease.id) {
-          return {
-            ...d,
-            refundAmount: params.depositRefunded,
-            status: params.depositRefunded >= d.amount ? 'fully_refunded' : 'partially_refunded',
-            refundedAt: nowIso,
-          };
-        }
-        return d;
-      });
-    }
-
-    // Unit occupancy status
-    const updatedUnits = globalState.units.map(u => {
-      if (u.id === lease.unitId && isPastOrToday) {
-        return {
-          ...u,
-          occupancyStatus: 'vacant' as OccupancyStatus,
-          operationalStatus: 'needs_cleaning' as OperationalStatus,
-          currentLeaseId: undefined,
-        };
-      }
-      return u;
-    });
-
-    const newLog: AuditLog = {
-      id: `log-${Date.now()}`,
-      action: 'إنهاء عقد إيجار مبكر وتسوية',
-      entity: 'Lease',
-      entityId: lease.id,
-      performedBy: params.processedBy || 'أحمد المفلح',
-      role: 'Admin',
-      details: `فسخ عقد الإيجار ${lease.contractNumber} اعتباراً من ${params.effectiveDate}. السبب: ${params.reason}. التسوية المالية المطلوبة: ${params.financialSettlementAmount} ر.س.`,
-      timestamp: nowIso,
-    };
-
-    globalState = {
-      ...globalState,
-      allocations: updatedAllocations,
-      leases: globalState.leases.map(l => l.id === lease.id ? updatedLease : l),
-      securityDeposits: updatedDeposits,
-      units: updatedUnits,
-      auditLogs: [newLog, ...globalState.auditLogs],
-    };
-
+    saveState(globalState);
     notify();
-    return updatedLease;
+    return res.lease;
+  }, []);
+
+  /**
+   * Cancel booking on server and update store state authoritatively
+   */
+  const cancelBooking = useCallback(async (bookingId: string) => {
+    const res = await apiCall(`/api/bookings/${bookingId}/cancel`, 'POST', {});
+    if (!res || !res.success) {
+      throw new Error(res?.message || 'فشل إلغاء الحجز الفندقي على الخادم.');
+    }
+    const booking = globalState.bookings.find(b => b.id === bookingId);
+    if (booking) {
+      booking.status = 'cancelled';
+    }
+    globalState.allocations = globalState.allocations.map(a => {
+      if (a.referenceId === bookingId) {
+        return { ...a, status: 'cancelled' };
+      }
+      return a;
+    });
+    saveState(globalState);
+    notify();
+    return res.booking;
   }, []);
 
   /**
@@ -3467,6 +3199,7 @@ export function useAppStore() {
     addServerLease,
     createMonthlyLease,
     createContractLease,
+    cancelBooking,
     recordInstallmentPayment,
     renewLease,
     earlyTerminateLease,
