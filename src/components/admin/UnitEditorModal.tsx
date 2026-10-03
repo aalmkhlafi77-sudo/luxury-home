@@ -12,7 +12,8 @@ import {
   Car,
   Sparkles,
   AlertCircle,
-  CheckCircle2
+  CheckCircle2,
+  Pencil
 } from 'lucide-react';
 
 interface UnitEditorModalProps {
@@ -32,6 +33,7 @@ export const UnitEditorModal: React.FC<UnitEditorModalProps> = ({
     addUnitSpace,
     deleteUnitSpace,
     addSpaceFitting,
+    updateSpaceFitting,
     deleteSpaceFitting,
     assignParkingToUnit,
     unassignParking
@@ -90,7 +92,19 @@ export const UnitEditorModal: React.FC<UnitEditorModalProps> = ({
 
   // New Fitting Form State
   const [isAddingFitting, setIsAddingFitting] = useState(false);
+  const [editingFittingId, setEditingFittingId] = useState<string | null>(null);
   const [newFittingForm, setNewFittingForm] = useState<{
+    name: string;
+    category: SpaceFitting['category'];
+    quantity: number;
+    specifications: string;
+  }>({
+    name: '',
+    category: 'furniture',
+    quantity: 1,
+    specifications: '',
+  });
+  const [editingFittingForm, setEditingFittingForm] = useState<{
     name: string;
     category: SpaceFitting['category'];
     quantity: number;
@@ -170,6 +184,20 @@ export const UnitEditorModal: React.FC<UnitEditorModalProps> = ({
       setTimeout(() => setSuccessMsg(null), 3000);
     } catch (err: any) {
       setErrorMsg(err.message || 'فشل إضافة قطعة الجرد.');
+    }
+  };
+
+  const handleUpdateFittingSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentSpace || !editingFittingId || !editingFittingForm.name) return;
+    setErrorMsg(null);
+    try {
+      await updateSpaceFitting(unit.id, currentSpace.id, editingFittingId, editingFittingForm);
+      setEditingFittingId(null);
+      setSuccessMsg('تم تحديث بيانات قطعة الجرد والأثاث على الخادم بنجاح.');
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'فشل تحديث قطعة الجرد على الخادم.');
     }
   };
 
@@ -654,24 +682,89 @@ export const UnitEditorModal: React.FC<UnitEditorModalProps> = ({
                       ) : (
                         <div className="divide-y divide-[#E3DCCD] text-right">
                           {currentSpace.fittings.map(fit => (
-                            <div key={fit.id} className="py-2.5 flex items-center justify-between text-xs">
-                              <div>
-                                <strong className="text-sm font-semibold text-[#282824]">{fit.name}</strong>
-                                <span className="text-[#68675F] mr-2 block sm:inline">
-                                  (التصنيف: {fit.category}) {fit.specifications ? `· مواصفات: ${fit.specifications}` : ''}
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-3">
-                                <span className="px-2.5 py-1 bg-[#F7F3EB] rounded-md font-bold text-[#282824] tabular-nums">
-                                  الكمية: {fit.quantity}
-                                </span>
-                                <button
-                                  onClick={() => handleDeleteFitting(currentSpace.id, fit.id)}
-                                  className="text-rose-600 hover:bg-rose-50 p-1.5 rounded transition-colors cursor-pointer"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
-                              </div>
+                            <div key={fit.id} className="py-2.5 text-xs">
+                              {editingFittingId === fit.id ? (
+                                <form onSubmit={handleUpdateFittingSubmit} className="p-3 bg-[#F7F3EB] rounded-xl border border-[#B69A68] space-y-2 animate-in fade-in">
+                                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                    <div>
+                                      <label className="block text-[11px] font-semibold text-[#68675F] mb-1">اسم القطعة *</label>
+                                      <input
+                                        type="text"
+                                        required
+                                        value={editingFittingForm.name}
+                                        onChange={(e) => setEditingFittingForm({ ...editingFittingForm, name: e.target.value })}
+                                        className="w-full p-2 bg-white border border-[#E3DCCD] rounded-lg text-right"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="block text-[11px] font-semibold text-[#68675F] mb-1">فئة الأثاث</label>
+                                      <select
+                                        value={editingFittingForm.category}
+                                        onChange={(e) => setEditingFittingForm({ ...editingFittingForm, category: e.target.value as any })}
+                                        className="w-full p-2 bg-white border border-[#E3DCCD] rounded-lg cursor-pointer"
+                                      >
+                                        <option value="bed">سرير مراتب ومفارش</option>
+                                        <option value="furniture">قطع أثاث وديكور</option>
+                                        <option value="appliance">أجهزة منزلية كهربائية</option>
+                                        <option value="electronics">شاشات وأجهزة إلكترونية</option>
+                                        <option value="sanitary">تجهيزات صحية ومراسل</option>
+                                        <option value="linen">بياضات ومناشف فندقية</option>
+                                        <option value="other">أدوات تشغيلية أخرى</option>
+                                      </select>
+                                    </div>
+                                    <div>
+                                      <label className="block text-[11px] font-semibold text-[#68675F] mb-1">الكمية</label>
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        value={editingFittingForm.quantity}
+                                        onChange={(e) => setEditingFittingForm({ ...editingFittingForm, quantity: Number(e.target.value) })}
+                                        className="w-full p-2 bg-white border border-[#E3DCCD] rounded-lg tabular-nums"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="flex justify-end gap-2 pt-1">
+                                    <button type="button" onClick={() => setEditingFittingId(null)} className="px-2.5 py-1 border border-[#E3DCCD] rounded-lg text-xs">إلغاء</button>
+                                    <button type="submit" className="px-3.5 py-1 bg-[#282824] text-white rounded-lg text-xs font-bold shadow-xs">حفظ التعديل</button>
+                                  </div>
+                                </form>
+                              ) : (
+                                <div className="flex items-center justify-between">
+                                  <div>
+                                    <strong className="text-sm font-semibold text-[#282824]">{fit.name}</strong>
+                                    <span className="text-[#68675F] mr-2 block sm:inline">
+                                      (التصنيف: {fit.category}) {fit.specifications ? `· مواصفات: ${fit.specifications}` : ''}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="px-2.5 py-1 bg-[#F7F3EB] rounded-md font-bold text-[#282824] tabular-nums">
+                                      الكمية: {fit.quantity}
+                                    </span>
+                                    <button
+                                      onClick={() => {
+                                        setEditingFittingId(fit.id);
+                                        setEditingFittingForm({
+                                          name: fit.name,
+                                          category: fit.category,
+                                          quantity: fit.quantity,
+                                          specifications: fit.specifications || '',
+                                        });
+                                      }}
+                                      className="text-[#B69A68] hover:bg-[#F7F3EB] p-1.5 rounded transition-colors cursor-pointer"
+                                      title="تعديل القطعة"
+                                    >
+                                      <Pencil className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteFitting(currentSpace.id, fit.id)}
+                                      className="text-rose-600 hover:bg-rose-50 p-1.5 rounded transition-colors cursor-pointer"
+                                      title="حذف القطعة"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>

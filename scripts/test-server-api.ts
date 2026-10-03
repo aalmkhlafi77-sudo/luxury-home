@@ -1739,6 +1739,55 @@ async function runApiTests() {
       if (addSpacesRes.status === 200 && addSpacesRes.data?.unit?.bedroomsCount === 1 && addSpacesRes.data?.unit?.bathroomsCount === 1) {
         console.log('✅ PASS: Unit spaces and fittings saved, metrics updated (bedrooms: 1, bathrooms: 1).');
 
+        // Test updateSpaceFitting: update quantity and name of fit-bed-1
+        const updateFittingRes = await makeRequest({
+          hostname: '127.0.0.1',
+          port: PORT,
+          path: `/api/units/${uId}`,
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+        }, {
+          spaces: [
+            {
+              id: 'sp-bedroom-1',
+              name: 'غرفة النوم الرئيسية',
+              type: 'bedroom',
+              bedsCount: 2,
+              fittings: [{ id: 'fit-bed-1', name: 'سرير كينج فاخر مخصص', category: 'bed', quantity: 2 }]
+            },
+            {
+              id: 'sp-bathroom-1',
+              name: 'الحمام الرئيسي',
+              type: 'bathroom',
+              fittings: []
+            }
+          ]
+        });
+
+        // Re-fetch state to verify persistence after update
+        const stateVerifyRes = await makeRequest({
+          hostname: '127.0.0.1',
+          port: PORT,
+          path: '/api/state',
+          method: 'GET',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        const reFetchedUnit = (stateVerifyRes.data?.state?.units || []).find((u: any) => u.id === uId);
+        const reFetchedFitting = reFetchedUnit?.spaces?.[0]?.fittings?.[0];
+
+        if (
+          updateFittingRes.status === 200 &&
+          reFetchedFitting &&
+          reFetchedFitting.name === 'سرير كينج فاخر مخصص' &&
+          reFetchedFitting.quantity === 2
+        ) {
+          console.log('✅ PASS: updateSpaceFitting verified! Fitting updated on server and persisted authoritatively upon state re-fetch.');
+        } else {
+          console.error('❌ FAIL: updateSpaceFitting failed or updated fitting not persisted upon re-fetch:', updateFittingRes.data, reFetchedFitting);
+          failures++;
+        }
+
         // Delete Bedroom 1 -> only Bathroom 1 left
         const deleteBedroomRes = await makeRequest({
           hostname: '127.0.0.1',
