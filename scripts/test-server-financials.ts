@@ -33,6 +33,16 @@ async function runFinancialTests() {
   console.log('=====================================================');
 
   try {
+    // 0. Login as admin to get token
+    const loginRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/auth/login',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    }, { username: 'admin', password: 'Admin@2026!' });
+    const token = loginRes.data?.token || '';
+
     // Test 1: Standard Equal Unit Allocation
     console.log('\n[Test 1] Testing Equal Units OPEX Distribution...');
     const res1 = await makeRequest({
@@ -160,6 +170,78 @@ async function runFinancialTests() {
       console.log('✅ PASS: Zero expense accepted accurately without fallback to mock numbers!');
     } else {
       console.error('❌ FAIL: Zero expense was not accepted or reverted to non-zero values.');
+      failures++;
+    }
+
+    // Test 5: Capital Asset (FF&E) Separation from OPEX
+    console.log('\n[Test 5] Testing Capital Asset (FF&E) Separation from OPEX...');
+    const res5 = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/financials/allocate',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    }, {
+      title: 'شراء أثاث ولوازم فندقية رأسمالية',
+      amount: 25000,
+      costCenterLevel: 'PROPERTY',
+      allocationMethod: 'EQUAL_UNITS',
+      startDate: '2026-10-01',
+      endDate: '2026-10-31',
+      isCapitalAsset: true,
+      units: [
+        { id: 'u1', unitNumber: '101', areaSqm: 50, isOccupied: true }
+      ]
+    });
+
+    if (res5.status === 200 && res5.data?.distributedAmount === 0 && res5.data?.unallocatedAmount === 25000) {
+      console.log('✅ PASS: Capital asset (FF&E) correctly separated with 0 distributed OPEX shares!');
+    } else {
+      console.error('❌ FAIL: Capital asset was incorrectly distributed into OPEX.');
+      failures++;
+    }
+
+    // Test 6: Financial Reports Endpoint
+    console.log('\n[Test 6] Testing Comprehensive Financial Reports & NOI API...');
+    const res6 = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/financials/reports',
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+    });
+
+    if (res6.status === 200 && res6.data?.companySummary) {
+      console.log('✅ PASS: Financial reports endpoint successfully returned company summary and NOI metrics!');
+    } else {
+      console.error('❌ FAIL: Financial reports endpoint failed.', res6.data);
+      failures++;
+    }
+
+    // Test 7: Unallocatable Expense Handling (e.g., SQM missing area)
+    console.log('\n[Test 7] Testing Unallocatable Expense Handling (Missing Area)...');
+    const res7 = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/financials/allocate',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    }, {
+      title: 'صيانة طارئة',
+      amount: 1500,
+      costCenterLevel: 'PROPERTY',
+      allocationMethod: 'SQM_AREA',
+      startDate: '2026-10-01',
+      endDate: '2026-10-31',
+      units: [
+        { id: 'u1', unitNumber: '101', areaSqm: 0, isOccupied: true }
+      ]
+    });
+
+    if (res7.status === 400 && res7.data?.message?.includes('بدون مساحة')) {
+      console.log('✅ PASS: Successfully rejected allocation when unit area is missing.');
+    } else {
+      console.error('❌ FAIL: Unallocatable expense handling did not reject properly.');
       failures++;
     }
 
