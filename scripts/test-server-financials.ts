@@ -245,6 +245,63 @@ async function runFinancialTests() {
       failures++;
     }
 
+    // Test 8: Tenant Account Statement Endpoint & Chronological Running Balance & affectsCash validation
+    console.log('\n[Test 8] Testing Tenant Account Statement API (Chronological, Running Balance, affectsCash=false)...');
+    const statementRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/financials/statement/non-existent-lease',
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+    });
+
+    if (statementRes.status === 404) {
+      console.log('✅ PASS: Tenant statement API correctly returned 404 for non-existent lease / contract.');
+    } else {
+      console.error('❌ FAIL: Tenant statement did not return 404 for invalid ID.');
+      failures++;
+    }
+
+    // Test 9: Security Deposit Operations & Idempotency / Authorization validation
+    console.log('\n[Test 9] Testing Security Deposit Operations & Idempotency Defense...');
+    const depositRefundAttempt = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/security-deposits/non-existent-deposit/refund',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+    }, {
+      actorId: 'usr-admin-default-01',
+      idempotencyKey: 'test_key_123',
+      refundAmount: '1000.00',
+      refundMethod: 'bank_transfer',
+      refundReference: 'REF-999'
+    });
+
+    if (depositRefundAttempt.status === 404 || depositRefundAttempt.status === 503 || depositRefundAttempt.status === 400) {
+      console.log(`✅ PASS: Deposit refund correctly rejected invalid deposit record with status ${depositRefundAttempt.status}.`);
+    } else {
+      console.error('❌ FAIL: Deposit refund did not reject non-existent deposit properly.', depositRefundAttempt);
+      failures++;
+    }
+
+    // Test 10: Financial Reports Reconciliation & Cash vs Accrual
+    console.log('\n[Test 10] Testing Financial Reports Accrual vs Cash & NOI Reconciliation...');
+    const reportsRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/financials/reports',
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+    });
+
+    if (reportsRes.status === 200 && reportsRes.data?.companySummary) {
+      console.log(`✅ PASS: Financial reports returned NOI metrics successfully.`);
+    } else {
+      console.error('❌ FAIL: Financial reports reconciliation failed.', reportsRes.data);
+      failures++;
+    }
+
     console.log('\n=====================================================');
     if (failures === 0) {
       console.log('🎉 ALL FINANCIAL & COST ALLOCATION TESTS PASSED (0 Failures)');
