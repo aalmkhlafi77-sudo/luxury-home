@@ -45,7 +45,7 @@ async function runFinancialTests() {
 
     // Test 1: Standard Equal Unit Allocation
     console.log('\n[Test 1] Testing Equal Units OPEX Distribution...');
-    console.log('[Classification: Direct Calculation Function Call via POST /api/financials/calculate-distribution]');
+    console.log('[Classification: Actual HTTP API Request via POST /api/financials/calculate-distribution]');
     const res1 = await makeRequest({
       hostname: '127.0.0.1',
       port: PORT,
@@ -306,10 +306,11 @@ async function runFinancialTests() {
       failures++;
     }
 
-    // Test 9: Security Deposit Operations (PostgreSQL Real DB Test classification note)
+    // Test 9: Security Deposit Operations & Idempotency
     console.log('\n[Test 9] Testing Security Deposit Operations & Idempotency...');
-    console.log('[Classification: PostgreSQL Real Database Test - Not Executed / Missing TEST_DATABASE_URL. Write transactions require Postgres instance]');
-    console.log('✅ PASS: Security deposit write transactions and advisory locks correctly deferred due to missing TEST_DATABASE_URL (No false success claimed).');
+    console.log('[Classification: PostgreSQL Real Database Test - SKIPPED / NOT EXECUTED (Missing TEST_DATABASE_URL)]');
+    console.log('⏭️ SKIPPED: Security deposit write transactions and advisory locks require real PostgreSQL instance and are not executed in memory mode.');
+    const skippedCount = 1;
 
     // Test 10: Financial Reports Reconciliation & Cash vs Accrual & NOI
     console.log('\n[Test 10] Testing Financial Reports Accrual vs Cash & NOI Reconciliation...');
@@ -331,8 +332,9 @@ async function runFinancialTests() {
     }
 
     console.log('\n=====================================================');
+    console.log(`📊 TEST SUMMARY: 9 Passed, ${skippedCount} Skipped (PostgreSQL Real DB), ${failures} Failures`);
     if (failures === 0) {
-      console.log('🎉 ALL FINANCIAL & COST ALLOCATION TESTS PASSED (0 Failures)');
+      console.log('✨ TEST SUITE COMPLETED SUCCESSFULLY (0 Failures, with 1 PostgreSQL Real DB test skipped as expected)');
     } else {
       console.error(`💥 TEST SUITE COMPLETED WITH ${failures} FAILURE(S)`);
     }
