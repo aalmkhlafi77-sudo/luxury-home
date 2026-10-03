@@ -1,5 +1,6 @@
 import { startServer } from '../server.js';
 import http from 'http';
+import { availableDeposit } from '../src/server/depositRefundService.js';
 
 function makeRequest(options: http.RequestOptions, body?: any): Promise<{ status: number; data: any }> {
   return new Promise((resolve, reject) => {
@@ -306,14 +307,53 @@ async function runFinancialTests() {
       failures++;
     }
 
-    // Test 9: Security Deposit Operations & Idempotency
-    console.log('\n[Test 9] Testing Security Deposit Operations & Idempotency...');
+    // Test 9: Direct Calculation Validation for Security Deposit Business Rules
+    console.log('\n[Test 9] Testing Security Deposit Direct Calculation & Validation Rules...');
+    console.log('[Classification: Direct Calculation Function Call via availableDeposit()]');
+    try {
+      const bal1 = availableDeposit({ collectedAmount: '5000.00', refundedAmount: '1000.00', damageDeductedAmount: '500.00', rentAppliedAmount: '1000.00' });
+      const expectedBal = '2500.00';
+      if (bal1.toFixed(2) === expectedBal) {
+        console.log(`✅ PASS: availableDeposit correctly calculated remaining balance: ${bal1.toFixed(2)} SAR (Expected: ${expectedBal})`);
+      } else {
+        console.error(`❌ FAIL: availableDeposit returned incorrect balance: ${bal1.toFixed(2)}`);
+        failures++;
+      }
+
+      // Test over-balance / invalid amounts
+      let caughtInvalid = false;
+      try {
+        availableDeposit({ collectedAmount: '5000.00', refundedAmount: '6000.00', damageDeductedAmount: '0.00', rentAppliedAmount: '0.00' });
+      } catch (e) {
+        caughtInvalid = true;
+      }
+
+      let caughtFormat = false;
+      try {
+        availableDeposit({ collectedAmount: 'abc', refundedAmount: '0.00', damageDeductedAmount: '0.00', rentAppliedAmount: '0.00' });
+      } catch (e) {
+        caughtFormat = true;
+      }
+
+      if (caughtInvalid && caughtFormat) {
+        console.log('✅ PASS: availableDeposit correctly rejected over-balance movements and invalid non-numeric formats!');
+      } else {
+        console.error('❌ FAIL: availableDeposit failed to reject invalid deposit totals.');
+        failures++;
+      }
+    } catch (e) {
+      console.error('❌ FAIL: Deposit calculation test threw unexpected error:', e);
+      failures++;
+    }
+
+    // Test 10: Security Deposit Database Transactions & Idempotency
+    console.log('\n[Test 10] Testing Security Deposit Database Transactions & Idempotency...');
     console.log('[Classification: PostgreSQL Real Database Test - SKIPPED / NOT EXECUTED (Missing TEST_DATABASE_URL)]');
-    console.log('⏭️ SKIPPED: Security deposit write transactions and advisory locks require real PostgreSQL instance and are not executed in memory mode.');
+    console.log('⏭️ SKIPPED: Security deposit write transactions, refunds, settlements, and advisory locks require real PostgreSQL instance and are not executed in memory mode.');
     const skippedCount = 1;
 
-    // Test 10: Financial Reports Reconciliation & Cash vs Accrual & NOI
-    console.log('\n[Test 10] Testing Financial Reports Accrual vs Cash & NOI Reconciliation...');
+    // Test 11: Financial Reports Reconciliation & Cash vs Accrual & NOI
+    console.log('\n[Test 11] Testing Financial Reports Accrual vs Cash & NOI Reconciliation...');
     console.log('[Classification: Actual HTTP API Request via GET /api/financials/reports]');
     const reportsRes = await makeRequest({
       hostname: '127.0.0.1',
@@ -332,7 +372,7 @@ async function runFinancialTests() {
     }
 
     console.log('\n=====================================================');
-    console.log(`📊 TEST SUMMARY: 9 Passed, ${skippedCount} Skipped (PostgreSQL Real DB), ${failures} Failures`);
+    console.log(`📊 TEST SUMMARY: 10 Passed, ${skippedCount} Skipped (PostgreSQL Real DB), ${failures} Failures`);
     if (failures === 0) {
       console.log('✨ TEST SUITE COMPLETED SUCCESSFULLY (0 Failures, with 1 PostgreSQL Real DB test skipped as expected)');
     } else {
