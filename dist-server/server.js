@@ -8918,6 +8918,132 @@ async function startServer(customPort) {
     try {
       const { id } = req.params;
       const user = req.user;
+      const buildStatementObj = (lease2) => {
+        const totalRent = Number(lease2.annualRent || 0);
+        const payments = Array.isArray(lease2.payments) ? lease2.payments : [];
+        const installments = Array.isArray(lease2.installments) ? lease2.installments : [];
+        const securityDeposits = Array.isArray(lease2.securityDeposits) ? lease2.securityDeposits : [];
+        const totalPaid = payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+        const totalDeposit = securityDeposits.reduce((sum, d) => sum + Number(d.collectedAmount || d.amount || 0), 0);
+        const timeline = [];
+        for (const inst of installments) {
+          timeline.push({
+            date: inst.dueDate ? new Date(inst.dueDate).toISOString() : (/* @__PURE__ */ new Date()).toISOString(),
+            type: "CHARGE_INSTALLMENT",
+            reference: `\u0642\u0633\u0637 \u0631\u0642\u0645 ${inst.number}`,
+            amount: Number(inst.amount || 0),
+            debit: Number(inst.amount || 0),
+            credit: 0,
+            category: "RENT_CHARGE",
+            affectsCash: false,
+            targetInstallmentId: inst.id
+          });
+        }
+        for (const dep of securityDeposits) {
+          if (dep.collectionVerifiedAt || dep.collectionReference) {
+            timeline.push({
+              date: dep.collectionVerifiedAt ? new Date(dep.collectionVerifiedAt).toISOString() : (/* @__PURE__ */ new Date()).toISOString(),
+              type: "DEPOSIT_COLLECTION",
+              reference: `\u062A\u062D\u0635\u064A\u0644 \u062A\u0623\u0645\u064A\u0646: ${dep.collectionReference || dep.id}`,
+              amount: Number(dep.collectedAmount || dep.amount || 0),
+              debit: Number(dep.collectedAmount || dep.amount || 0),
+              credit: 0,
+              category: "SECURITY_DEPOSIT_LIABILITY",
+              affectsCash: true,
+              depositId: dep.id
+            });
+          }
+          const txs = Array.isArray(dep.transactions) ? dep.transactions : [];
+          for (const tx of txs) {
+            if (tx.type === "refund") {
+              timeline.push({
+                date: tx.executedAt ? new Date(tx.executedAt).toISOString() : (/* @__PURE__ */ new Date()).toISOString(),
+                type: "DEPOSIT_REFUND",
+                reference: `\u0627\u0633\u062A\u0631\u062F\u0627\u062F \u062A\u0623\u0645\u064A\u0646 (${tx.method}): ${tx.reference}`,
+                amount: Number(tx.amount || 0),
+                debit: 0,
+                credit: Number(tx.amount || 0),
+                category: "SECURITY_DEPOSIT_LIABILITY",
+                affectsCash: true
+              });
+            } else if (tx.type === "deduction") {
+              timeline.push({
+                date: tx.executedAt ? new Date(tx.executedAt).toISOString() : (/* @__PURE__ */ new Date()).toISOString(),
+                type: "DEPOSIT_DEDUCTION",
+                reference: `\u062E\u0635\u0645 \u062A\u0644\u0641\u064A\u0627\u062A \u0645\u0646 \u0627\u0644\u062A\u0623\u0645\u064A\u0646: ${tx.reason || tx.reference}`,
+                amount: Number(tx.amount || 0),
+                debit: 0,
+                credit: Number(tx.amount || 0),
+                category: "SECURITY_DEPOSIT_DEDUCTION",
+                affectsCash: false
+              });
+            } else if (tx.type === "rent_application") {
+              timeline.push({
+                date: tx.executedAt ? new Date(tx.executedAt).toISOString() : (/* @__PURE__ */ new Date()).toISOString(),
+                type: "DEPOSIT_SETTLEMENT_TO_RENT",
+                reference: `\u062A\u0633\u0648\u064A\u0629 \u062A\u0623\u0645\u064A\u0646 \u0645\u0642\u0627\u0628\u0644 \u0642\u0633\u0637 \u0625\u064A\u062C\u0627\u0631: ${tx.reference}`,
+                amount: Number(tx.amount || 0),
+                debit: 0,
+                credit: Number(tx.amount || 0),
+                category: "NON_CASH_SETTLEMENT",
+                affectsCash: false,
+                targetInstallmentId: tx.targetInstallmentId
+              });
+            }
+          }
+        }
+        let totalCashFlow = 0;
+        let totalNonCashSettlements = 0;
+        for (const pay of payments) {
+          const isCash = pay.affectsCash !== false && pay.paymentMethod !== "security_deposit";
+          if (isCash) {
+            totalCashFlow += Number(pay.amount || 0);
+          } else {
+            totalNonCashSettlements += Number(pay.amount || 0);
+          }
+          timeline.push({
+            date: pay.paidAt ? new Date(pay.paidAt).toISOString() : (/* @__PURE__ */ new Date()).toISOString(),
+            type: "PAYMENT_RECEIVED",
+            reference: `\u0633\u062F\u0627\u062F \u0625\u064A\u062C\u0627\u0631 (${pay.paymentMethod}): ${pay.receiptNo || pay.referenceNo || "\u062F\u0641\u0639\u0629"}`,
+            amount: Number(pay.amount || 0),
+            debit: 0,
+            credit: Number(pay.amount || 0),
+            category: isCash ? "OPERATING_REVENUE_CASH" : "NON_CASH_SETTLEMENT",
+            affectsCash: isCash,
+            targetInstallmentId: pay.installmentId
+          });
+        }
+        timeline.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        let runningBalance = 0;
+        const chronologicalStatement = timeline.map((item) => {
+          runningBalance = Math.round((runningBalance + item.debit - item.credit) * 100) / 100;
+          return { ...item, runningBalance };
+        });
+        return {
+          contractNumber: lease2.contractNumber,
+          tenantName: lease2.tenantName,
+          tenantPhone: lease2.tenantPhone,
+          tenantEmail: lease2.tenantEmail,
+          unitNumber: lease2.unit?.unitNumber || lease2.unitNumber,
+          propertyName: lease2.unit?.property?.name || lease2.propertyName,
+          startDate: lease2.startDate,
+          endDate: lease2.endDate,
+          rentalType: lease2.rentalType,
+          financialSummary: {
+            totalRent,
+            totalCashFlow,
+            totalNonCashSettlements,
+            totalPaid,
+            remainingBalance: Math.max(0, totalRent - totalPaid),
+            securityDepositHeld: totalDeposit,
+            depositStatus: securityDeposits[0]?.status || "held"
+          },
+          chronologicalStatement,
+          installments: serializeDecimals(installments),
+          payments: serializeDecimals(payments),
+          securityDeposits: serializeDecimals(securityDeposits)
+        };
+      };
       if (process.env.DATABASE_URL) {
         const lease2 = await prisma.lease.findFirst({
           where: { OR: [{ id }, { contractNumber: id }, { unitId: id }] },
@@ -8945,138 +9071,13 @@ async function startServer(customPort) {
             message: "\u063A\u064A\u0631 \u0645\u0635\u0631\u062D \u0644\u0643 \u0628\u0639\u0631\u0636 \u0643\u0634\u0641 \u0627\u0644\u062D\u0633\u0627\u0628 \u0627\u0644\u0645\u0627\u0644\u064A \u0644\u0647\u0630\u0627 \u0627\u0644\u0639\u0642\u062F."
           });
         }
-        const totalRent = Number(lease2.annualRent);
-        const totalPaid = lease2.payments.reduce((sum, p) => sum + Number(p.amount), 0);
-        const totalDeposit = lease2.securityDeposits.reduce((sum, d) => sum + Number(d.collectedAmount || d.amount), 0);
-        const timeline = [];
-        for (const inst of lease2.installments) {
-          timeline.push({
-            date: inst.dueDate.toISOString(),
-            type: "CHARGE_INSTALLMENT",
-            reference: `\u0642\u0633\u0637 \u0631\u0642\u0645 ${inst.number}`,
-            amount: Number(inst.amount),
-            debit: Number(inst.amount),
-            credit: 0,
-            category: "RENT_CHARGE",
-            affectsCash: false,
-            targetInstallmentId: inst.id
-          });
-        }
-        for (const dep of lease2.securityDeposits) {
-          if (dep.collectionVerifiedAt) {
-            timeline.push({
-              date: dep.collectionVerifiedAt.toISOString(),
-              type: "DEPOSIT_COLLECTION",
-              reference: `\u062A\u062D\u0635\u064A\u0644 \u062A\u0623\u0645\u064A\u0646: ${dep.collectionReference || dep.id}`,
-              amount: Number(dep.collectedAmount || dep.amount),
-              debit: Number(dep.collectedAmount || dep.amount),
-              credit: 0,
-              category: "SECURITY_DEPOSIT_LIABILITY",
-              affectsCash: true,
-              depositId: dep.id
-            });
-          }
-          for (const tx of dep.transactions) {
-            if (tx.type === "refund") {
-              timeline.push({
-                date: tx.executedAt.toISOString(),
-                type: "DEPOSIT_REFUND",
-                reference: `\u0627\u0633\u062A\u0631\u062F\u0627\u062F \u062A\u0623\u0645\u064A\u0646 (${tx.method}): ${tx.reference}`,
-                amount: Number(tx.amount),
-                debit: 0,
-                credit: Number(tx.amount),
-                category: "SECURITY_DEPOSIT_LIABILITY",
-                affectsCash: true
-              });
-            } else if (tx.type === "deduction") {
-              timeline.push({
-                date: tx.executedAt.toISOString(),
-                type: "DEPOSIT_DEDUCTION",
-                reference: `\u062E\u0635\u0645 \u062A\u0644\u0641\u064A\u0627\u062A \u0645\u0646 \u0627\u0644\u062A\u0623\u0645\u064A\u0646: ${tx.reason || tx.reference}`,
-                amount: Number(tx.amount),
-                debit: 0,
-                credit: Number(tx.amount),
-                category: "SECURITY_DEPOSIT_DEDUCTION",
-                affectsCash: false
-              });
-            } else if (tx.type === "rent_application") {
-              timeline.push({
-                date: tx.executedAt.toISOString(),
-                type: "DEPOSIT_SETTLEMENT_TO_RENT",
-                reference: `\u062A\u0633\u0648\u064A\u0629 \u062A\u0623\u0645\u064A\u0646 \u0645\u0642\u0627\u0628\u0644 \u0642\u0633\u0637 \u0625\u064A\u062C\u0627\u0631: ${tx.reference}`,
-                amount: Number(tx.amount),
-                debit: 0,
-                credit: Number(tx.amount),
-                category: "NON_CASH_SETTLEMENT",
-                affectsCash: false,
-                targetInstallmentId: tx.targetInstallmentId
-              });
-            }
-          }
-        }
-        let totalCashFlow = 0;
-        let totalNonCashSettlements = 0;
-        for (const pay of lease2.payments) {
-          const isCash = pay.affectsCash !== false && pay.paymentMethod !== "security_deposit";
-          if (isCash) {
-            totalCashFlow += Number(pay.amount);
-          } else {
-            totalNonCashSettlements += Number(pay.amount);
-          }
-          timeline.push({
-            date: pay.paidAt.toISOString(),
-            type: "PAYMENT_RECEIVED",
-            reference: `\u0633\u062F\u0627\u062F \u0625\u064A\u062C\u0627\u0631 (${pay.paymentMethod}): ${pay.receiptNo || pay.referenceNo || "\u062F\u0641\u0639\u0629"}`,
-            amount: Number(pay.amount),
-            debit: 0,
-            credit: Number(pay.amount),
-            category: isCash ? "OPERATING_REVENUE_CASH" : "NON_CASH_SETTLEMENT",
-            affectsCash: isCash,
-            targetInstallmentId: pay.installmentId
-          });
-        }
-        timeline.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-        let runningBalance = 0;
-        const chronologicalStatement = timeline.map((item) => {
-          runningBalance = Math.round((runningBalance + item.debit - item.credit) * 100) / 100;
-          return {
-            ...item,
-            runningBalance
-          };
-        });
-        return res.json({
-          success: true,
-          statement: {
-            contractNumber: lease2.contractNumber,
-            tenantName: lease2.tenantName,
-            tenantPhone: lease2.tenantPhone,
-            tenantEmail: lease2.tenantEmail,
-            unitNumber: lease2.unit?.unitNumber,
-            propertyName: lease2.unit?.property?.name,
-            startDate: lease2.startDate,
-            endDate: lease2.endDate,
-            rentalType: lease2.rentalType,
-            financialSummary: {
-              totalRent,
-              totalCashFlow,
-              totalNonCashSettlements,
-              totalPaid,
-              remainingBalance: Math.max(0, totalRent - totalPaid),
-              securityDepositHeld: totalDeposit,
-              depositStatus: lease2.securityDeposits[0]?.status || "held"
-            },
-            chronologicalStatement,
-            installments: serializeDecimals(lease2.installments),
-            payments: serializeDecimals(lease2.payments),
-            securityDeposits: serializeDecimals(lease2.securityDeposits)
-          }
-        });
+        return res.json({ success: true, statement: buildStatementObj(lease2) });
       }
       const lease = (memoryState?.leases || []).find((l) => l.id === id || l.contractNumber === id || l.unitId === id);
       if (!lease) {
         return res.status(404).json({ success: false, message: "\u0644\u0645 \u064A\u062A\u0645 \u0627\u0644\u0639\u062B\u0648\u0631 \u0639\u0644\u0649 \u0639\u0642\u062F \u0623\u0648 \u0643\u0634\u0641 \u062D\u0633\u0627\u0628 \u0644\u0644\u0628\u064A\u0627\u0646\u0627\u062A \u0627\u0644\u0645\u062D\u062F\u062F\u0629." });
       }
-      return res.json({ success: true, statement: lease });
+      return res.json({ success: true, statement: buildStatementObj(lease) });
     } catch (err) {
       return res.status(500).json({ success: false, message: err.message || "\u0641\u0634\u0644 \u062A\u0648\u0644\u064A\u062F \u0643\u0634\u0641 \u0627\u0644\u062D\u0633\u0627\u0628." });
     }

@@ -2798,6 +2798,140 @@ export async function startServer(customPort?: number) {
       const { id } = req.params;
       const user = req.user!;
 
+      const buildStatementObj = (lease: any) => {
+        const totalRent = Number(lease.annualRent || 0);
+        const payments = Array.isArray(lease.payments) ? lease.payments : [];
+        const installments = Array.isArray(lease.installments) ? lease.installments : [];
+        const securityDeposits = Array.isArray(lease.securityDeposits) ? lease.securityDeposits : [];
+
+        const totalPaid = payments.reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
+        const totalDeposit = securityDeposits.reduce((sum: number, d: any) => sum + Number(d.collectedAmount || d.amount || 0), 0);
+
+        const timeline: any[] = [];
+        for (const inst of installments) {
+          timeline.push({
+            date: inst.dueDate ? new Date(inst.dueDate).toISOString() : new Date().toISOString(),
+            type: 'CHARGE_INSTALLMENT',
+            reference: `قسط رقم ${inst.number}`,
+            amount: Number(inst.amount || 0),
+            debit: Number(inst.amount || 0),
+            credit: 0,
+            category: 'RENT_CHARGE',
+            affectsCash: false,
+            targetInstallmentId: inst.id
+          });
+        }
+
+        for (const dep of securityDeposits) {
+          if (dep.collectionVerifiedAt || dep.collectionReference) {
+            timeline.push({
+              date: dep.collectionVerifiedAt ? new Date(dep.collectionVerifiedAt).toISOString() : new Date().toISOString(),
+              type: 'DEPOSIT_COLLECTION',
+              reference: `تحصيل تأمين: ${dep.collectionReference || dep.id}`,
+              amount: Number(dep.collectedAmount || dep.amount || 0),
+              debit: Number(dep.collectedAmount || dep.amount || 0),
+              credit: 0,
+              category: 'SECURITY_DEPOSIT_LIABILITY',
+              affectsCash: true,
+              depositId: dep.id
+            });
+          }
+          const txs = Array.isArray(dep.transactions) ? dep.transactions : [];
+          for (const tx of txs) {
+            if (tx.type === 'refund') {
+              timeline.push({
+                date: tx.executedAt ? new Date(tx.executedAt).toISOString() : new Date().toISOString(),
+                type: 'DEPOSIT_REFUND',
+                reference: `استرداد تأمين (${tx.method}): ${tx.reference}`,
+                amount: Number(tx.amount || 0),
+                debit: 0,
+                credit: Number(tx.amount || 0),
+                category: 'SECURITY_DEPOSIT_LIABILITY',
+                affectsCash: true
+              });
+            } else if (tx.type === 'deduction') {
+              timeline.push({
+                date: tx.executedAt ? new Date(tx.executedAt).toISOString() : new Date().toISOString(),
+                type: 'DEPOSIT_DEDUCTION',
+                reference: `خصم تلفيات من التأمين: ${tx.reason || tx.reference}`,
+                amount: Number(tx.amount || 0),
+                debit: 0,
+                credit: Number(tx.amount || 0),
+                category: 'SECURITY_DEPOSIT_DEDUCTION',
+                affectsCash: false
+              });
+            } else if (tx.type === 'rent_application') {
+              timeline.push({
+                date: tx.executedAt ? new Date(tx.executedAt).toISOString() : new Date().toISOString(),
+                type: 'DEPOSIT_SETTLEMENT_TO_RENT',
+                reference: `تسوية تأمين مقابل قسط إيجار: ${tx.reference}`,
+                amount: Number(tx.amount || 0),
+                debit: 0,
+                credit: Number(tx.amount || 0),
+                category: 'NON_CASH_SETTLEMENT',
+                affectsCash: false,
+                targetInstallmentId: tx.targetInstallmentId
+              });
+            }
+          }
+        }
+
+        let totalCashFlow = 0;
+        let totalNonCashSettlements = 0;
+        for (const pay of payments) {
+          const isCash = pay.affectsCash !== false && pay.paymentMethod !== 'security_deposit';
+          if (isCash) {
+            totalCashFlow += Number(pay.amount || 0);
+          } else {
+            totalNonCashSettlements += Number(pay.amount || 0);
+          }
+          timeline.push({
+            date: pay.paidAt ? new Date(pay.paidAt).toISOString() : new Date().toISOString(),
+            type: 'PAYMENT_RECEIVED',
+            reference: `سداد إيجار (${pay.paymentMethod}): ${pay.receiptNo || pay.referenceNo || 'دفعة'}`,
+            amount: Number(pay.amount || 0),
+            debit: 0,
+            credit: Number(pay.amount || 0),
+            category: isCash ? 'OPERATING_REVENUE_CASH' : 'NON_CASH_SETTLEMENT',
+            affectsCash: isCash,
+            targetInstallmentId: pay.installmentId
+          });
+        }
+
+        timeline.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+        let runningBalance = 0;
+        const chronologicalStatement = timeline.map(item => {
+          runningBalance = Math.round((runningBalance + item.debit - item.credit) * 100) / 100;
+          return { ...item, runningBalance };
+        });
+
+        return {
+          contractNumber: lease.contractNumber,
+          tenantName: lease.tenantName,
+          tenantPhone: lease.tenantPhone,
+          tenantEmail: lease.tenantEmail,
+          unitNumber: lease.unit?.unitNumber || lease.unitNumber,
+          propertyName: lease.unit?.property?.name || lease.propertyName,
+          startDate: lease.startDate,
+          endDate: lease.endDate,
+          rentalType: lease.rentalType,
+          financialSummary: {
+            totalRent,
+            totalCashFlow,
+            totalNonCashSettlements,
+            totalPaid,
+            remainingBalance: Math.max(0, totalRent - totalPaid),
+            securityDepositHeld: totalDeposit,
+            depositStatus: securityDeposits[0]?.status || 'held'
+          },
+          chronologicalStatement,
+          installments: serializeDecimals(installments),
+          payments: serializeDecimals(payments),
+          securityDeposits: serializeDecimals(securityDeposits)
+        };
+      };
+
       if (process.env.DATABASE_URL) {
         const lease = await prisma.lease.findFirst({
           where: { OR: [{ id }, { contractNumber: id }, { unitId: id }] },
@@ -2817,7 +2951,6 @@ export async function startServer(customPort?: number) {
           return res.status(404).json({ success: false, message: 'لم يتم العثور على عقد أو كشف حساب للبيانات المحددة.' });
         }
 
-        // Authorization check
         const isSuperAdmin = user.role === 'SUPER_ADMIN';
         const isPropertyAllowed = Array.isArray(user.allowedProperties) && (user.allowedProperties.includes('all') || user.allowedProperties.includes(lease.unit?.propertyId));
         const isTenantOwner = (user.role === 'TENANT' && (user.email === lease.tenantEmail || user.userId === lease.tenantIdNumber));
@@ -2830,146 +2963,7 @@ export async function startServer(customPort?: number) {
           });
         }
 
-        const totalRent = Number(lease.annualRent);
-        const totalPaid = lease.payments.reduce((sum, p) => sum + Number(p.amount), 0);
-        const totalDeposit = lease.securityDeposits.reduce((sum, d) => sum + Number(d.collectedAmount || d.amount), 0);
-
-        // Build unified chronological timeline & running balance
-        const timeline: any[] = [];
-
-        // 1. Add installments (charges)
-        for (const inst of lease.installments) {
-          timeline.push({
-            date: inst.dueDate.toISOString(),
-            type: 'CHARGE_INSTALLMENT',
-            reference: `قسط رقم ${inst.number}`,
-            amount: Number(inst.amount),
-            debit: Number(inst.amount),
-            credit: 0,
-            category: 'RENT_CHARGE',
-            affectsCash: false,
-            targetInstallmentId: inst.id
-          });
-        }
-
-        // 2. Add security deposit collections
-        for (const dep of lease.securityDeposits) {
-          if (dep.collectionVerifiedAt) {
-            timeline.push({
-              date: dep.collectionVerifiedAt.toISOString(),
-              type: 'DEPOSIT_COLLECTION',
-              reference: `تحصيل تأمين: ${dep.collectionReference || dep.id}`,
-              amount: Number(dep.collectedAmount || dep.amount),
-              debit: Number(dep.collectedAmount || dep.amount),
-              credit: 0,
-              category: 'SECURITY_DEPOSIT_LIABILITY',
-              affectsCash: true,
-              depositId: dep.id
-            });
-          }
-          // Deposit transactions (refunds, deductions, rent applications)
-          for (const tx of dep.transactions) {
-            if (tx.type === 'refund') {
-              timeline.push({
-                date: tx.executedAt.toISOString(),
-                type: 'DEPOSIT_REFUND',
-                reference: `استرداد تأمين (${tx.method}): ${tx.reference}`,
-                amount: Number(tx.amount),
-                debit: 0,
-                credit: Number(tx.amount),
-                category: 'SECURITY_DEPOSIT_LIABILITY',
-                affectsCash: true
-              });
-            } else if (tx.type === 'deduction') {
-              timeline.push({
-                date: tx.executedAt.toISOString(),
-                type: 'DEPOSIT_DEDUCTION',
-                reference: `خصم تلفيات من التأمين: ${tx.reason || tx.reference}`,
-                amount: Number(tx.amount),
-                debit: 0,
-                credit: Number(tx.amount),
-                category: 'SECURITY_DEPOSIT_DEDUCTION',
-                affectsCash: false
-              });
-            } else if (tx.type === 'rent_application') {
-              timeline.push({
-                date: tx.executedAt.toISOString(),
-                type: 'DEPOSIT_SETTLEMENT_TO_RENT',
-                reference: `تسوية تأمين مقابل قسط إيجار: ${tx.reference}`,
-                amount: Number(tx.amount),
-                debit: 0,
-                credit: Number(tx.amount),
-                category: 'NON_CASH_SETTLEMENT',
-                affectsCash: false,
-                targetInstallmentId: tx.targetInstallmentId
-              });
-            }
-          }
-        }
-
-        // 3. Add payments
-        let totalCashFlow = 0;
-        let totalNonCashSettlements = 0;
-        for (const pay of lease.payments) {
-          const isCash = pay.affectsCash !== false && pay.paymentMethod !== 'security_deposit';
-          if (isCash) {
-            totalCashFlow += Number(pay.amount);
-          } else {
-            totalNonCashSettlements += Number(pay.amount);
-          }
-          timeline.push({
-            date: pay.paidAt.toISOString(),
-            type: 'PAYMENT_RECEIVED',
-            reference: `سداد إيجار (${pay.paymentMethod}): ${pay.receiptNo || pay.referenceNo || 'دفعة'}`,
-            amount: Number(pay.amount),
-            debit: 0,
-            credit: Number(pay.amount),
-            category: isCash ? 'OPERATING_REVENUE_CASH' : 'NON_CASH_SETTLEMENT',
-            affectsCash: isCash,
-            targetInstallmentId: pay.installmentId
-          });
-        }
-
-        // Sort timeline chronologically
-        timeline.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
-        let runningBalance = 0;
-        const chronologicalStatement = timeline.map(item => {
-          // Debit increases balance owed by tenant, Credit decreases balance owed by tenant (payments/credits)
-          runningBalance = Math.round((runningBalance + item.debit - item.credit) * 100) / 100;
-          return {
-            ...item,
-            runningBalance
-          };
-        });
-
-        return res.json({
-          success: true,
-          statement: {
-            contractNumber: lease.contractNumber,
-            tenantName: lease.tenantName,
-            tenantPhone: lease.tenantPhone,
-            tenantEmail: lease.tenantEmail,
-            unitNumber: lease.unit?.unitNumber,
-            propertyName: lease.unit?.property?.name,
-            startDate: lease.startDate,
-            endDate: lease.endDate,
-            rentalType: lease.rentalType,
-            financialSummary: {
-              totalRent,
-              totalCashFlow,
-              totalNonCashSettlements,
-              totalPaid,
-              remainingBalance: Math.max(0, totalRent - totalPaid),
-              securityDepositHeld: totalDeposit,
-              depositStatus: lease.securityDeposits[0]?.status || 'held'
-            },
-            chronologicalStatement,
-            installments: serializeDecimals(lease.installments),
-            payments: serializeDecimals(lease.payments),
-            securityDeposits: serializeDecimals(lease.securityDeposits)
-          }
-        });
+        return res.json({ success: true, statement: buildStatementObj(lease) });
       }
 
       const lease = (memoryState?.leases || []).find((l: any) => l.id === id || l.contractNumber === id || l.unitId === id);
@@ -2977,7 +2971,7 @@ export async function startServer(customPort?: number) {
         return res.status(404).json({ success: false, message: 'لم يتم العثور على عقد أو كشف حساب للبيانات المحددة.' });
       }
 
-      return res.json({ success: true, statement: lease });
+      return res.json({ success: true, statement: buildStatementObj(lease) });
     } catch (err: any) {
       return res.status(500).json({ success: false, message: err.message || 'فشل توليد كشف الحساب.' });
     }
