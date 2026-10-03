@@ -501,6 +501,7 @@ export async function processDailyReservation(
     status: 'held',
     refundedAmount: 0,
     deductedAmount: 0,
+    rentAppliedAmount: 0,
     notes: `تأمين مسترد لحجز ${bookingNumber}`,
     createdAt: new Date().toISOString()
   };
@@ -878,6 +879,7 @@ export async function processLeaseContract(
     status: 'held',
     refundedAmount: 0,
     deductedAmount: 0,
+    rentAppliedAmount: 0,
     notes: `تأمين تأجيري لعقد ${contractNumber}`,
     createdAt: new Date().toISOString()
   };

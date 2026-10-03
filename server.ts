@@ -221,14 +221,20 @@ async function initializeFallbackState() {
       installments: [],
       securityDeposits: Array.isArray(initialSecurityDeposits) ? initialSecurityDeposits.map((sd: any) => ({
         ...sd,
-        collectedAmount: 0,
-        collectionReference: null,
-        collectionVerifiedAt: null,
-        refundedAmount: 0,
-        deductedAmount: 0
+        collectedAmount: sd.collectedAmount ?? 0,
+        collectionReference: sd.collectionReference ?? null,
+        collectionVerifiedAt: sd.collectionVerifiedAt ?? null,
+        refundedAmount: sd.refundedAmount ?? 0,
+        deductedAmount: sd.deductedAmount ?? 0,
+        rentAppliedAmount: sd.rentAppliedAmount ?? 0
       })) : [],
       securityDepositTransactions: [],
-      payments: Array.isArray(initialPayments) ? JSON.parse(JSON.stringify(initialPayments)) : [],
+      payments: Array.isArray(initialPayments) ? initialPayments.map((p: any) => ({
+        ...p,
+        installmentId: p.installmentId ?? null,
+        sourceType: p.sourceType ?? 'direct_payment',
+        affectsCash: typeof p.affectsCash === 'boolean' ? p.affectsCash : true
+      })) : [],
       expenses: Array.isArray(initialExpenses) ? JSON.parse(JSON.stringify(initialExpenses)) : [],
       expenseAllocations: [],
       expensePayments: [],
@@ -298,6 +304,13 @@ async function initializeFallbackState() {
       collectionVerifiedAt: sd.collectionVerifiedAt ?? null,
       refundedAmount: sd.refundedAmount ?? 0,
       deductedAmount: sd.deductedAmount ?? 0,
+      rentAppliedAmount: sd.rentAppliedAmount ?? 0,
+    }));
+    memoryState.payments = (memoryState.payments || []).map((p: any) => ({
+      ...p,
+      installmentId: p.installmentId ?? null,
+      sourceType: p.sourceType ?? 'direct_payment',
+      affectsCash: typeof p.affectsCash === 'boolean' ? p.affectsCash : true,
     }));
     const depositIds = new Set((memoryState.securityDeposits || []).map((d: any) => d.id));
     memoryState.securityDepositTransactions = (memoryState.securityDepositTransactions || []).filter((sdt: any) => depositIds.has(sdt.depositId));

@@ -641,32 +641,29 @@ async function runPhase4Integration() {
     // ----------------------------------------------------
     // Step 12: PostgreSQL Real Database Transactions Execution Status
     // ----------------------------------------------------
-    const hasPostgres = Boolean(process.env.TEST_DATABASE_URL || process.env.DATABASE_URL);
-    if (!hasPostgres) {
+    const { validateTestEnvironment, runPostgresTestSuite } = await import('./test-isolated-postgres.js');
+    const envValidation = validateTestEnvironment();
+
+    if (!envValidation.isValid) {
       resultsTable.push({
         step: 12,
         title: 'تسجيل التحصيل والتسوية والاسترداد في PostgreSQL معزولة',
-        inputs: 'TEST_DATABASE_URL / DATABASE_URL',
-        expected: 'الاتصال بقاعدة PostgreSQL معزولة وتنفيذ المعاملات والأقفال السطرية',
-        actual: 'لم يتم التنفيذ لعدم توفر خادم PostgreSQL في بيئة المعاينة',
+        inputs: 'TEST_DATABASE_URL / ALLOW_TEST_DATABASE_RESET',
+        expected: 'تشغيل دورة المعاملات والأقفال السطرية على قاعدة بيانات _test معزولة',
+        actual: `غير منفذ: ${envValidation.reason}`,
         environment: 'Isolated PostgreSQL Engine',
         status: 'غير منفذ',
       });
     } else {
-      // Connect to real Postgres
-      const prisma = new PrismaClient({
-        datasources: { db: { url: process.env.TEST_DATABASE_URL || process.env.DATABASE_URL } },
-      });
-      await prisma.$connect();
-      await prisma.$disconnect();
+      const pgSuccess = await runPostgresTestSuite();
       resultsTable.push({
         step: 12,
         title: 'تسجيل التحصيل والتسوية والاسترداد في PostgreSQL معزولة',
-        inputs: 'DATABASE_URL connected',
-        expected: 'الاتصال بقاعدة PostgreSQL معزولة وتنفيذ المعاملات',
-        actual: 'تم الاتصال والتنفيذ بنجاح على قاعدة البيانات المعزولة',
+        inputs: `TEST_DATABASE_URL (${envValidation.dbUrl?.replace(/:[^:@]+@/, ':****@')})`,
+        expected: 'تنفيذ دورة المعاملات والأقفال والاستعادة بنجاح على قاعدة _test',
+        actual: pgSuccess ? 'تم تنفيذ دورة PostgreSQL بنجاح مع كافة الأقفال والتحققات' : 'فشل تنفيذ بعض اختبارات PostgreSQL',
         environment: 'Isolated PostgreSQL Engine',
-        status: 'ناجح',
+        status: pgSuccess ? 'ناجح' : 'فاشل',
       });
     }
 

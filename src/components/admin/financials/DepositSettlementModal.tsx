@@ -95,6 +95,8 @@ export const DepositSettlementModal: React.FC<Props> = ({
 
   const getCurrentUser = () => {
     try {
+      const rawProfile = localStorage.getItem('luxury_home_user_profile');
+      if (rawProfile) return JSON.parse(rawProfile);
       const raw = localStorage.getItem('luxury_user');
       return raw ? JSON.parse(raw) : null;
     } catch {
@@ -102,8 +104,18 @@ export const DepositSettlementModal: React.FC<Props> = ({
     }
   };
 
+  const getActiveUserId = (user: any): string => {
+    if (typeof user?.id === 'string' && user.id.trim()) {
+      return user.id.trim();
+    }
+    if (typeof user?.userId === 'string' && user.userId.trim()) {
+      return user.userId.trim();
+    }
+    return '';
+  };
+
   const currentAuthUser = getCurrentUser();
-  const currentUserId = currentAuthUser?.id || currentAuthUser?.userId || currentAuthUser?.username || '';
+  const currentUserId = getActiveUserId(currentAuthUser);
 
   const [pendingSettleOp, setPendingSettleOp] = useState<PendingOperation<SettlementPayload> | null>(() => {
     if (!currentUserId) return null;
@@ -113,7 +125,7 @@ export const DepositSettlementModal: React.FC<Props> = ({
   const updatePendingSettleOp = (op: PendingOperation<SettlementPayload> | null) => {
     setPendingSettleOp(op);
     const user = getCurrentUser();
-    const uid = user?.id || user?.userId || user?.username || '';
+    const uid = getActiveUserId(user);
     if (op && uid) {
       savePending(uid, op);
     } else if (uid) {
@@ -159,7 +171,10 @@ export const DepositSettlementModal: React.FC<Props> = ({
 
     try {
       const activeUser = getCurrentUser();
-      const activeUid = activeUser?.id || activeUser?.userId || activeUser?.username || '';
+      const activeUid = getActiveUserId(activeUser);
+      if (!activeUid) {
+        throw new Error('تعذر التحقق من معرف المستخدم الحالي. سجّل الدخول مجدداً.');
+      }
       assertPendingOwner(activeUid, op);
 
       await settleSecurityDepositAgainstRent({
@@ -169,7 +184,7 @@ export const DepositSettlementModal: React.FC<Props> = ({
         amount: op.payload.amount,
         reason: op.payload.reason || 'تسوية قسط إيجار',
         approvalReference: op.payload.approvalReference,
-        authorizedBy: activeUser?.name || activeUser?.username || 'المسؤول المالي',
+        authorizedBy: activeUser?.name || 'المسؤول المالي',
         idempotencyKey: op.key,
       });
 
@@ -236,9 +251,9 @@ export const DepositSettlementModal: React.FC<Props> = ({
     }
 
     const activeUser = getCurrentUser();
-    const activeUid = activeUser?.id || activeUser?.userId || activeUser?.username || '';
+    const activeUid = getActiveUserId(activeUser);
     if (!activeUid) {
-      setErrorMsg('تعذر التحقق من المستخدم الحالي. يرجى تسجيل الدخول مجدداً.');
+      setErrorMsg('تعذر التحقق من معرف المستخدم الثابت. يرجى تسجيل الدخول مجدداً.');
       return;
     }
 
@@ -253,7 +268,7 @@ export const DepositSettlementModal: React.FC<Props> = ({
         amount,
         reason: reason.trim(),
         approvalReference: approvalReference.trim(),
-        authorizedBy: activeUser?.name || activeUser?.username || 'المسؤول المالي',
+        authorizedBy: activeUser?.name || 'المسؤول المالي',
       },
     };
 
