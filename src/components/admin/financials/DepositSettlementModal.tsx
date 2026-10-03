@@ -25,6 +25,7 @@ export const DepositSettlementModal: React.FC<Props> = ({
       installmentId: string;
       amount: number;
       reason: string;
+      approvalReference?: string;
       authorizedBy: string;
     };
   } | null>(() => {
@@ -53,17 +54,21 @@ export const DepositSettlementModal: React.FC<Props> = ({
   const [reason, setReason] = useState<string>(
     pendingSettleOp?.payload.reason || 'اقتطاع وديعة التأمين لتغطية المستحقات المتأخرة بالاتفاق'
   );
-  const [authorizedBy, setAuthorizedBy] = useState<string>(
-    pendingSettleOp?.payload.authorizedBy || 'سعد القحطاني (مدير التحصيل)'
+  const [approvalReference, setApprovalReference] = useState<string>(
+    pendingSettleOp?.payload.approvalReference || ''
   );
 
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [canClearPending, setCanClearPending] = useState(false);
 
   const selectedDeposit = state.securityDeposits.find(d => d.id === depositId);
-  const totalDeducted = (selectedDeposit?.deductions || []).reduce((s, x) => s + x.amount, 0);
-  const availableDeposit = selectedDeposit ? Math.max(0, selectedDeposit.amount - totalDeducted) : 0;
+  const collected = (selectedDeposit as any)?.collectedAmount ?? selectedDeposit?.amount ?? 0;
+  const refunded = (selectedDeposit as any)?.refundedAmount ?? selectedDeposit?.refundAmount ?? 0;
+  const deducted = (selectedDeposit as any)?.deductedAmount ?? (selectedDeposit?.deductions || []).reduce((s, x) => s + x.amount, 0);
+  const rentApplied = (selectedDeposit as any)?.rentAppliedAmount ?? 0;
+  const availableDeposit = selectedDeposit ? Math.max(0, collected - refunded - deducted - rentApplied) : 0;
 
   // Find target lease
   const targetLease = state.leases.find(
@@ -83,12 +88,13 @@ export const DepositSettlementModal: React.FC<Props> = ({
         leaseId: op.payload.leaseId,
         installmentId: op.payload.installmentId,
         amount: op.payload.amount,
-        reason: op.payload.reason,
-        authorizedBy: op.payload.authorizedBy,
+        reason: `${op.payload.reason} (مرجع الاعتماد: ${op.payload.approvalReference || 'معتمد'})`,
+        authorizedBy: op.payload.approvalReference || 'معتمد رسمياً',
         idempotencyKey: op.key,
       });
 
       updatePendingSettleOp(null);
+      setCanClearPending(true);
       setSuccessMsg('تم تسجيل وتوثيق عملية التسوية والسداد بنجاح في الخادم.');
 
       try {
@@ -110,11 +116,13 @@ export const DepositSettlementModal: React.FC<Props> = ({
       }
 
       if (isConfirmedRejection) {
-        updatePendingSettleOp(null); // Clear key on absolute rejection to let them start fresh
+        setCanClearPending(true);
+        updatePendingSettleOp(null); // Clear key on absolute terminal rejection
         setErrorMsg(err.message || 'تم رفض عملية التسوية من الخادم.');
       } else {
+        setCanClearPending(false);
         setErrorMsg(
-          `${err.message || 'تعذر الاتصال بالخادم.'} تم الاحتفاظ بمفتاح العملية الأصلي لإعادة المحاولة بأمان.`
+          `${err.message || 'تعذر الاتصال بالخادم.'} تم الاحتفاظ بمفتاح العملية الأصلي والحمولة في التخزين المحلي لإعادة المحاولة بأمان دون فقدها.`
         );
       }
     } finally {
@@ -142,6 +150,10 @@ export const DepositSettlementModal: React.FC<Props> = ({
       setErrorMsg('يرجى اختيار الدفعة المالية المستهدفة بالسداد.');
       return;
     }
+    if (!approvalReference.trim()) {
+      setErrorMsg('يرجى إدخال مرجع الاعتماد المالي الرسمي (رقم المحضر / قرار الإدارة).');
+      return;
+    }
 
     const op = {
       depositId,
@@ -151,7 +163,8 @@ export const DepositSettlementModal: React.FC<Props> = ({
         installmentId,
         amount,
         reason,
-        authorizedBy,
+        approvalReference: approvalReference.trim(),
+        authorizedBy: approvalReference.trim(),
       },
     };
 
@@ -228,27 +241,32 @@ export const DepositSettlementModal: React.FC<Props> = ({
                   disabled={saving}
                   className="w-full py-2.5 bg-amber-700 hover:bg-amber-800 text-white rounded-xl font-bold cursor-pointer text-center text-xs disabled:opacity-50"
                 >
-                  {saving ? 'جاري إعادة الإرسال...' : 'إرسال محاولة التسوية المعلقة مجدداً بنفس المفتاح'}
+                  {saving ? 'جاري إعادة الإرسال والاستعلام...' : 'إعادة إرسال الطلب المعلّق بأمان بنفس المفتاح لاسترجاع النتيجة'}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (
-                      confirm(
-                        'تحذير: إلغاء محاولة التسوية المعلّقة قد يؤدي إلى حدوث خطأ أو تكرار إذا كان الخادم قد نفذها وتأخر الرد. هل تريد المتابعة وبدء عملية جديدة؟'
-                      )
-                    ) {
+                {canClearPending ? (
+                  <button
+                    type="button"
+                    onClick={() => {
                       updatePendingSettleOp(null);
                       setErrorMsg(null);
                       setSuccessMsg(null);
                       setInstallmentId('');
                       setAmount(0);
-                    }
-                  }}
-                  className="w-full py-2 border border-[#E3DCCD] bg-white text-gray-700 hover:bg-gray-50 rounded-xl font-semibold cursor-pointer text-center text-xs"
-                >
-                  إلغاء المحاولة والبدء من جديد ببيانات مختلفة
-                </button>
+                    }}
+                    className="w-full py-2 border border-[#E3DCCD] bg-white text-gray-700 hover:bg-gray-50 rounded-xl font-semibold cursor-pointer text-center text-xs"
+                  >
+                    بدء محاولة جديدة (بعد تأكيد انتهاء المحاولة السابقة)
+                  </button>
+                ) : (
+                  <div className="p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-[10px] text-gray-600 text-center space-y-1">
+                    <p className="font-semibold text-gray-800">
+                      لحماية السجلات المحاسبية: لا يمكن مسح مفتاح الطلب المعلق عند وجود نتيجة مجهولة.
+                    </p>
+                    <p>
+                      إغلاق النافذة أو التنقل لا يلغي العملية. أعد إرسال الطلب أعلاه بنفس المفتاح بأمان للتحقق من اعتمادها أو الحصول على رفض قاطع.
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           ) : (
@@ -341,15 +359,19 @@ export const DepositSettlementModal: React.FC<Props> = ({
 
               <div>
                 <label className="block text-[11px] font-bold text-[#282824] mb-1">
-                  المسؤول المعتمد للتسوية الإدارية
+                  مرجع الاعتماد المالي الرسمي (رقم المحضر / قرار الإدارة) *
                 </label>
                 <input
                   type="text"
-                  value={authorizedBy}
-                  onChange={(e) => setAuthorizedBy(e.target.value)}
+                  placeholder="مثال: محضر تسوية رقم DEC-2026-088"
+                  value={approvalReference}
+                  onChange={(e) => setApprovalReference(e.target.value)}
                   className="w-full bg-[#FAF8F5] border border-[#E3DCCD] rounded-xl px-3 py-2 text-xs text-right focus:outline-none focus:border-[#B69A68]"
                   required
                 />
+                <span className="text-[10px] text-[#68675F] block mt-0.5">
+                  المنفذ المسجل: مسؤول الجلسة الحالي النشط (موثق تلقائياً في سجل التدقيق المالي)
+                </span>
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#E3DCCD]">

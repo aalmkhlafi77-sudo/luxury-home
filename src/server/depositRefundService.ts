@@ -12,6 +12,34 @@ export class RefundError extends Error {
   }
 }
 
+export type DepositTotals = {
+  collectedAmount: string;
+  refundedAmount: string;
+  damageDeductedAmount: string;
+  rentAppliedAmount: string;
+};
+
+export function availableDeposit(
+  totals: DepositTotals,
+): Prisma.Decimal {
+  const values = Object.values(totals);
+
+  if (values.some(value => !/^\d{1,10}(?:\.\d{1,2})?$/.test(value))) {
+    throw new Error('بيانات رصيد التأمين غير صالحة.');
+  }
+
+  const available = new Prisma.Decimal(totals.collectedAmount)
+    .minus(totals.refundedAmount)
+    .minus(totals.damageDeductedAmount)
+    .minus(totals.rentAppliedAmount);
+
+  if (available.lt(0)) {
+    throw new Error('حركات التأمين تتجاوز التحصيل؛ يلزم تصحيح موثق.');
+  }
+
+  return available;
+}
+
 type RefundInput = {
   depositId: unknown;
   actorId: unknown;
@@ -276,19 +304,16 @@ export async function refundDeposit(input: RefundInput) {
         throw new RefundError(409, 'حالة التأمين لا تسمح بالعملية.');
       }
 
-      const collected = new Prisma.Decimal(deposit.collectedAmount);
-      const spent = deposit.refundedAmount.plus(deposit.deductedAmount);
+      const existingRentApplied = (deposit as any).rentAppliedAmount
+        ? new Prisma.Decimal((deposit as any).rentAppliedAmount)
+        : new Prisma.Decimal(0);
 
-      if (
-        collected.lte(0) ||
-        deposit.refundedAmount.lt(0) ||
-        deposit.deductedAmount.lt(0) ||
-        spent.gt(collected)
-      ) {
-        throw new RefundError(409, 'رصيد التأمين يحتاج مراجعة موثقة.');
-      }
-
-      const available = collected.minus(spent);
+      const available = availableDeposit({
+        collectedAmount: new Prisma.Decimal(deposit.collectedAmount).toFixed(2),
+        refundedAmount: new Prisma.Decimal(deposit.refundedAmount).toFixed(2),
+        damageDeductedAmount: new Prisma.Decimal(deposit.deductedAmount).toFixed(2),
+        rentAppliedAmount: existingRentApplied.toFixed(2),
+      });
 
       if (total.gt(available)) {
         throw new RefundError(
@@ -299,7 +324,7 @@ export async function refundDeposit(input: RefundInput) {
 
       const refundedTotal = deposit.refundedAmount.plus(refund);
       const deductedTotal = deposit.deductedAmount.plus(deduction);
-      const remaining = collected.minus(refundedTotal).minus(deductedTotal);
+      const remaining = available.minus(total);
 
       const status = remaining.eq(0)
         ? (refundedTotal.eq(0) ? 'deducted' : 'refunded')
@@ -407,6 +432,7 @@ type ApplyRentInput = {
   installmentId: unknown;
   amount: unknown;
   reason: unknown;
+  approvalReference?: unknown;
   actorId: unknown;
   idempotencyKey?: unknown;
 };
@@ -490,7 +516,13 @@ export async function applyDepositToRent(input: ApplyRentInput) {
       const installment = await tx.leaseInstallment.findUnique({
         where: { id: installmentId },
         include: {
-          lease: true,
+          lease: {
+            include: {
+              unit: {
+                select: { propertyId: true },
+              },
+            },
+          },
         },
       });
 
@@ -581,27 +613,40 @@ export async function applyDepositToRent(input: ApplyRentInput) {
       }
 
       // 7. Match lease constraints
-      if (deposit.leaseId && installment.leaseId !== deposit.leaseId) {
+      if (
+        !deposit.leaseId ||
+        deposit.bookingId !== null ||
+        installment.leaseId !== deposit.leaseId
+      ) {
         throw new RefundError(
           409,
-          'القسط المالي المستهدف لا يخص عقد الإيجار المرتبط بهذه الوديعة.',
+          'التسوية متاحة فقط لقسط من العقد المرتبط بهذا التأمين.',
         );
       }
 
-      // 8. Reconcile Balances
-      const collected = new Prisma.Decimal(deposit.collectedAmount);
-      const spent = deposit.refundedAmount.plus(deposit.deductedAmount);
-
+      // Check target building permissions
+      const targetPropertyId = installment.lease?.unit?.propertyId;
       if (
-        collected.lte(0) ||
-        deposit.refundedAmount.lt(0) ||
-        deposit.deductedAmount.lt(0) ||
-        spent.gt(collected)
+        targetPropertyId &&
+        actor.role !== 'SUPER_ADMIN' &&
+        !actor.allowedProperties.includes('all') &&
+        !actor.allowedProperties.includes(targetPropertyId)
       ) {
-        throw new RefundError(409, 'رصيد التأمين يحتاج مراجعة موثقة.');
+        throw new RefundError(403, 'مبنى العقد المستهدف خارج نطاق صلاحياتك.');
       }
 
-      const available = collected.minus(spent);
+      // 8. Reconcile Balances with unified availableDeposit
+      const existingRentApplied = (deposit as any).rentAppliedAmount
+        ? new Prisma.Decimal((deposit as any).rentAppliedAmount)
+        : new Prisma.Decimal(0);
+
+      const available = availableDeposit({
+        collectedAmount: new Prisma.Decimal(deposit.collectedAmount).toFixed(2),
+        refundedAmount: new Prisma.Decimal(deposit.refundedAmount).toFixed(2),
+        damageDeductedAmount: new Prisma.Decimal(deposit.deductedAmount).toFixed(2),
+        rentAppliedAmount: existingRentApplied.toFixed(2),
+      });
+
       if (applyAmount.gt(available)) {
         throw new RefundError(
           400,
@@ -619,19 +664,22 @@ export async function applyDepositToRent(input: ApplyRentInput) {
 
       // 9. Execute Updates
       const refundedTotal = deposit.refundedAmount;
-      const deductedTotal = deposit.deductedAmount.plus(applyAmount);
-      const remaining = collected.minus(refundedTotal).minus(deductedTotal);
+      const deductedTotal = deposit.deductedAmount;
+      const rentAppliedTotal = existingRentApplied.plus(applyAmount);
+      const remaining = available.minus(applyAmount);
 
       const depositStatus = remaining.eq(0)
-        ? (refundedTotal.eq(0) ? 'claimed_for_damage' : 'fully_refunded')
+        ? (refundedTotal.eq(0) && deductedTotal.eq(0) ? 'claimed_for_damage' : 'fully_refunded')
         : 'partially_refunded';
 
       const updatedDeposit = await tx.securityDepositRecord.update({
         where: { id: deposit.id },
         data: {
-          deductedAmount: deductedTotal,
+          rentAppliedAmount: rentAppliedTotal,
           status: depositStatus,
-          deductionReason: reason,
+          notes: deposit.notes
+            ? `${deposit.notes} | تسوية إيجار: ${reason}`
+            : `تسوية إيجار: ${reason}`,
         },
       });
 
@@ -656,27 +704,38 @@ export async function applyDepositToRent(input: ApplyRentInput) {
           depositId: deposit.id,
           type: 'rent_application',
           amount: applyAmount,
-          method: 'deduction',
+          method: 'security_deposit',
           reference: `SETTLE-LEASE-${installment.lease.contractNumber}`,
           reason,
+          targetLeaseId: installment.leaseId,
+          targetInstallmentId: installment.id,
           executedByUserId: actor.id,
           status: 'completed',
           idempotencyKey: sha256(`${operationKey}:rent_apply`),
         },
       });
 
-      // Record rent payment record too so it shows up in general payments as settled from deposit
+      // Record rent payment record with cashless classification
+      const settlementClassification = {
+        paymentMethod: 'security_deposit',
+        sourceType: 'deposit_application',
+        affectsCash: false,
+      };
+
       const paymentRec = await tx.paymentRecord.create({
         data: {
           leaseId: installment.leaseId,
+          installmentId: installment.id,
           amount: applyAmount,
-          paymentMethod: 'bank_transfer',
+          paymentMethod: settlementClassification.paymentMethod,
+          sourceType: settlementClassification.sourceType,
+          affectsCash: settlementClassification.affectsCash,
           referenceNo: `SETTLE-DEP-${deposit.id}`,
           receiptNo: `DEP-SETTLE-${Date.now()}`,
           status: 'completed',
           isVerified: true,
           paidAt: new Date(),
-          notes: `تسوية جزء من مبلغ التأمين لسداد قسط العقد #${installment.lease.contractNumber} بسبب (${reason})`,
+          notes: `تسوية جزء من مبلغ التأمين لسداد قسط العقد #${installment.lease.contractNumber} بسبب (${reason}) [تسوية دفترية معزولة لا تؤثر على السيولة النقدية]`,
         },
       });
 
@@ -704,7 +763,9 @@ export async function applyDepositToRent(input: ApplyRentInput) {
         depositId: deposit.id,
         installmentId: installment.id,
         status: updatedDeposit.status,
-        deductedAmount: deductedTotal.toFixed(2),
+        refundedAmount: refundedTotal.toFixed(2),
+        damageDeductedAmount: deductedTotal.toFixed(2),
+        rentAppliedAmount: rentAppliedTotal.toFixed(2),
         availableBalance: remaining.toFixed(2),
         transactionIds: [movement.id],
       };

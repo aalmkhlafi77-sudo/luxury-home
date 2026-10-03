@@ -642,8 +642,11 @@ export interface PaymentRecord {
   id: string;
   referenceType: 'booking' | 'lease_installment' | 'deposit';
   referenceId: string;
+  installmentId?: string;
   amount: number;
-  method: 'mada' | 'visa_mastercard' | 'apple_pay' | 'bank_transfer' | 'cash';
+  method: 'mada' | 'visa_mastercard' | 'apple_pay' | 'bank_transfer' | 'cash' | 'security_deposit';
+  sourceType?: 'direct_payment' | 'deposit_application' | 'reversal';
+  affectsCash?: boolean;
   status: 'success' | 'pending' | 'failed';
   transactionId: string;
   receiptNumber?: string;
@@ -660,8 +663,14 @@ export interface SecurityDepositRecord {
   unitId: string;
   guestName: string;
   amount: number;
-  heldType: 'authorized_hold' | 'collected_cash_card';
-  status: 'held' | 'partially_refunded' | 'fully_refunded' | 'claimed_for_damage';
+  collectedAmount?: number;
+  collectionReference?: string | null;
+  collectionVerifiedAt?: string | null;
+  heldType?: 'authorized_hold' | 'collected_cash_card';
+  status: 'held' | 'pending_refund' | 'partially_refunded' | 'fully_refunded' | 'claimed_for_damage' | 'deducted';
+  refundedAmount?: number;
+  deductedAmount?: number;
+  rentAppliedAmount?: number;
   deductions: {
     id: string;
     amount: number;
@@ -672,6 +681,22 @@ export interface SecurityDepositRecord {
   }[];
   refundAmount: number;
   refundedAt?: string;
+  createdAt: string;
+}
+
+export interface SecurityDepositTransaction {
+  id: string;
+  depositId: string;
+  type: 'refund' | 'deduction' | 'preauth_release' | 'rent_application';
+  amount: number;
+  method: string;
+  reference: string;
+  reason?: string;
+  targetLeaseId?: string;
+  targetInstallmentId?: string;
+  executedByUserId?: string;
+  status: 'completed' | 'pending_provider';
+  idempotencyKey?: string;
   createdAt: string;
 }
 

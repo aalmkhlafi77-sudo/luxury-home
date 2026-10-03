@@ -763,6 +763,19 @@ export async function getLeasesFromDb(allowedPropertyIds?: string[]) {
   return serializeDecimals(leases);
 }
 
+export async function getAllocationsFromDb(allowedPropertyIds?: string[]) {
+  if (!process.env.DATABASE_URL) return [];
+  const isUniversal = !allowedPropertyIds || allowedPropertyIds.includes('all');
+  const allocations = await prisma.unitAllocation.findMany({
+    where: isUniversal ? {} : { unit: { propertyId: { in: allowedPropertyIds } } },
+    include: {
+      unit: { include: { property: true } }
+    },
+    orderBy: { startDate: 'asc' }
+  });
+  return serializeDecimals(allocations);
+}
+
 // --- Expenses Repository ---
 export async function getExpensesFromDb(allowedPropertyIds?: string[]) {
   if (!process.env.DATABASE_URL) return [];

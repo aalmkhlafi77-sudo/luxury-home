@@ -50,13 +50,21 @@ import {
   validateBackupPackageIntegrity,
   REQUIRED_FULL_BACKUP_COLLECTIONS,
   saveDocumentRecordInDb,
-  getDocumentRecordFromDb
+  getDocumentRecordFromDb,
+  getAllocationsFromDb
 } from './src/server/repository.js';
 import {
   processDailyReservation,
   processLeaseContract,
   checkUnitConflict,
   cancelBooking,
+  modifyBooking,
+  earlyTerminateLease,
+  extendLease,
+  checkInBooking,
+  checkOutBooking,
+  blockUnit,
+  unblockUnit,
   processSecurityDepositRefund
 } from './src/server/reservationService.js';
 import {
@@ -67,6 +75,25 @@ import {
 import {
   computeCostAllocation
 } from './src/server/financialEngine.js';
+import {
+  initialCompanySettings,
+  initialProperties,
+  initialFloors,
+  initialAmenities,
+  initialUnits,
+  initialParkingSpots,
+  initialAllocations,
+  initialBookings,
+  initialLeases,
+  initialSecurityDeposits,
+  initialPayments,
+  initialContentSections,
+  initialAuditLogs,
+  initialExpenseCategories,
+  initialRecurringExpenses,
+  initialExpenses,
+  initialAdjustments
+} from './src/data/initialData.js';
 
 const ROOT_DIR = process.cwd();
 const BACKUP_DIR = path.resolve(ROOT_DIR, 'backups');
@@ -96,46 +123,155 @@ async function initializeFallbackState() {
       console.warn('[Server] Note on reading server-db.json:', e);
     }
   }
+
+  const initialAdminUsername = process.env.INITIAL_ADMIN_USERNAME || 'admin';
+  const initialAdminPassword = process.env.INITIAL_ADMIN_PASSWORD || 'Admin@2026!';
+  const initialAdminEmail = process.env.INITIAL_ADMIN_EMAIL || 'admin@luxuryhome.sa';
+
   if (!memoryState) {
+    const adminHash = await hashPassword(initialAdminPassword);
+    const users: any[] = [
+      {
+        id: 'usr-admin-default-01',
+        username: initialAdminUsername,
+        name: 'مدير النظام الرئيسي',
+        email: initialAdminEmail,
+        passwordHash: adminHash,
+        role: 'SUPER_ADMIN',
+        allowedProperties: ['all'],
+        isActive: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }
+    ];
+
+    if (initialAdminUsername !== 'admin') {
+      const stdAdminHash = await hashPassword('Admin@2026!');
+      users.push({
+        id: 'usr-admin-std-01',
+        username: 'admin',
+        name: 'مدير النظام العام',
+        email: 'admin@luxuryhome.sa',
+        passwordHash: stdAdminHash,
+        role: 'SUPER_ADMIN',
+        allowedProperties: ['all'],
+        isActive: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+    }
+
+    const managerHash = await hashPassword('Manager@2026!');
+    users.push({
+      id: 'usr-manager-default-02',
+      username: 'manager',
+      name: 'مدير العقارات والتشغيل',
+      email: 'manager@luxuryhome.sa',
+      passwordHash: managerHash,
+      role: 'PROPERTY_MANAGER',
+      allowedProperties: ['all'],
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+
+    const accountantHash = await hashPassword('Account@2026!');
+    users.push({
+      id: 'usr-accountant-default-03',
+      username: 'accountant',
+      name: 'المحاسب المالي المعتمد',
+      email: 'accountant@luxuryhome.sa',
+      passwordHash: accountantHash,
+      role: 'ACCOUNTANT',
+      allowedProperties: ['all'],
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+
+    const receptionHash = await hashPassword('Recept@2026!');
+    users.push({
+      id: 'usr-reception-default-04',
+      username: 'reception',
+      name: 'موظف الاستقبال والضيافة',
+      email: 'reception@luxuryhome.sa',
+      passwordHash: receptionHash,
+      role: 'RECEPTIONIST',
+      allowedProperties: ['all'],
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+
     memoryState = {
-      users: [],
-      settings: {
+      users,
+      settings: initialCompanySettings || {
         companyName: 'Luxury home منزل الفخامة',
         companyNameEn: 'Luxury Home',
         tagline: 'تجربة سكنية فاخرة تدمج بين خصوصية المنزل وخدمات الضيافة الراقية'
       },
-      properties: [],
-      floors: [],
-      amenities: [],
-      units: [],
-      parkingSpots: [],
-      allocations: [],
-      bookings: [],
-      leases: [],
+      properties: Array.isArray(initialProperties) ? JSON.parse(JSON.stringify(initialProperties)) : [],
+      floors: Array.isArray(initialFloors) ? JSON.parse(JSON.stringify(initialFloors)) : [],
+      amenities: Array.isArray(initialAmenities) ? JSON.parse(JSON.stringify(initialAmenities)) : [],
+      units: Array.isArray(initialUnits) ? JSON.parse(JSON.stringify(initialUnits)) : [],
+      parkingSpots: Array.isArray(initialParkingSpots) ? JSON.parse(JSON.stringify(initialParkingSpots)) : [],
+      allocations: Array.isArray(initialAllocations) ? JSON.parse(JSON.stringify(initialAllocations)) : [],
+      bookings: Array.isArray(initialBookings) ? JSON.parse(JSON.stringify(initialBookings)) : [],
+      leases: Array.isArray(initialLeases) ? JSON.parse(JSON.stringify(initialLeases)) : [],
       installments: [],
-      securityDeposits: [],
+      securityDeposits: Array.isArray(initialSecurityDeposits) ? initialSecurityDeposits.map((sd: any) => ({
+        ...sd,
+        collectedAmount: 0,
+        collectionReference: null,
+        collectionVerifiedAt: null,
+        refundedAmount: 0,
+        deductedAmount: 0
+      })) : [],
       securityDepositTransactions: [],
-      payments: [],
-      expenses: [],
+      payments: Array.isArray(initialPayments) ? JSON.parse(JSON.stringify(initialPayments)) : [],
+      expenses: Array.isArray(initialExpenses) ? JSON.parse(JSON.stringify(initialExpenses)) : [],
       expenseAllocations: [],
       expensePayments: [],
-      expenseCategories: [],
-      recurringSchedules: [],
-      tenantAdjustments: [],
-      contentSections: [],
+      expenseCategories: Array.isArray(initialExpenseCategories) ? JSON.parse(JSON.stringify(initialExpenseCategories)) : [],
+      recurringSchedules: Array.isArray(initialRecurringExpenses) ? JSON.parse(JSON.stringify(initialRecurringExpenses)) : [],
+      tenantAdjustments: Array.isArray(initialAdjustments) ? JSON.parse(JSON.stringify(initialAdjustments)) : [],
+      contentSections: Array.isArray(initialContentSections) ? JSON.parse(JSON.stringify(initialContentSections)) : [],
       documentRecords: [],
       idempotencyRecords: [],
-      auditLogs: []
+      auditLogs: Array.isArray(initialAuditLogs) ? JSON.parse(JSON.stringify(initialAuditLogs)) : []
     };
   } else {
     for (const key of REQUIRED_FULL_BACKUP_COLLECTIONS) {
       if (!Array.isArray(memoryState[key])) memoryState[key] = [];
     }
     if (memoryState.settings === undefined) {
-      memoryState.settings = {
+      memoryState.settings = initialCompanySettings || {
         companyName: 'Luxury home منزل الفخامة',
         companyNameEn: 'Luxury Home'
       };
+    }
+    // Verify super admin exists
+    const hasSuperAdmin = Array.isArray(memoryState.users) && memoryState.users.some((u: any) => u.role === 'SUPER_ADMIN' && u.isActive);
+    if (!hasSuperAdmin) {
+      const adminHash = await hashPassword(initialAdminPassword);
+      if (!Array.isArray(memoryState.users)) memoryState.users = [];
+      memoryState.users.push({
+        id: 'usr-admin-default-01',
+        username: initialAdminUsername,
+        name: 'مدير النظام الرئيسي',
+        email: initialAdminEmail,
+        passwordHash: adminHash,
+        role: 'SUPER_ADMIN',
+        allowedProperties: ['all'],
+        isActive: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+    }
+    if (memoryState.properties.length === 0 && Array.isArray(initialProperties) && initialProperties.length > 0) {
+      memoryState.properties = JSON.parse(JSON.stringify(initialProperties));
+      memoryState.floors = JSON.parse(JSON.stringify(initialFloors || []));
+      memoryState.units = JSON.parse(JSON.stringify(initialUnits || []));
     }
     // Clean up any historical orphaned test records to preserve strict relational integrity
     const unitIds = new Set((memoryState.units || []).map((u: any) => u.id));
@@ -1625,12 +1761,13 @@ export async function startServer(customPort?: number) {
 
     if (process.env.DATABASE_URL) {
       try {
-        const [settings, properties, units, bookings, leases, expenses, auditLogs] = await Promise.all([
+        const [settings, properties, units, bookings, leases, allocations, expenses, auditLogs] = await Promise.all([
           getCompanySettingsFromDb(),
           getPropertiesFromDb(allowed),
           getUnitsFromDb(allowed),
           getBookingsFromDb(allowed),
           getLeasesFromDb(allowed),
+          getAllocationsFromDb(allowed),
           getExpensesFromDb(allowed),
           user.role === 'SUPER_ADMIN' ? getAuditLogsFromDb(100) : []
         ]);
@@ -1712,6 +1849,7 @@ export async function startServer(customPort?: number) {
             units,
             bookings,
             leases,
+            allocations,
             expenses,
             securityDeposits,
             payments,
@@ -1730,7 +1868,8 @@ export async function startServer(customPort?: number) {
       success: true,
       state: {
         ...memoryState,
-        floors: memoryState?.floors || []
+        floors: memoryState?.floors || [],
+        allocations: memoryState?.allocations || []
       },
       timestamp: Date.now()
     });
@@ -1739,7 +1878,7 @@ export async function startServer(customPort?: number) {
   // 5. Unified Reservation & Lease API with Atomic Overlap Prevention
   apiRouter.post('/bookings/daily', async (req: Request, res: Response) => {
     try {
-      const result = await processDailyReservation(req.body);
+      const result = await processDailyReservation(req.body, { state: memoryState, persist: persistFallbackState });
 
       await recordAuditLogInDb({
         userName: req.body.guestName || 'حجز إلكتروني',
@@ -1761,7 +1900,7 @@ export async function startServer(customPort?: number) {
 
   apiRouter.post('/leases/contract', async (req: Request, res: Response) => {
     try {
-      const result = await processLeaseContract(req.body);
+      const result = await processLeaseContract(req.body, { state: memoryState, persist: persistFallbackState });
 
       await recordAuditLogInDb({
         userName: req.body.tenantName || 'عقد إيجار',
@@ -1781,111 +1920,31 @@ export async function startServer(customPort?: number) {
     }
   });
 
-  // Legacy Check & Reserve compatibility endpoint
+  // Check & Reserve unified endpoint
   apiRouter.post('/bookings/check-and-reserve', async (req: Request, res: Response) => {
     try {
-      const { unitId, startDate, endDate, guestName, rentalType, totalAmount } = req.body;
+      const { unitId, startDate, endDate, guestName, guestPhone, totalAmount } = req.body;
 
       if (!unitId || !startDate || !endDate) {
         return res.status(400).json({ success: false, message: 'معلومات الحجز غير مكتملة.' });
       }
 
-      const start = new Date(startDate).getTime();
-      const end = new Date(endDate).getTime();
+      const idempotencyKey = (req.get('X-Idempotency-Key') || req.body.idempotencyKey || '').trim();
 
-      if (isNaN(start) || isNaN(end) || start >= end) {
-        return res.status(400).json({ success: false, message: 'تواريخ الحجز غير صالحة.' });
-      }
-
-      // Check conflict against memory state
-      if (!memoryState.bookings) memoryState.bookings = [];
-      if (!memoryState.allocations) memoryState.allocations = [];
-
-      const existingBookings = (memoryState.bookings || []).filter((b: any) => b.unitId === unitId && b.status !== 'cancelled');
-      const existingAllocations = (memoryState.allocations || []).filter((a: any) => a.unitId === unitId && a.status === 'active');
-
-      const hasConflict = existingBookings.some((b: any) => {
-        const bStart = new Date(b.startDate || b.checkIn).getTime();
-        const bEnd = new Date(b.endDate || b.checkOut).getTime();
-        return (start < bEnd && end > bStart);
-      }) || existingAllocations.some((a: any) => {
-        const aStart = new Date(a.startDate).getTime();
-        const aEnd = new Date(a.endDate).getTime();
-        return (start < aEnd && end > aStart);
-      });
-
-      if (hasConflict) {
-        return res.status(409).json({
-          success: false,
-          conflict: true,
-          message: 'عذراً، هذه الوحدة محجوزة بالفعل في الفترة المحددة.'
-        });
-      }
-
-      if (process.env.DATABASE_URL) {
-        const result = await processDailyReservation({
-          unitId,
-          checkIn: startDate,
-          checkOut: endDate,
-          guestName: guestName || 'عميل حجز',
-          guestPhone: req.body.guestPhone || '+966500000000'
-        });
-        return res.json({
-          success: true,
-          booking: result.booking,
-          allocation: result.allocation,
-          message: 'تم تأكيد الحجز وإقفال الفترة الزمنية لمنع أي تداخل متزامن.'
-        });
-      }
-
-      // Memory registration
-      const bookingNumber = `LH-${Math.floor(100000 + Math.random() * 900000)}`;
-      const newBooking = {
-        id: `bk_${Date.now()}`,
-        bookingNumber,
+      const result = await processDailyReservation({
         unitId,
+        checkIn: startDate,
+        checkOut: endDate,
         guestName: guestName || 'عميل حجز',
-        startDate,
-        endDate,
-        rentalType: rentalType || 'daily',
-        totalAmount: totalAmount || 850,
-        status: 'confirmed',
-        createdAt: new Date().toISOString()
-      };
-
-      const newAllocation = {
-        id: `alloc_${Date.now()}`,
-        unitId,
-        startDate,
-        endDate,
-        rentalType: (rentalType || 'daily').toUpperCase(),
-        referenceId: bookingNumber,
-        purpose: 'booking',
-        status: 'active'
-      };
-
-      memoryState.bookings.push(newBooking);
-      memoryState.allocations.push(newAllocation);
-
-      if (!memoryState.securityDeposits) memoryState.securityDeposits = [];
-      const newDeposit = {
-        id: `sd_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-        bookingId: newBooking.id,
-        amount: 1000,
-        collectedAmount: 0,
-        collectionReference: null,
-        collectionVerifiedAt: null,
-        status: 'held',
-        refundedAmount: 0,
-        deductedAmount: 0,
-        createdAt: new Date().toISOString()
-      };
-      memoryState.securityDeposits.push(newDeposit);
+        guestPhone: guestPhone || '+966500000000',
+        totalAmount,
+        idempotencyKey: idempotencyKey || undefined
+      }, { state: memoryState, persist: persistFallbackState });
 
       return res.json({
         success: true,
-        booking: newBooking,
-        allocation: newAllocation,
+        booking: result.booking,
+        allocation: result.allocation,
         message: 'تم تأكيد الحجز وإقفال الفترة الزمنية لمنع أي تداخل متزامن.'
       });
     } catch (err: any) {
@@ -2034,6 +2093,154 @@ export async function startServer(customPort?: number) {
     }
   });
 
+  // Check-In Endpoint
+  apiRouter.post('/bookings/:id/check-in', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const updated = await checkInBooking(id, { state: memoryState, persist: persistFallbackState });
+      await recordAuditLogInDb({
+        userId: req.user?.userId,
+        userName: `${req.user?.username || 'الموظف'} (${req.user?.role})`,
+        action: 'تسجيل دخول نزيل',
+        module: 'إدارة الحجوزات',
+        details: `تسجيل دخول الحجز ${id} وتحديث حالة إشغال الشقة ميدانياً.`,
+        ipAddress: req.ip
+      });
+      return res.json({ success: true, booking: updated, message: 'تم تسجيل دخول النزيل بنجاح.' });
+    } catch (err: any) {
+      return res.status(400).json({ success: false, message: err?.message || 'فشل تسجيل الدخول.' });
+    }
+  });
+
+  // Check-Out Endpoint
+  apiRouter.post('/bookings/:id/check-out', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const updated = await checkOutBooking(id, { state: memoryState, persist: persistFallbackState });
+      await recordAuditLogInDb({
+        userId: req.user?.userId,
+        userName: `${req.user?.username || 'الموظف'} (${req.user?.role})`,
+        action: 'تسجيل خروج نزيل',
+        module: 'إدارة الحجوزات',
+        details: `تسجيل خروج الحجز ${id} وتحرير التخصيص وإحالة الوحدة للتنظيف الفندقي.`,
+        ipAddress: req.ip
+      });
+      return res.json({ success: true, booking: updated, message: 'تم تسجيل خروج النزيل وإحالة الوحدة للتجهيز.' });
+    } catch (err: any) {
+      return res.status(400).json({ success: false, message: err?.message || 'فشل تسجيل الخروج.' });
+    }
+  });
+
+  // Modify Booking Endpoint (Atomic Date/Unit Change)
+  apiRouter.post('/bookings/:id/modify', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const updated = await modifyBooking(id, req.body, { state: memoryState, persist: persistFallbackState });
+      await recordAuditLogInDb({
+        userId: req.user?.userId,
+        userName: `${req.user?.username || 'الموظف'} (${req.user?.role})`,
+        action: 'تعديل حجز قائم',
+        module: 'إدارة الحجوزات',
+        details: `تعديل تواريخ أو وحدة الحجز ${id} مع إعادة فحص التداخل بالخادم.`,
+        ipAddress: req.ip
+      });
+      return res.json({ success: true, booking: updated, message: 'تم تعديل الحجز بنجاح.' });
+    } catch (err: any) {
+      const status = err.statusCode || 400;
+      return res.status(status).json({ success: false, message: err?.message || 'فشل تعديل الحجز.' });
+    }
+  });
+
+  // Early Lease Termination Endpoint
+  apiRouter.post('/leases/:id/terminate-early', authenticateToken, requireRoles(['SUPER_ADMIN', 'PROPERTY_MANAGER', 'ACCOUNTANT']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { terminationDate, reason } = req.body;
+      if (!terminationDate) {
+        return res.status(400).json({ success: false, message: 'تاريخ الإنهاء المبكر مطلوب.' });
+      }
+      const updated = await earlyTerminateLease(id, terminationDate, reason, { state: memoryState, persist: persistFallbackState });
+      await recordAuditLogInDb({
+        userId: req.user?.userId,
+        userName: `${req.user?.username || 'المسؤول'} (${req.user?.role})`,
+        action: 'إنهاء عقد مبكر',
+        module: 'عقود الإيجار',
+        details: `إنهاء مبكر للعقد ${id} بتاريخ ${terminationDate} للسبب: ${reason || 'غير محدد'}. تم تعديل التخصيص الزمني دون حذف المدفوعات السابقة.`,
+        ipAddress: req.ip
+      });
+      return res.json({ success: true, lease: updated, message: 'تم توثيق الإنهاء المبكر وتعديل التخصيص الزمني بنجاح.' });
+    } catch (err: any) {
+      return res.status(400).json({ success: false, message: err?.message || 'فشل توثيق الإنهاء المبكر للعقد.' });
+    }
+  });
+
+  // Lease Extension Endpoint
+  apiRouter.post('/leases/:id/extend', authenticateToken, requireRoles(['SUPER_ADMIN', 'PROPERTY_MANAGER']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { additionalMonths } = req.body;
+      if (!additionalMonths || typeof additionalMonths !== 'number') {
+        return res.status(400).json({ success: false, message: 'عدد أشهر التمديد مطلوب بصيغة رقمية صحيحة.' });
+      }
+      const result = await extendLease(id, additionalMonths, { state: memoryState, persist: persistFallbackState });
+      await recordAuditLogInDb({
+        userId: req.user?.userId,
+        userName: `${req.user?.username || 'المسؤول'} (${req.user?.role})`,
+        action: 'تمديد عقد إيجار',
+        module: 'عقود الإيجار',
+        details: `تمديد العقد ${id} لمدة ${additionalMonths} شهر مع التحقق من خلو الفترة وتوليد الأقساط دون فروق.`,
+        ipAddress: req.ip
+      });
+      return res.json({ success: true, ...result, message: 'تم تمديد العقد وجدولة الأقساط الإضافية بنجاح.' });
+    } catch (err: any) {
+      const status = err.statusCode || 400;
+      return res.status(status).json({ success: false, message: err?.message || 'فشل تمديد العقد.' });
+    }
+  });
+
+  // Unit Block & Unblock Endpoints
+  apiRouter.post('/units/:id/block', authenticateToken, requireRoles(['SUPER_ADMIN', 'PROPERTY_MANAGER']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { startDate, endDate, reason } = req.body;
+      if (!startDate || !endDate) {
+        return res.status(400).json({ success: false, message: 'تاريخ بداية ونهاية الحجب مطلوبان.' });
+      }
+      const allocation = await blockUnit(id, startDate, endDate, reason, { state: memoryState, persist: persistFallbackState });
+      await recordAuditLogInDb({
+        userId: req.user?.userId,
+        userName: `${req.user?.username || 'المسؤول'} (${req.user?.role})`,
+        action: 'حجب وحدة إدارياً',
+        module: 'إدارة العقارات والوحدات',
+        details: `حجب الوحدة ${id} من ${startDate} إلى ${endDate} للسبب: ${reason || 'حجب إداري'}.`,
+        ipAddress: req.ip
+      });
+      return res.json({ success: true, allocation, message: 'تم حجب الوحدة وتسجيل التخصيص بنجاح.' });
+    } catch (err: any) {
+      const status = err.statusCode || 400;
+      return res.status(status).json({ success: false, message: err?.message || 'فشل حجب الوحدة.' });
+    }
+  });
+
+  apiRouter.post('/units/:id/unblock', authenticateToken, requireRoles(['SUPER_ADMIN', 'PROPERTY_MANAGER']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { allocationId } = req.body;
+      const result = await unblockUnit(id, allocationId, { state: memoryState, persist: persistFallbackState });
+      await recordAuditLogInDb({
+        userId: req.user?.userId,
+        userName: `${req.user?.username || 'المسؤول'} (${req.user?.role})`,
+        action: 'فك حجب وحدة',
+        module: 'إدارة العقارات والوحدات',
+        details: `فك حجب الوحدة ${id} وإعادتها لحالة الجاهزية التشغيلية.`,
+        ipAddress: req.ip
+      });
+      return res.json(result);
+    } catch (err: any) {
+      return res.status(400).json({ success: false, message: err?.message || 'فشل فك حجب الوحدة.' });
+    }
+  });
+
   // Security Deposit Processing & Refund Endpoint (Explicit Financial Action)
   apiRouter.post(
     '/security-deposits/:id/refund',
@@ -2131,6 +2338,7 @@ export async function startServer(customPort?: number) {
           installmentId: body.installmentId,
           amount: body.amount,
           reason: body.reason,
+          approvalReference: body.approvalReference,
           actorId: req.user.userId,
           idempotencyKey: req.get('X-Idempotency-Key') || body?.idempotencyKey,
         });

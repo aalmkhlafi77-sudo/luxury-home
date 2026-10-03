@@ -168,30 +168,62 @@ export const CalendarTimeline: React.FC<CalendarTimelineProps> = ({ onSelectUnit
                       return Math.max(dayStartMs, aStartMs) <= Math.min(dayEndMs, aEndMs);
                     });
 
+                    // Comprehensive check for active long leases or bookings spanning this day
+                    let leaseFallback = null;
+                    let bookingFallback = null;
+                    if (!matchingAlloc) {
+                      leaseFallback = state.leases.find(l => {
+                        if (l.unitId !== unit.id || (l.status as string) === 'cancelled' || (l.status as string) === 'terminated_early' || l.status === 'terminated') return false;
+                        const lStartMs = new Date(l.startDate).getTime();
+                        const lEndMs = new Date(l.endDate).getTime();
+                        return Math.max(dayStartMs, lStartMs) <= Math.min(dayEndMs, lEndMs);
+                      });
+                      if (!leaseFallback) {
+                        bookingFallback = state.bookings.find(b => {
+                          if (b.unitId !== unit.id || b.status === 'cancelled') return false;
+                          const bStartMs = new Date((b as any).startDate || b.checkIn).getTime();
+                          const bEndMs = new Date((b as any).endDate || b.checkOut).getTime();
+                          return Math.max(dayStartMs, bStartMs) <= Math.min(dayEndMs, bEndMs);
+                        });
+                      }
+                    }
+
                     let cellContent = null;
-                    if (matchingAlloc) {
+                    if (matchingAlloc || leaseFallback || bookingFallback) {
                       let colorClass = 'bg-rose-100 text-rose-800 border-rose-300';
                       let label = 'يومي';
-                      if (matchingAlloc.type === 'lease') {
-                        const lease = state.leases.find(l => l.id === matchingAlloc.referenceId);
-                        if (lease?.type === 'yearly') {
-                          colorClass = 'bg-amber-100 text-amber-900 border-amber-300';
-                          label = 'عقد سنوي';
-                        } else {
-                          colorClass = 'bg-blue-100 text-blue-800 border-blue-300';
-                          label = 'عقد شهري';
+
+                      if (matchingAlloc) {
+                        const allocType = ((matchingAlloc as any).type || (matchingAlloc as any).purpose || '').toLowerCase();
+                        const rentalType = ((matchingAlloc as any).rentalType || '').toUpperCase();
+                        if (allocType === 'lease' || rentalType === 'ANNUAL' || rentalType === 'MONTHLY') {
+                          const lease = state.leases.find(l => l.id === matchingAlloc.referenceId);
+                          if (lease?.rentalType === 'yearly' || (lease as any)?.type === 'yearly' || rentalType === 'ANNUAL') {
+                            colorClass = 'bg-amber-100 text-amber-900 border-amber-300';
+                            label = 'عقد سنوي';
+                          } else {
+                            colorClass = 'bg-blue-100 text-blue-800 border-blue-300';
+                            label = 'عقد شهري';
+                          }
+                        } else if (allocType === 'maintenance') {
+                          colorClass = 'bg-purple-100 text-purple-800 border-purple-300';
+                          label = 'صيانة';
+                        } else if (allocType === 'block') {
+                          colorClass = 'bg-slate-100 text-slate-800 border-slate-300';
+                          label = 'مغلق';
                         }
-                      } else if (matchingAlloc.type === 'maintenance') {
-                        colorClass = 'bg-purple-100 text-purple-800 border-purple-300';
-                        label = 'صيانة';
-                      } else if (matchingAlloc.type === 'block') {
-                        colorClass = 'bg-slate-100 text-slate-800 border-slate-300';
-                        label = 'مغلق';
+                      } else if (leaseFallback) {
+                        const isYearly = leaseFallback.rentalType === 'yearly' || (leaseFallback as any).type === 'yearly' || (leaseFallback as any).rentalType === 'annual';
+                        colorClass = isYearly ? 'bg-amber-100 text-amber-900 border-amber-300' : 'bg-blue-100 text-blue-800 border-blue-300';
+                        label = isYearly ? 'عقد سنوي' : 'عقد شهري';
+                      } else if (bookingFallback) {
+                        colorClass = 'bg-rose-100 text-rose-800 border-rose-300';
+                        label = 'حجز فندقي';
                       }
 
                       cellContent = (
                         <div
-                          title={`${label}: ${matchingAlloc.notes || ''}`}
+                          title={`${label}: ${matchingAlloc?.notes || leaseFallback?.tenant?.fullName || bookingFallback?.guest?.fullName || ''}`}
                           onClick={() => onSelectUnit(unit)}
                           className={`w-full h-8 rounded-lg border px-0.5 flex items-center justify-center text-[10px] sm:text-[11px] font-bold ${colorClass} truncate cursor-pointer hover:opacity-90 select-none`}
                         >

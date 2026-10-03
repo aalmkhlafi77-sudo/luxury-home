@@ -1445,6 +1445,136 @@ async function runApiTests() {
       failures++;
     }
 
+    // =====================================================
+    // Test 18: Exact Cost Allocation & Accrual Engine (Phase 3)
+    // =====================================================
+    console.log('\n[Test 18] Testing Exact Cost Allocation Engine (Phase 3 Requirements)...');
+
+    const allocReq = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/financials/calculate-distribution',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    }, {
+      buildingRent: 120000,
+      guardSalary: 3000,
+      adminSalary: 10000,
+      electricityBill: 1500,
+      directMaintenance: 500,
+      allocationMethod: 'EQUAL_UNITS'
+    });
+
+    if (allocReq.status === 200 && allocReq.data?.success) {
+      const summary = allocReq.data.summary;
+      if (summary.discrepancyHalalas === 0 && summary.companyTotalOPEX === summary.sumAllocatedAllUnits) {
+        console.log(`✅ PASS: Total cost allocations equal original expense to the exact halalah (Discrepancy: ${summary.discrepancyHalalas} ر.س)!`);
+      } else {
+        console.error('❌ FAIL: Halala rounding discrepancy found in cost allocation:', summary);
+        failures++;
+      }
+    } else {
+      console.error('❌ FAIL: Cost allocation calculation returned error:', allocReq.status, allocReq.data);
+      failures++;
+    }
+
+    // Test Capital Asset (FF&E) isolation from direct OPEX
+    const ffeAllocReq = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/financials/allocate',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    }, {
+      title: 'شراء أثاث ومكيفات جديدة (FF&E)',
+      amount: 45000,
+      costCenterLevel: 'PROPERTY',
+      allocationMethod: 'EQUAL_UNITS',
+      startDate: '2026-10-01',
+      endDate: '2026-10-31',
+      isCapitalAsset: true,
+      units: [
+        { id: 'u1', unitNumber: '101', areaSqm: 60, isOccupied: true },
+        { id: 'u2', unitNumber: '102', areaSqm: 60, isOccupied: true }
+      ]
+    });
+
+    if (ffeAllocReq.data?.allocationMethod === 'CAPITAL_ASSET_FFE' && ffeAllocReq.data?.distributedAmount === 0 && ffeAllocReq.data?.unallocatedAmount === 45000) {
+      console.log('✅ PASS: Capital assets (FF&E) correctly isolated from direct operational cost distribution!');
+    } else {
+      console.error('❌ FAIL: Capital asset allocation was not isolated:', ffeAllocReq.data);
+      failures++;
+    }
+
+    // Test zero basis handling (retained with clear note, not hidden)
+    const zeroBasisReq = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/financials/allocate',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    }, {
+      title: 'فاتورة مياه موزعة حسب الإشغال',
+      amount: 2500,
+      costCenterLevel: 'PROPERTY',
+      allocationMethod: 'OCCUPANCY_DAYS',
+      startDate: '2026-10-01',
+      endDate: '2026-10-31',
+      units: [
+        { id: 'u1', unitNumber: '101', areaSqm: 60, isOccupied: false, occupancyDaysInPeriod: 0 },
+        { id: 'u2', unitNumber: '102', areaSqm: 60, isOccupied: false, occupancyDaysInPeriod: 0 }
+      ]
+    });
+
+    if (zeroBasisReq.data?.unallocatedAmount === 2500 && zeroBasisReq.data?.distributedAmount === 0) {
+      console.log('✅ PASS: Zero allocation basis retained transparently as unallocated cost with clear reason!');
+    } else {
+      console.error('❌ FAIL: Zero basis allocation was not handled properly:', zeroBasisReq.data);
+      failures++;
+    }
+
+    // =====================================================
+    // Test 19: Security Deposit Available Balance & Cashless Settlement Math
+    // =====================================================
+    console.log('\n[Test 19] Testing Security Deposit Available Balance & Cashless Settlement Math...');
+
+    const { availableDeposit } = await import('../src/server/depositRefundService.js');
+
+    // 19.1 Deposit 1000 collected, 600 applied to rent -> Available must be 400
+    const avail1 = availableDeposit({
+      collectedAmount: '1000.00',
+      refundedAmount: '0.00',
+      damageDeductedAmount: '0.00',
+      rentAppliedAmount: '600.00'
+    });
+
+    if (avail1.eq(400)) {
+      console.log('✅ PASS: Acceptance Test 1 Verified: Deposit 1000 with 600 rent applied leaves exactly 400 available!');
+    } else {
+      console.error('❌ FAIL: Available deposit incorrect:', avail1.toString());
+      failures++;
+    }
+
+    // 19.2 Excess check: throws error when deductions exceed collection
+    let didThrow = false;
+    try {
+      availableDeposit({
+        collectedAmount: '500.00',
+        refundedAmount: '200.00',
+        damageDeductedAmount: '200.00',
+        rentAppliedAmount: '300.00' // Total 700 > 500
+      });
+    } catch {
+      didThrow = true;
+    }
+
+    if (didThrow) {
+      console.log('✅ PASS: Acceptance Test: Over-allocation beyond deposit collection strictly rejected with error!');
+    } else {
+      console.error('❌ FAIL: availableDeposit did not throw on over-allocation!');
+      failures++;
+    }
+
     console.log('\n=====================================================');
     if (failures === 0) {
       console.log('🎉 ALL API, UNIT PERSISTENCE & SECURITY TESTS PASSED (0 Failures)');

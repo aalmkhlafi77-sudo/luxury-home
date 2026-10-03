@@ -258,10 +258,13 @@ export function generateTenantStatement(
     .reduce((sum, p) => sum + (p.unallocatedAmount || 0), 0);
 
   const securityDepositHeld = relevantDeposits
-    .filter(d => d.status === 'held')
     .reduce((sum, d) => {
-      const deducted = (d.deductions || []).reduce((s, x) => s + x.amount, 0);
-      return sum + Math.max(0, d.amount - deducted);
+      const collected = d.collectedAmount ?? d.amount ?? 0;
+      const refunded = d.refundedAmount ?? d.refundAmount ?? 0;
+      const damage = d.deductedAmount ?? (d.deductions || []).reduce((s, x) => s + x.amount, 0);
+      const applied = d.rentAppliedAmount ?? 0;
+      const avail = Math.max(0, collected - refunded - damage - applied);
+      return sum + avail;
     }, 0);
 
   // currentNetBalance is total due to date minus paid, minus adjustments

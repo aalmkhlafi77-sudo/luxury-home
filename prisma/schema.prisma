@@ -333,8 +333,11 @@ model PaymentRecord {
   booking       Booking?  @relation(fields: [bookingId], references: [id], onDelete: SetNull)
   leaseId       String?
   lease         Lease?    @relation(fields: [leaseId], references: [id], onDelete: SetNull)
+  installmentId String?
   amount        Decimal   @db.Decimal(12, 2)
-  paymentMethod String    // cash, card, bank_transfer, mada, apple_pay
+  paymentMethod String    // cash, card, bank_transfer, mada, apple_pay, security_deposit
+  sourceType    String?   @default("direct_payment") // direct_payment, deposit_application, reversal
+  affectsCash   Boolean   @default(true)
   receiptNo     String?
   referenceNo   String?
   status        String    @default("completed") // completed, pending, refunded
@@ -356,6 +359,7 @@ model SecurityDepositRecord {
   status               String    @default("held") // held, pending_refund, refunded, partially_refunded, deducted
   deductedAmount       Decimal   @default(0) @db.Decimal(12, 2)
   refundedAmount       Decimal   @default(0) @db.Decimal(12, 2)
+  rentAppliedAmount    Decimal   @default(0) @db.Decimal(12, 2)
   deductionReason  String?
   refundMethod     String?   // bank_transfer, gateway_reversal, cash
   refundReference  String?
@@ -369,20 +373,22 @@ model SecurityDepositRecord {
 }
 
 model SecurityDepositTransaction {
-  id               String                @id @default(uuid())
-  depositId        String
-  deposit          SecurityDepositRecord @relation(fields: [depositId], references: [id], onDelete: Cascade)
-  type             String                // refund, deduction, preauth_release
-  amount           Decimal               @db.Decimal(12, 2)
-  method           String                // bank_transfer, gateway_reversal, cash, mada
-  reference        String                // Payment receipt / transfer reference
-  reason           String?
-  executedByUserId String?
-  executedAt       DateTime              @default(now())
-  status           String                @default("completed") // completed, pending_provider
-  idempotencyKey   String?               @unique
-  notes            String?
-  createdAt        DateTime              @default(now())
+  id                  String                @id @default(uuid())
+  depositId           String
+  deposit             SecurityDepositRecord @relation(fields: [depositId], references: [id], onDelete: Cascade)
+  type                String                // refund, deduction, preauth_release, rent_application
+  amount              Decimal               @db.Decimal(12, 2)
+  method              String                // bank_transfer, gateway_reversal, cash, mada, security_deposit
+  reference           String                // Payment receipt / transfer reference
+  reason              String?
+  targetLeaseId       String?
+  targetInstallmentId String?
+  executedByUserId    String?
+  executedAt          DateTime              @default(now())
+  status              String                @default("completed") // completed, pending_provider
+  idempotencyKey      String?               @unique
+  notes               String?
+  createdAt           DateTime              @default(now())
 
   @@index([depositId])
 }

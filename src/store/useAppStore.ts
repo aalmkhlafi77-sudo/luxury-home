@@ -384,6 +384,7 @@ export async function loadAuthoritativeServerState(force: boolean = false) {
           units: Array.isArray(s.units) ? s.units.map(normalizeUnitFromServer) : globalState.units,
           bookings: Array.isArray(s.bookings) ? s.bookings : globalState.bookings,
           leases: Array.isArray(s.leases) ? s.leases : globalState.leases,
+          allocations: Array.isArray(s.allocations) ? s.allocations : globalState.allocations,
           expenses: Array.isArray(s.expenses) ? s.expenses : globalState.expenses,
           securityDeposits: Array.isArray(s.securityDeposits) ? s.securityDeposits : globalState.securityDeposits,
           payments: Array.isArray(s.payments) ? s.payments : globalState.payments,
