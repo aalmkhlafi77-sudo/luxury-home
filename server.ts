@@ -2477,6 +2477,25 @@ export async function startServer(customPort?: number) {
       if (!terminationDate) {
         return res.status(400).json({ success: false, message: 'تاريخ الإنهاء المبكر مطلوب.' });
       }
+
+      const user = req.user!;
+      if (user.role !== 'SUPER_ADMIN') {
+        let leasePropId: string | null = null;
+        if (process.env.DATABASE_URL) {
+          const l = await prisma.lease.findUnique({ where: { id }, include: { unit: true } });
+          leasePropId = l?.unit?.propertyId || null;
+        } else {
+          const l = (memoryState?.leases || []).find((lease: any) => lease.id === id);
+          if (l) {
+            const u = (memoryState?.units || []).find((unit: any) => unit.id === l.unitId);
+            leasePropId = u?.propertyId || null;
+          }
+        }
+        if (leasePropId && !user.allowedProperties?.includes(leasePropId)) {
+          return res.status(403).json({ success: false, message: 'غير مصرح لمدير العقار بإنهاء عقد يتبع مبنى خارج نطاق صلاحياته المعتمدة.' });
+        }
+      }
+
       const updated = await earlyTerminateLease(id, terminationDate, reason, { state: memoryState, persist: persistFallbackState });
       await recordAuditLogInDb({
         userId: req.user?.userId,

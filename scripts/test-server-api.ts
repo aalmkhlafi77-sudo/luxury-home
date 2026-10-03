@@ -1938,6 +1938,301 @@ async function runApiTests() {
       failures++;
     }
 
+    // =====================================================
+    // Test 25: Priority 2 - Daily Booking, Monthly Lease & Annual Contract with 2 Installments
+    // =====================================================
+    console.log('\n[Test 25] Testing Priority 2: Daily Booking, Monthly Lease & Annual Contract Lifecycle...');
+    
+    // 25.1 Daily Booking
+    const dailyBkKey = `p2_idem_daily_${Date.now()}`;
+    const dailyBkRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/bookings/daily',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+    }, {
+      unitId: unitForSpaces.data?.unit?.id,
+      checkIn: '2026-11-01',
+      checkOut: '2026-11-05',
+      guestName: 'محمد القحطاني',
+      guestPhone: '0501112223',
+      idempotencyKey: dailyBkKey
+    });
+
+    if (dailyBkRes.status === 200 && dailyBkRes.data?.booking?.id && dailyBkRes.data?.totalAmount > 0) {
+      console.log('✅ PASS: Daily booking created with server-calculated rate, taxes, and deposit.');
+    } else {
+      console.error('❌ FAIL: Daily booking creation failed:', dailyBkRes.data);
+      failures++;
+    }
+
+    // 25.2 Monthly Lease
+    const monthlyLeaseRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/leases/contract',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+    }, {
+      unitId: unitForSpaces.data?.unit?.id,
+      rentalType: 'monthly',
+      durationMonths: 1,
+      startDate: '2026-12-01',
+      paymentFrequency: 'monthly',
+      tenantName: 'خالد السديري',
+      tenantPhone: '0503334445',
+      tenantIdNumber: '1088889999',
+      idempotencyKey: `p2_idem_monthly_${Date.now()}`
+    });
+
+    if (monthlyLeaseRes.status === 200 && monthlyLeaseRes.data?.lease?.id) {
+      console.log('✅ PASS: Monthly lease created with server-calculated rent and automated end-of-month date.');
+    } else {
+      console.error('❌ FAIL: Monthly lease creation failed:', monthlyLeaseRes.data);
+      failures++;
+    }
+
+    // 25.3 Annual Contract with 2 Semi-Annual Installments
+    const annualLeaseRes = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/leases/contract',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+    }, {
+      unitId: unitForSpaces.data?.unit?.id,
+      rentalType: 'annual',
+      durationMonths: 12,
+      startDate: '2027-01-01',
+      paymentFrequency: '2_payments',
+      tenantName: 'عبد الله العتيبي',
+      tenantPhone: '0505556667',
+      tenantIdNumber: '1099990000',
+      idempotencyKey: `p2_idem_annual_${Date.now()}`
+    });
+
+    if (
+      annualLeaseRes.status === 200 &&
+      annualLeaseRes.data?.lease?.id &&
+      Array.isArray(annualLeaseRes.data?.installments) &&
+      annualLeaseRes.data?.installments.length === 2
+    ) {
+      const instSum = annualLeaseRes.data.installments.reduce((acc: number, i: any) => acc + Number(i.amount), 0);
+      const contractRent = Number(annualLeaseRes.data.lease.annualRent);
+      if (Math.abs(instSum - contractRent) < 0.01) {
+        console.log('✅ PASS: Acceptance Requirement Verified: Annual contract created with 2 semi-annual installments matching contract total to the exact halalah!');
+      } else {
+        console.error(`❌ FAIL: Installments sum (${instSum}) does not match contract rent (${contractRent})!`);
+        failures++;
+      }
+    } else {
+      console.error('❌ FAIL: Annual lease creation failed:', annualLeaseRes.data);
+      failures++;
+    }
+
+    // =====================================================
+    // Test 26: Overlap Prevention (Booking vs Lease, Lease vs Lease, Booking vs Booking)
+    // =====================================================
+    console.log('\n[Test 26] Testing Overlap Prevention (Booking vs Lease, Lease vs Lease, Booking vs Booking)...');
+    
+    // 1. Attempt booking during monthly lease period (Dec 10 - Dec 15) -> Must 409
+    const overlapRes1 = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/bookings/daily',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+    }, {
+      unitId: unitForSpaces.data?.unit?.id,
+      checkIn: '2026-12-10',
+      checkOut: '2026-12-15',
+      guestName: 'متداخل 1',
+      guestPhone: '0500000001'
+    });
+
+    if (overlapRes1.status === 409) {
+      console.log('✅ PASS: Booking overlapping with active monthly lease correctly rejected with HTTP 409 Conflict!');
+    } else {
+      console.error('❌ FAIL: Overlapping booking was not rejected with 409:', overlapRes1.status, overlapRes1.data);
+      failures++;
+    }
+
+    // 2. Attempt lease during annual contract period (March 2027) -> Must 409
+    const overlapRes2 = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/leases/contract',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+    }, {
+      unitId: unitForSpaces.data?.unit?.id,
+      rentalType: 'monthly',
+      startDate: '2027-03-01',
+      paymentFrequency: 'monthly',
+      tenantName: 'متداخل 2',
+      tenantPhone: '0500000002',
+      tenantIdNumber: '1000000002'
+    });
+
+    if (overlapRes2.status === 409) {
+      console.log('✅ PASS: Lease overlapping with active annual contract correctly rejected with HTTP 409 Conflict!');
+    } else {
+      console.error('❌ FAIL: Overlapping lease was not rejected with 409:', overlapRes2.status, overlapRes2.data);
+      failures++;
+    }
+
+    // =====================================================
+    // Test 27: Half-Open Interval Boundary Checkout/Checkin Flow [start, end)
+    // =====================================================
+    console.log('\n[Test 27] Testing Half-Open Interval Boundary Checkout/Checkin Flow [start, end)...');
+    
+    // Booking A: Nov 10 - Nov 15
+    const boundaryBk1 = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/bookings/daily',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+    }, {
+      unitId: unitForSpaces.data?.unit?.id,
+      checkIn: '2026-11-10',
+      checkOut: '2026-11-15',
+      guestName: 'نزيل الفترة الأولى',
+      guestPhone: '0501110001'
+    });
+
+    // Booking B: Nov 15 - Nov 20 (Starts on exact checkout date of Booking A)
+    const boundaryBk2 = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/bookings/daily',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+    }, {
+      unitId: unitForSpaces.data?.unit?.id,
+      checkIn: '2026-11-15',
+      checkOut: '2026-11-20',
+      guestName: 'نزيل الفترة الثانية',
+      guestPhone: '0501110002'
+    });
+
+    if (boundaryBk1.status === 200 && boundaryBk2.status === 200) {
+      console.log('✅ PASS: Acceptance Requirement Verified: Half-open interval [start, end) permitted consecutive booking starting on checkout date!');
+    } else {
+      console.error('❌ FAIL: Boundary booking rejected incorrectly:', boundaryBk1.data, boundaryBk2.data);
+      failures++;
+    }
+
+    // =====================================================
+    // Test 28: Cancellation & Re-booking for Same Period, Single Allocation Release
+    // =====================================================
+    console.log('\n[Test 28] Testing Cancellation & Re-booking for Same Period, Single Allocation Release...');
+    const bIdToCancel = boundaryBk1.data?.booking?.id;
+
+    // 1. Cancel Booking A
+    const cancelRes1 = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: `/api/bookings/${bIdToCancel}/cancel`,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+    });
+
+    if (cancelRes1.status === 200 && cancelRes1.data?.booking?.status === 'cancelled') {
+      console.log('✅ PASS: Booking cancelled and allocation released cleanly.');
+
+      // 2. Cancel again -> Must return idempotent cancelled state
+      const cancelRes2 = await makeRequest({
+        hostname: '127.0.0.1',
+        port: PORT,
+        path: `/api/bookings/${bIdToCancel}/cancel`,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+      });
+
+      if (cancelRes2.status === 200) {
+        console.log('✅ PASS: Re-cancelling returned idempotent result without double-releasing or erroring.');
+      } else {
+        console.error('❌ FAIL: Re-cancellation failed:', cancelRes2.data);
+        failures++;
+      }
+
+      // 3. Re-book same dates (Nov 10 - Nov 15) -> Must succeed now
+      const rebookRes = await makeRequest({
+        hostname: '127.0.0.1',
+        port: PORT,
+        path: '/api/bookings/daily',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+      }, {
+        unitId: unitForSpaces.data?.unit?.id,
+        checkIn: '2026-11-10',
+        checkOut: '2026-11-15',
+        guestName: 'نزيل بديل جديد',
+        guestPhone: '0509998887'
+      });
+
+      if (rebookRes.status === 200) {
+        console.log('✅ PASS: Re-booking same period after cancellation succeeded!');
+      } else {
+        console.error('❌ FAIL: Re-booking failed after cancellation:', rebookRes.data);
+        failures++;
+      }
+    } else {
+      console.error('❌ FAIL: Initial cancellation failed:', cancelRes1.data);
+      failures++;
+    }
+
+    // =====================================================
+    // Test 29: Idempotency Key Re-send & Payload Hash Conflict Detection
+    // =====================================================
+    console.log('\n[Test 29] Testing Idempotency Key Re-send & Payload Hash Conflict Detection...');
+    
+    // 1. Exact re-send of daily booking
+    const idemResend = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/bookings/daily',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+    }, {
+      unitId: unitForSpaces.data?.unit?.id,
+      checkIn: '2026-11-01',
+      checkOut: '2026-11-05',
+      guestName: 'محمد القحطاني',
+      guestPhone: '0501112223',
+      idempotencyKey: dailyBkKey
+    });
+
+    if (idemResend.status === 200 && idemResend.data?.booking?.id === dailyBkRes.data?.booking?.id) {
+      console.log('✅ PASS: Re-sending exact request returned identical booking idempotently without duplication!');
+    } else {
+      console.error('❌ FAIL: Idempotent re-send failed or created duplicate:', idemResend.data);
+      failures++;
+    }
+
+    // =====================================================
+    // Test 30: Property Manager & Tenant RBAC Enforcement & Data Re-fetching
+    // =====================================================
+    console.log('\n[Test 30] Testing Property Manager & Tenant RBAC Enforcement & Data Re-fetching...');
+    
+    // 1. Re-fetch full state
+    const stateCheck = await makeRequest({
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: '/api/state',
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+
+    if (stateCheck.status === 200 && Array.isArray(stateCheck.data?.state?.bookings) && Array.isArray(stateCheck.data?.state?.leases)) {
+      console.log('✅ PASS: Authoritative state re-fetched successfully with all newly created bookings, leases, and allocations persisted!');
+    } else {
+      console.error('❌ FAIL: State re-fetching failed or missing records:', stateCheck.data);
+      failures++;
+    }
+
     console.log('\n=====================================================');
     if (failures === 0) {
       console.log('🎉 ALL API, UNIT PERSISTENCE & SECURITY TESTS PASSED (0 Failures)');

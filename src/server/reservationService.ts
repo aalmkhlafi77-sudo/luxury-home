@@ -260,7 +260,9 @@ export async function processDailyReservation(
         }
       }
 
-      // 1. استرجاع الوحدة من قاعدة البيانات لضمان السعر المعتمد بالخادم
+      // 1. استرجاع الوحدة مع قفل سطر لمنع السباق الذري عند الطلبات المتزامنة
+      await tx.$executeRaw`SELECT id FROM "Unit" WHERE id = ${unitId} FOR UPDATE`;
+
       const unit = await tx.unit.findUnique({
         where: { id: unitId },
         include: { property: true }
@@ -582,7 +584,9 @@ export async function processLeaseContract(
         }
       }
 
-      // 1. استرجاع الوحدة من قاعدة البيانات
+      // 1. استرجاع الوحدة من قاعدة البيانات مع قفل تشاركي لمنع التسبق
+      await tx.$executeRaw`SELECT id FROM "Unit" WHERE id = ${unitId} FOR UPDATE`;
+
       const unit = await tx.unit.findUnique({
         where: { id: unitId },
         include: { property: true }
