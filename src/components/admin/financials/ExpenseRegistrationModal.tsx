@@ -28,6 +28,8 @@ import {
   getTemporalDistributionLabel,
   getCostAllocationMethodLabel
 } from '../../../utils/financialCalculations';
+import { GregorianDatePicker } from '../../common/GregorianDatePicker';
+import { CurrencyAmount, formatNumber } from '../../../utils/formatters';
 
 interface Props {
   onClose: () => void;
@@ -387,12 +389,11 @@ export const ExpenseRegistrationModal: React.FC<Props> = ({
 
               <div>
                 <label className="block text-[11px] font-bold text-[#282824] mb-1">تاريخ تسجيل القيد *</label>
-                <input
-                  type="date"
+                <GregorianDatePicker
                   value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  className="w-full bg-white border border-[#E3DCCD] rounded-xl px-3 py-2 text-xs font-mono focus:outline-none"
-                  required
+                  onChange={(val) => setDate(val)}
+                  placeholder="اختر تاريخ القيد"
+                  className="w-full"
                 />
               </div>
 
@@ -579,21 +580,21 @@ export const ExpenseRegistrationModal: React.FC<Props> = ({
 
               <div>
                 <label className="block text-[11px] font-bold text-[#282824] mb-1">بداية فترة التغطية</label>
-                <input
-                  type="date"
+                <GregorianDatePicker
                   value={servicePeriodStart}
-                  onChange={(e) => setServicePeriodStart(e.target.value)}
-                  className="w-full bg-white border border-[#E3DCCD] rounded-xl px-3 py-2 text-xs font-mono focus:outline-none"
+                  onChange={(val) => setServicePeriodStart(val)}
+                  placeholder="اختر بداية الفترة"
+                  className="w-full"
                 />
               </div>
 
               <div>
                 <label className="block text-[11px] font-bold text-[#282824] mb-1">نهاية فترة التغطية</label>
-                <input
-                  type="date"
+                <GregorianDatePicker
                   value={servicePeriodEnd}
-                  onChange={(e) => setServicePeriodEnd(e.target.value)}
-                  className="w-full bg-white border border-[#E3DCCD] rounded-xl px-3 py-2 text-xs font-mono focus:outline-none"
+                  onChange={(val) => setServicePeriodEnd(val)}
+                  placeholder="اختر نهاية الفترة"
+                  className="w-full"
                 />
               </div>
             </div>
@@ -667,12 +668,11 @@ export const ExpenseRegistrationModal: React.FC<Props> = ({
 
                   <div>
                     <label className="block text-[11px] font-bold text-[#282824] mb-1">تاريخ خروج المال الفعلي *</label>
-                    <input
-                      type="date"
+                    <GregorianDatePicker
                       value={paymentDate}
-                      onChange={(e) => setPaymentDate(e.target.value)}
-                      className="w-full bg-white border border-[#E3DCCD] rounded-xl px-3 py-2 text-xs font-mono focus:outline-none"
-                      required
+                      onChange={(val) => setPaymentDate(val)}
+                      placeholder="اختر تاريخ الدفع الفعلي"
+                      className="w-full"
                     />
                   </div>
                 </>
@@ -716,11 +716,20 @@ export const ExpenseRegistrationModal: React.FC<Props> = ({
                   <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                   <span>معاينة حية لنتائج التوزيع التلقائي:</span>
                 </span>
-                <span className="text-[11px] font-bold text-emerald-800">
-                  {temporalDistribution === 'equal_monthly'
-                    ? `المحمل شهرياً: ${previewCalculation.monthlyCost.toLocaleString('ar-SA')} ر.س/شهر (على مدى ${previewCalculation.totalMonths} شهر)`
-                    : `المحمل على الفترة: ${amount.toLocaleString('ar-SA')} ر.س`}
-                </span>
+                <div className="text-[11px] font-bold text-emerald-800 flex items-center gap-1">
+                  {temporalDistribution === 'equal_monthly' ? (
+                    <>
+                      <span>المحمل شهرياً:</span>
+                      <CurrencyAmount amount={previewCalculation.monthlyCost} className="font-bold text-emerald-800" />
+                      <span>/شهر (على مدى {formatNumber(previewCalculation.totalMonths)} شهر)</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>المحمل على الفترة:</span>
+                      <CurrencyAmount amount={amount} className="font-bold text-emerald-800" />
+                    </>
+                  )}
+                </div>
               </div>
               <p className="text-[10px] text-emerald-800 leading-relaxed">
                 سيتم تحميل هذا المصروف على تقارير NOI على أساس التكلفة الشهرية بدلاً من تحميل كامل القيمة في شهر السداد، وسيتم تخصيص نصيب كل شقة بحسب {getCostAllocationMethodLabel(costAllocationMethod)}.
@@ -730,9 +739,11 @@ export const ExpenseRegistrationModal: React.FC<Props> = ({
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px]">
                     {previewCalculation.unitShares.slice(0, 8).map(s => (
                       <div key={s.unitId} className="bg-white p-2 rounded-lg border border-emerald-200">
-                        <span className="font-bold text-[#282824] block">شقة #{s.unitNumber}</span>
-                        <span className="text-emerald-900 font-mono font-bold block">{s.amount.toLocaleString('ar-SA')} ر.س</span>
-                        <span className="text-[#68675F] text-[9px] block">({s.percentage}%)</span>
+                        <span className="font-bold text-[#282824] block">شقة #{formatNumber(s.unitNumber)}</span>
+                        <div className="text-emerald-900 font-mono font-bold block">
+                          <CurrencyAmount amount={s.amount} className="font-bold text-emerald-900" />
+                        </div>
+                        <span className="text-[#68675F] text-[9px] block">({formatNumber(s.percentage)}%)</span>
                       </div>
                     ))}
                   </div>

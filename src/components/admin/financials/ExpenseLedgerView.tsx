@@ -26,6 +26,7 @@ import {
 } from '../../../utils/financialCalculations';
 import { ExpenseRegistrationModal } from './ExpenseRegistrationModal';
 import { ExpenseDetailsModal } from './ExpenseDetailsModal';
+import { CurrencyAmount, formatNumber } from '../../../utils/formatters';
 
 export const ExpenseLedgerView: React.FC = () => {
   const { state } = useAppStore();
@@ -146,26 +147,27 @@ export const ExpenseLedgerView: React.FC = () => {
         <div className="p-4 bg-white rounded-3xl border border-[#E3DCCD] shadow-xs">
           <span className="block text-[11px] font-bold text-[#68675F] mb-1">إجمالي القيود المسجلة</span>
           <span className="text-xl font-black text-[#282824] tabular-nums">
-            {stats.totalCount} قيد
+            <bdi dir="ltr">{formatNumber(stats.totalCount)}</bdi> قيد
           </span>
-          <span className="text-[10px] text-[#68675F] block mt-0.5">
-            بقيمة {stats.totalAmount.toLocaleString('ar-SA')} ر.س
+          <span className="text-[10px] text-[#68675F] flex items-center gap-1 mt-0.5">
+            <span>بقيمة</span>
+            <CurrencyAmount amount={stats.totalAmount} symbolSize={10} />
           </span>
         </div>
 
         <div className="p-4 bg-white rounded-3xl border border-[#E3DCCD] shadow-xs">
           <span className="block text-[11px] font-bold text-[#68675F] mb-1">المصاريف التشغيلية (OPEX)</span>
-          <span className="text-xl font-black text-rose-800 tabular-nums">
-            {stats.operatingExpenses.toLocaleString('ar-SA')} ر.س
-          </span>
+          <div className="text-xl font-black text-rose-800">
+            <CurrencyAmount amount={stats.operatingExpenses} />
+          </div>
           <span className="text-[10px] text-[#68675F] block mt-0.5">إيجار، صيانة، فواتير</span>
         </div>
 
         <div className="p-4 bg-emerald-50 rounded-3xl border border-emerald-200 shadow-xs">
           <span className="block text-[11px] font-bold text-emerald-800 mb-1">المدفوعات المسددة فعلياً</span>
-          <span className="text-xl font-black text-emerald-900 tabular-nums">
-            {stats.totalPaid.toLocaleString('ar-SA')} ر.س
-          </span>
+          <div className="text-xl font-black text-emerald-900">
+            <CurrencyAmount amount={stats.totalPaid} />
+          </div>
           <span className="text-[10px] text-emerald-700 block mt-0.5">خرجت من الحسابات البنكية</span>
         </div>
 
@@ -173,19 +175,19 @@ export const ExpenseLedgerView: React.FC = () => {
           stats.totalUnpaid > 0 ? 'bg-amber-50 border-amber-200' : 'bg-white border-[#E3DCCD]'
         }`}>
           <span className="block text-[11px] font-bold text-[#68675F] mb-1">المستحقات غير المسددة</span>
-          <span className={`text-xl font-black tabular-nums ${
+          <div className={`text-xl font-black ${
             stats.totalUnpaid > 0 ? 'text-amber-900' : 'text-[#282824]'
           }`}>
-            {stats.totalUnpaid.toLocaleString('ar-SA')} ر.س
-          </span>
+            <CurrencyAmount amount={stats.totalUnpaid} />
+          </div>
           <span className="text-[10px] text-[#68675F] block mt-0.5">التزامات آجلة على المنشأة</span>
         </div>
 
         <div className="p-4 bg-purple-50 rounded-3xl border border-purple-200 shadow-xs">
           <span className="block text-[11px] font-bold text-purple-900 mb-1">أصول وأثاث رأسمالي (FF&E)</span>
-          <span className="text-xl font-black text-purple-950 tabular-nums">
-            {stats.ffeCapital.toLocaleString('ar-SA')} ر.س
-          </span>
+          <div className="text-xl font-black text-purple-950">
+            <CurrencyAmount amount={stats.ffeCapital} />
+          </div>
           <span className="text-[10px] text-purple-800 block mt-0.5">مستثناة من تكاليف التشغيل</span>
         </div>
       </div>
@@ -369,11 +371,11 @@ export const ExpenseLedgerView: React.FC = () => {
                         : 'بالتساوي'}
                     </td>
 
-                    <td className="p-3 font-bold text-[#282824] tabular-nums whitespace-nowrap">
-                      {exp.amount.toLocaleString('ar-SA')} ر.س
+                    <td className="p-3 font-bold text-[#282824] whitespace-nowrap">
+                      <CurrencyAmount amount={exp.amount} />
                     </td>
 
-                    <td className="p-3 tabular-nums whitespace-nowrap">
+                    <td className="p-3 whitespace-nowrap">
                       <span className={`font-semibold ${
                         exp.paidAmount >= exp.amount
                           ? 'text-emerald-800'
@@ -381,7 +383,7 @@ export const ExpenseLedgerView: React.FC = () => {
                           ? 'text-amber-800'
                           : 'text-rose-800'
                       }`}>
-                        {(exp.paidAmount || 0).toLocaleString('ar-SA')} ر.س
+                        <CurrencyAmount amount={exp.paidAmount || 0} />
                       </span>
                     </td>
 

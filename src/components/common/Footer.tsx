@@ -1,6 +1,6 @@
 import React from 'react';
 import { useAppStore } from '../../store/useAppStore';
-import { Phone, Mail, MapPin, ShieldCheck } from 'lucide-react';
+import { Phone, Mail, MapPin, ShieldCheck, Sparkles } from 'lucide-react';
 
 interface FooterProps {
   onScrollToSection: (sectionId: string) => void;
@@ -14,9 +14,13 @@ export const Footer: React.FC<FooterProps> = ({
   onOpenStaffPwa,
 }) => {
   const { state } = useAppStore();
+  const customFooterBg = state.settings.theme?.footerBg || '#282824';
 
   return (
-    <footer className="bg-[#282824] text-[#EFE9DF] pt-16 pb-12 border-t border-[#3e3e38]">
+    <footer
+      className="text-[#EFE9DF] pt-16 pb-12 border-t border-[#3e3e38] transition-colors duration-200"
+      style={{ backgroundColor: customFooterBg }}
+    >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-10 pb-12 border-b border-[#3e3e38]">
           
@@ -142,9 +146,24 @@ export const Footer: React.FC<FooterProps> = ({
 
         </div>
 
-        {/* Quiet Bottom Bar */}
-        <div className="pt-8 flex flex-col sm:flex-row items-center justify-between text-xs text-[#EFE9DF]/50 gap-4">
-          <p>© {new Date().getFullYear()} {state.settings.companyName}. جميع الحقوق محفوظة لشركة منزل الفخامة المحدودة.</p>
+        {/* Quiet Bottom Bar with Designer Signature */}
+        <div className="pt-8 flex flex-col sm:flex-row items-center justify-between text-xs text-[#EFE9DF]/60 gap-4">
+          <p>© <bdi dir="ltr">2026</bdi> {state.settings.companyName}. جميع الحقوق محفوظة لشركة منزل الفخامة المحدودة.</p>
+
+          {/* Designer Signature Link */}
+          <div className="flex items-center gap-1.5 px-3 py-1 bg-white/5 rounded-full border border-white/10 hover:border-[#B69A68]/50 transition-all select-none">
+            <Sparkles className="w-3.5 h-3.5 text-[#B69A68] animate-pulse shrink-0" />
+            <a
+              href="https://almkhlafi.carpetbazar.org/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium hover:underline text-[#EFE9DF]/80 hover:text-[#B69A68] transition-colors"
+              title="زيارة موقع مصمم المنصة"
+            >
+              تصميم Abdullah-Almkhlafi.2026
+            </a>
+          </div>
+
           <div className="flex items-center gap-6">
             <span>الشروط والأحكام</span>
             <span>سياسة الخصوصية والأمن</span>

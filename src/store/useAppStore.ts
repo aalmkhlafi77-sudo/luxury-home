@@ -36,7 +36,9 @@ import {
   RecurringExpenseSchedule,
   ExpensePaymentEntry,
   ExpenseRecordStatus,
-  City
+  City,
+  FaqItem,
+  FooterPageItem
 } from '../types';
 import {
   initialCompanySettings,
@@ -69,6 +71,8 @@ import {
   determineInclusionType,
   refreshInstallmentStatus
 } from '../utils/leaseCalculations';
+import { applyCssThemeVariables } from '../utils/themeManager';
+import { formatNumber } from '../utils/formatters';
 
 const STORAGE_KEY = 'luxury_home_platform_data_v1';
 const OLD_STORAGE_KEY = 'ivoire_platform_data_v5';
@@ -95,6 +99,7 @@ export interface AppState {
   adjustments: TenantAdjustment[];
   expenseCategories: ExpenseCategoryConfig[];
   recurringExpenses: RecurringExpenseSchedule[];
+  faqs?: FaqItem[];
 }
 
 // Helper to compute room metrics dynamically from spaces & fittings
@@ -457,6 +462,7 @@ export async function loadAuthoritativeServerState(force: boolean = false) {
     let changed = false;
     if (settingsRes?.success && settingsRes.settings) {
       globalState = { ...globalState, settings: { ...globalState.settings, ...settingsRes.settings } };
+      applyCssThemeVariables(globalState.settings.theme);
       changed = true;
     }
     if (citiesRes?.success && Array.isArray(citiesRes.cities) && citiesRes.cities.length > 0) {
@@ -1612,6 +1618,7 @@ export function useAppStore() {
       ]
     };
 
+    applyCssThemeVariables(globalState.settings.theme);
     notify();
 
     // Async push to server
@@ -3322,7 +3329,7 @@ export function useAppStore() {
         entityId: targetMonth,
         performedBy: operatorName,
         role: 'Automated Finance Engine',
-        details: `تم توليد عدد (${createdExpenses.length}) قيد استحقاق دوري لشهر ${targetMonth} بإجمالي تكاليف ${createdExpenses.reduce((s, e) => s + e.amount, 0).toLocaleString('ar-SA')} ر.س دون تكرار.`,
+        details: `تم توليد عدد (${formatNumber(createdExpenses.length)}) قيد استحقاق دوري لشهر ${targetMonth} بإجمالي تكاليف ${formatNumber(createdExpenses.reduce((s, e) => s + e.amount, 0))} ر.س دون تكرار.`,
         timestamp: nowIso,
       };
 

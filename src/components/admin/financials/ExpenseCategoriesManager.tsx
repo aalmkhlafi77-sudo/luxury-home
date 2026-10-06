@@ -7,6 +7,7 @@ import {
   TemporalDistributionType,
   CostAllocationMethod
 } from '../../../types';
+import { CurrencyAmount, formatNumber } from '../../../utils/formatters';
 import {
   Sliders,
   Plus,
@@ -128,7 +129,8 @@ export const ExpenseCategoriesManager: React.FC = () => {
     try {
       const created = generateRecurringExpenseAccruals(targetMonth, 'مشرف التكاليف والمالية');
       if (created && created.length > 0) {
-        setGeneratedMsg(`تم بنجاح توليد عدد (${created.length}) قيد استحقاق دوري لشهر ${targetMonth} بإجمالي ${created.reduce((s, e) => s + e.amount, 0).toLocaleString('ar-SA')} ر.س`);
+        const totalSum = created.reduce((s, e) => s + e.amount, 0);
+        setGeneratedMsg(`تم بنجاح توليد عدد (${formatNumber(created.length)}) قيد استحقاق دوري لشهر ${targetMonth} بإجمالي ${formatNumber(totalSum)} ر.س`);
       } else {
         setGeneratedMsg(`تم فحص الجداول: استحقاقات شهر ${targetMonth} مولدة بالفعل مسبقاً لمنع التكرار المحاسبي.`);
       }
@@ -421,11 +423,11 @@ export const ExpenseCategoriesManager: React.FC = () => {
                         <td className="p-3 text-[#282824]">
                           {sch.costCenterLevel === 'company' ? 'الشركة العامة' : prop?.name || 'مبنى محدد'}
                         </td>
-                        <td className="p-3 font-bold text-[#282824] tabular-nums">
-                          {sch.amount.toLocaleString('ar-SA')} ر.س
+                        <td className="p-3 font-bold text-[#282824] whitespace-nowrap">
+                          <CurrencyAmount amount={sch.amount} />
                         </td>
-                        <td className="p-3 font-bold text-emerald-800 tabular-nums">
-                          {monthlyEquivalent.toLocaleString('ar-SA')} ر.س/شهر
+                        <td className="p-3 font-bold text-emerald-800 whitespace-nowrap">
+                          <CurrencyAmount amount={monthlyEquivalent} className="text-emerald-800 font-bold" />/شهر
                         </td>
                         <td className="p-3 text-[#68675F] text-[11px]">
                           {getCostAllocationMethodLabel(sch.costAllocationMethod)}

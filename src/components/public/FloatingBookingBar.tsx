@@ -1,6 +1,7 @@
 import React from 'react';
 import { useAppStore } from '../../store/useAppStore';
-import { Building2, Calendar, Users, Search, MoonStar, CalendarRange, ShieldCheck, CreditCard, MapPin } from 'lucide-react';
+import { Building2, Users, Search, MoonStar, CalendarRange, ShieldCheck, CreditCard, MapPin } from 'lucide-react';
+import { GregorianDatePicker } from '../common/GregorianDatePicker';
 
 interface FloatingBookingBarProps {
   selectedCityId?: string;
@@ -123,7 +124,7 @@ export const FloatingBookingBar: React.FC<FloatingBookingBarProps> = ({
               <span>✨ <strong>الإقامة اليومية الفندقية:</strong> حجز مرن مع دخول ذكي شامل كافة الخدمات والتنظيف اليومي.</span>
             )}
             {rentalType === 'monthly' && (
-              <span>🏢 <strong>الإقامة الشهرية الممتدة:</strong> عقود ميسرة تشمل النظافة الأسبوعية وخصومات حتى ١٥٪ للمدد الطويلة.</span>
+              <span>🏢 <strong>الإقامة الشهرية الممتدة:</strong> عقود ميسرة تشمل النظافة الأسبوعية وخصومات حتى 15% للمدد الطويلة.</span>
             )}
             {rentalType === 'yearly' && (
               <span>📜 <strong>العقد السنوي الرسمي:</strong> عقد إيجار موثق لمدة سنة كاملة مع خيارات سداد بدفعة واحدة أو دفعتين.</span>
@@ -131,15 +132,15 @@ export const FloatingBookingBar: React.FC<FloatingBookingBarProps> = ({
           </div>
         </div>
 
-        {/* Input Matrix */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+        {/* Input Matrix: 6 Distinct Responsive Items */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 items-end">
           
-          {/* 0. City Selector */}
-          <div className="bg-[#FFFCF6] p-3 rounded-xl border border-[#E3DCCD]/80 hover:border-[#B69A68] transition-colors min-w-0">
+          {/* 1. City Selector */}
+          <div className="bg-[#FFFCF6] p-3 rounded-xl border border-[#E3DCCD]/80 hover:border-[#B69A68] transition-colors min-w-0 w-full min-h-[62px] flex flex-col justify-center">
             <label className="text-xs font-semibold text-[#68675F] block mb-1">
               المدينة
             </label>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 min-w-0">
               <MapPin className="w-4 h-4 text-[#B69A68] shrink-0" />
               <select
                 value={selectedCityId}
@@ -159,12 +160,12 @@ export const FloatingBookingBar: React.FC<FloatingBookingBarProps> = ({
             </div>
           </div>
 
-          {/* 1. Property Selector */}
-          <div className="bg-[#FFFCF6] p-3 rounded-xl border border-[#E3DCCD]/80 hover:border-[#B69A68] transition-colors min-w-0">
+          {/* 2. Property Selector */}
+          <div className="bg-[#FFFCF6] p-3 rounded-xl border border-[#E3DCCD]/80 hover:border-[#B69A68] transition-colors min-w-0 w-full min-h-[62px] flex flex-col justify-center">
             <label className="text-xs font-semibold text-[#68675F] block mb-1">
               المبنى أو المجمع
             </label>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 min-w-0">
               <Building2 className="w-4 h-4 text-[#B69A68] shrink-0" />
               <select
                 value={selectedPropertyId}
@@ -179,38 +180,31 @@ export const FloatingBookingBar: React.FC<FloatingBookingBarProps> = ({
             </div>
           </div>
 
-          {/* 2. Check-in or Start Date */}
-          <div className="bg-[#FFFCF6] p-3 rounded-xl border border-[#E3DCCD]/80 hover:border-[#B69A68] transition-colors min-w-0">
+          {/* 3. Check-in or Start Date */}
+          <div className="bg-[#FFFCF6] p-3 rounded-xl border border-[#E3DCCD]/80 hover:border-[#B69A68] transition-colors min-w-0 w-full min-h-[62px] flex flex-col justify-center">
             <label className="text-xs font-semibold text-[#68675F] block mb-1">
               {rentalType === 'daily' ? 'تاريخ الدخول' : 'تاريخ بداية العقد'}
             </label>
-            <div className="flex items-center gap-2">
-              <Calendar className="w-4 h-4 text-[#B69A68] shrink-0" />
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => onStartDateChange(e.target.value)}
-                className="w-full bg-transparent text-xs sm:text-sm font-medium text-[#282824] focus:outline-none cursor-pointer"
-              />
-            </div>
+            <GregorianDatePicker
+              value={startDate}
+              onChange={onStartDateChange}
+              placeholder="اختر تاريخ الدخول"
+            />
           </div>
 
-          {/* 3. Check-out Date OR Duration / Annual Payment Option */}
-          <div className="bg-[#FFFCF6] p-3 rounded-xl border border-[#E3DCCD]/80 hover:border-[#B69A68] transition-colors min-w-0">
+          {/* 4. Check-out Date OR Duration / Annual Payment Option */}
+          <div className="bg-[#FFFCF6] p-3 rounded-xl border border-[#E3DCCD]/80 hover:border-[#B69A68] transition-colors min-w-0 w-full min-h-[62px] flex flex-col justify-center">
             {rentalType === 'daily' && (
               <>
                 <label className="text-xs font-semibold text-[#68675F] block mb-1">
                   تاريخ المغادرة
                 </label>
-                <div className="flex items-center gap-2">
-                  <Calendar className="w-4 h-4 text-[#B69A68] shrink-0" />
-                  <input
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => onEndDateChange(e.target.value)}
-                    className="w-full bg-transparent text-xs sm:text-sm font-medium text-[#282824] focus:outline-none cursor-pointer"
-                  />
-                </div>
+                <GregorianDatePicker
+                  value={endDate}
+                  onChange={onEndDateChange}
+                  minDate={startDate}
+                  placeholder="اختر تاريخ المغادرة"
+                />
               </>
             )}
 
@@ -219,15 +213,15 @@ export const FloatingBookingBar: React.FC<FloatingBookingBarProps> = ({
                 <label className="text-xs font-semibold text-[#68675F] block mb-1">
                   مدة الإقامة الشهرية
                 </label>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 min-w-0">
                   <CalendarRange className="w-4 h-4 text-[#B69A68] shrink-0" />
                   <select
                     value={monthsCount}
                     onChange={(e) => onMonthsCountChange(Number(e.target.value))}
-                    className="w-full bg-transparent text-xs sm:text-sm font-medium text-[#282824] focus:outline-none cursor-pointer"
+                    className="w-full bg-transparent text-xs sm:text-sm font-medium text-[#282824] focus:outline-none cursor-pointer truncate"
                   >
-                    <option value={1}>شهر واحد (إيجار عادي)</option>
-                    <option value={2}>شهرين (سعر ميسر)</option>
+                    <option value={1}>1 شهر (إيجار عادي)</option>
+                    <option value={2}>2 شهرين (سعر ميسر)</option>
                     <option value={3}>3 أشهر (شامل كافة الخدمات)</option>
                     <option value={6}>6 أشهر (خصم مالي 10%)</option>
                   </select>
@@ -240,12 +234,12 @@ export const FloatingBookingBar: React.FC<FloatingBookingBarProps> = ({
                 <label className="text-xs font-semibold text-[#68675F] block mb-1">
                   خطة السداد السنوية
                 </label>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 min-w-0">
                   <CreditCard className="w-4 h-4 text-[#B69A68] shrink-0" />
                   <select
                     value={annualPaymentTerms}
                     onChange={(e) => onAnnualPaymentTermsChange && onAnnualPaymentTermsChange(e.target.value as any)}
-                    className="w-full bg-transparent text-xs sm:text-sm font-medium text-[#282824] focus:outline-none cursor-pointer"
+                    className="w-full bg-transparent text-xs sm:text-sm font-medium text-[#282824] focus:outline-none cursor-pointer truncate"
                   >
                     <option value="single">دفعة سنوية واحدة (100% مقدم)</option>
                     <option value="semi_annual">دفعتان (كل 6 أشهر)</option>
@@ -255,37 +249,36 @@ export const FloatingBookingBar: React.FC<FloatingBookingBarProps> = ({
             )}
           </div>
 
-          {/* 4. Guests & Search Button */}
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="flex-1 bg-[#FFFCF6] p-3 rounded-xl border border-[#E3DCCD]/80 hover:border-[#B69A68] transition-colors min-w-0">
-              <label className="text-xs font-semibold text-[#68675F] block mb-1">
-                عدد النزلاء
-              </label>
-              <div className="flex items-center gap-2">
-                <Users className="w-4 h-4 text-[#B69A68] shrink-0" />
-                <select
-                  value={guestsCount}
-                  onChange={(e) => onGuestsCountChange(Number(e.target.value))}
-                  className="w-full bg-transparent text-xs sm:text-sm font-medium text-[#282824] focus:outline-none cursor-pointer"
-                >
-                  <option value={1}>نزيل واحد</option>
-                  <option value={2}>نزيلين اثنين</option>
-                  <option value={3}>3 ضيوف عوائل</option>
-                  <option value={4}>4 ضيوف معاً</option>
-                  <option value={6}>6 أشخاص كبار</option>
-                </select>
-              </div>
+          {/* 5. Guests Count (Distinct Card) */}
+          <div className="bg-[#FFFCF6] p-3 rounded-xl border border-[#E3DCCD]/80 hover:border-[#B69A68] transition-colors min-w-0 w-full min-h-[62px] flex flex-col justify-center">
+            <label className="text-xs font-semibold text-[#68675F] block mb-1 truncate">
+              عدد النزلاء
+            </label>
+            <div className="flex items-center gap-2 min-w-0">
+              <Users className="w-4 h-4 text-[#B69A68] shrink-0" />
+              <select
+                value={guestsCount}
+                onChange={(e) => onGuestsCountChange(Number(e.target.value))}
+                className="w-full bg-transparent text-xs sm:text-sm font-medium text-[#282824] focus:outline-none cursor-pointer truncate"
+              >
+                <option value={1}>1 نزيل</option>
+                <option value={2}>2 نزلاء</option>
+                <option value={3}>3 ضيوف عوائل</option>
+                <option value={4}>4 ضيوف معاً</option>
+                <option value={6}>6 أشخاص كبار</option>
+              </select>
             </div>
-            
-            <button
-              type="button"
-              onClick={onSearch}
-              className="h-full px-5 py-3.5 bg-[#B69A68] hover:bg-[#a68a58] text-[#FFFCF6] font-semibold text-xs sm:text-sm rounded-xl shadow-md transition-all duration-200 flex items-center justify-center gap-2 whitespace-nowrap shrink-0 cursor-pointer active:scale-95"
-            >
-              <Search className="w-4 h-4" />
-              <span>{state.settings.typography?.search_bar?.search_btn?.text || 'بحث وتأكيد الإتاحة'}</span>
-            </button>
           </div>
+
+          {/* 6. Search Button (Distinct Responsive Card/Button) */}
+          <button
+            type="button"
+            onClick={onSearch}
+            className="w-full h-[62px] px-4 py-3 bg-[#B69A68] hover:bg-[#a68a58] text-[#FFFCF6] font-semibold text-xs sm:text-sm rounded-xl shadow-md transition-all duration-200 flex items-center justify-center gap-2 whitespace-nowrap cursor-pointer active:scale-95 shrink-0 col-span-1 sm:col-span-2 md:col-span-1 lg:col-span-1"
+          >
+            <Search className="w-4 h-4 shrink-0" />
+            <span className="truncate">{state.settings.typography?.search_bar?.search_btn?.text || 'بحث وتأكيد الإتاحة'}</span>
+          </button>
 
         </div>
       </div>

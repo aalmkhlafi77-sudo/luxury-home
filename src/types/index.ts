@@ -832,6 +832,22 @@ export interface CustomizableTypographyConfig {
   };
 }
 
+export interface FooterPageItem {
+  id: string;
+  title: string;
+  subtitle?: string;
+  content: string;
+  lastUpdated: string;
+}
+
+export interface FaqItem {
+  id: string;
+  question: string;
+  answer: string;
+  displayOrder: number;
+  active: boolean;
+}
+
 export interface CompanySettings {
   companyName: string;
   companyNameEn: string;
@@ -848,6 +864,8 @@ export interface CompanySettings {
   currencySymbol: string;
   currencyDisplayMode?: 'code' | 'symbol'; // 'symbol' for official SVG symbol, 'code' for SAR text
   timezone: string;
+  footerPages?: Record<string, FooterPageItem>;
+  faqs?: FaqItem[];
   // إعدادات النصوص والتنسيق البصري المتقدم
   typography?: CustomizableTypographyConfig;
   // اعدادات التنقل الهيدر والشريط السفلي
@@ -855,6 +873,10 @@ export interface CompanySettings {
   // المظهر والتخصيص
   theme: {
     primaryColor: string;
+    headerBg?: string;
+    footerBg?: string;
+    primaryBtnBg?: string;
+    pageBg?: string;
     ivoryBg: string;
     ivorySurface: string;
     textColor: string;

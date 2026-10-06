@@ -209,7 +209,10 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F7F3EB] text-[#282824] flex flex-col font-sans selection:bg-[#B69A68]/20 text-right pb-20 md:pb-0 relative">
+    <div
+      className="min-h-screen text-[#282824] flex flex-col font-sans selection:bg-[#B69A68]/20 text-right pb-20 md:pb-0 relative transition-colors duration-200"
+      style={{ backgroundColor: state.settings.theme?.pageBg || '#FAF8F5' }}
+    >
       
       {/* 1. Glass Header */}
       <Header

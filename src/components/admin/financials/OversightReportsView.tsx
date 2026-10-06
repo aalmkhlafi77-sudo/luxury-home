@@ -5,6 +5,7 @@ import {
   calculateCashFlowForecast,
   calculateOccupancyFinancials
 } from '../../../utils/financialCalculations';
+import { CurrencyAmount, formatNumber, formatDate } from '../../../utils/formatters';
 import {
   TrendingUp,
   Clock,
@@ -33,7 +34,10 @@ export const OversightReportsView: React.FC = () => {
           }`}
         >
           <Clock className="w-4 h-4 text-[#B69A68]" />
-          <span>ديون النزلاء المتأخرة ({agingData.totalOverdue.toLocaleString('ar-SA')} ر.س)</span>
+          <span className="flex items-center gap-1">
+            <span>ديون النزلاء المتأخرة</span>
+            <span>(<CurrencyAmount amount={agingData.totalOverdue} />)</span>
+          </span>
         </button>
         <button
           onClick={() => setSubTab('cashflow')}
@@ -42,7 +46,10 @@ export const OversightReportsView: React.FC = () => {
           }`}
         >
           <TrendingUp className="w-4 h-4 text-[#B69A68]" />
-          <span>التدفقات المالية المتوقعة ({cashflowData.totalProjectedInflow.toLocaleString('ar-SA')} ر.س)</span>
+          <span className="flex items-center gap-1">
+            <span>التدفقات المالية المتوقعة</span>
+            <span>(<CurrencyAmount amount={cashflowData.totalProjectedInflow} />)</span>
+          </span>
         </button>
         <button
           onClick={() => setSubTab('occupancy')}
@@ -63,44 +70,44 @@ export const OversightReportsView: React.FC = () => {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 select-none">
             <div className="bg-white p-4 rounded-3xl border border-amber-200 bg-amber-50/40 shadow-xs">
               <div className="flex items-center justify-between text-xs text-amber-900 font-bold mb-1">
-                <span>١ - ٣٠ يوم (متأخرات حديثة)</span>
-                <span className="text-[10px] bg-amber-200/60 px-2 py-0.5 rounded-full tabular-nums">{agingData?.buckets?.under30?.count || 0} أقساط</span>
+                <span>1 - 30 يوم (متأخرات حديثة)</span>
+                <span className="text-[10px] bg-amber-200/60 px-2 py-0.5 rounded-full tabular-nums" dir="ltr">{formatNumber(agingData?.buckets?.under30?.count || 0)} أقساط</span>
               </div>
-              <div className="text-xl font-black text-amber-950 tabular-nums">
-                {(agingData?.buckets?.under30?.totalAmount || 0).toLocaleString('ar-SA')} ر.س
+              <div className="text-xl font-black text-amber-950">
+                <CurrencyAmount amount={agingData?.buckets?.under30?.totalAmount || 0} className="text-xl font-black text-amber-950" />
               </div>
               <div className="text-[10px] text-amber-800 mt-1">تنبيهات تلقائية مبرمجة بالجوال</div>
             </div>
 
             <div className="bg-white p-4 rounded-3xl border border-orange-200 bg-orange-50/40 shadow-xs">
               <div className="flex items-center justify-between text-xs text-orange-900 font-bold mb-1">
-                <span>٣١ - ٦٠ يوم (متأخرات متوسطة)</span>
-                <span className="text-[10px] bg-orange-200/60 px-2 py-0.5 rounded-full tabular-nums">{agingData?.buckets?.days30to60?.count || 0} أقساط</span>
+                <span>31 - 60 يوم (متأخرات متوسطة)</span>
+                <span className="text-[10px] bg-orange-200/60 px-2 py-0.5 rounded-full tabular-nums" dir="ltr">{formatNumber(agingData?.buckets?.days30to60?.count || 0)} أقساط</span>
               </div>
-              <div className="text-xl font-black text-orange-950 tabular-nums">
-                {(agingData?.buckets?.days30to60?.totalAmount || 0).toLocaleString('ar-SA')} ر.س
+              <div className="text-xl font-black text-orange-950">
+                <CurrencyAmount amount={agingData?.buckets?.days30to60?.totalAmount || 0} className="text-xl font-black text-orange-950" />
               </div>
               <div className="text-[10px] text-orange-800 mt-1">إرسال إشعار رسمي ثانٍ للنزيل</div>
             </div>
 
             <div className="bg-white p-4 rounded-3xl border border-rose-200 bg-rose-50/40 shadow-xs">
               <div className="flex items-center justify-between text-xs text-rose-900 font-bold mb-1">
-                <span>٦١ - ٩٠ يوم (عالية الخطورة)</span>
-                <span className="text-[10px] bg-rose-200/60 px-2 py-0.5 rounded-full tabular-nums">{agingData?.buckets?.days60to90?.count || 0} أقساط</span>
+                <span>61 - 90 يوم (عالية الخطورة)</span>
+                <span className="text-[10px] bg-rose-200/60 px-2 py-0.5 rounded-full tabular-nums" dir="ltr">{formatNumber(agingData?.buckets?.days60to90?.count || 0)} أقساط</span>
               </div>
-              <div className="text-xl font-black text-rose-950 tabular-nums">
-                {(agingData?.buckets?.days60to90?.totalAmount || 0).toLocaleString('ar-SA')} ر.س
+              <div className="text-xl font-black text-rose-950">
+                <CurrencyAmount amount={agingData?.buckets?.days60to90?.totalAmount || 0} className="text-xl font-black text-rose-950" />
               </div>
               <div className="text-[10px] text-rose-800 mt-1">تكليف مكتب تحصيل معتمد</div>
             </div>
 
             <div className="bg-white p-4 rounded-3xl border border-red-300 bg-red-100/50 shadow-xs">
               <div className="flex items-center justify-between text-xs text-red-950 font-bold mb-1">
-                <span>أكثر من ٩٠ يوم (ديون متعثرة)</span>
-                <span className="text-[10px] bg-red-300 px-2 py-0.5 rounded-full tabular-nums">{agingData?.buckets?.over90?.count || 0} أقساط</span>
+                <span>أكثر من 90 يوم (ديون متعثرة)</span>
+                <span className="text-[10px] bg-red-300 px-2 py-0.5 rounded-full tabular-nums" dir="ltr">{formatNumber(agingData?.buckets?.over90?.count || 0)} أقساط</span>
               </div>
-              <div className="text-xl font-black text-red-950 tabular-nums">
-                {(agingData?.buckets?.over90?.totalAmount || 0).toLocaleString('ar-SA')} ر.س
+              <div className="text-xl font-black text-red-950">
+                <CurrencyAmount amount={agingData?.buckets?.over90?.totalAmount || 0} className="text-xl font-black text-red-950" />
               </div>
               <div className="text-[10px] text-red-900 mt-1">رفع دعوى قضائية للتنفيذ</div>
             </div>
@@ -111,8 +118,10 @@ export const OversightReportsView: React.FC = () => {
             <div className="flex items-center justify-between pb-3 border-b border-[#E3DCCD]/50">
               <div>
                 <h4 className="text-sm font-bold text-[#282824]">قائمة كشوفات النزلاء المتأخرين بالسداد</h4>
-                <p className="text-xs text-[#68675F] mt-1">
-                  إجمالي ذمم النزلاء المتأخرة: <strong className="text-rose-700 tabular-nums">{agingData.totalOverdue.toLocaleString('ar-SA')} ر.س</strong> موزع على {agingData.totalDelinquentTenantsCount} مستأجر متعثر.
+                <p className="text-xs text-[#68675F] mt-1 flex items-center gap-1">
+                  <span>إجمالي ذمم النزلاء المتأخرة:</span>
+                  <CurrencyAmount amount={agingData.totalOverdue} className="text-rose-700 font-bold" />
+                  <span>موزع على {formatNumber(agingData.totalDelinquentTenantsCount)} مستأجر متعثر.</span>
                 </p>
               </div>
             </div>
@@ -139,33 +148,37 @@ export const OversightReportsView: React.FC = () => {
                     </tr>
                   ) : (
                     [
-                      ...agingData.buckets.under30.installments.map(i => ({ ...i, bucket: '١ - ٣٠ يوم', badgeBg: 'bg-amber-100 text-amber-900' })),
-                      ...agingData.buckets.days30to60.installments.map(i => ({ ...i, bucket: '٣١ - ٦٠ يوم', badgeBg: 'bg-orange-100 text-orange-900' })),
-                      ...agingData.buckets.days60to90.installments.map(i => ({ ...i, bucket: '٦١ - ٩٠ يوم', badgeBg: 'bg-rose-100 text-rose-900' })),
-                      ...agingData.buckets.over90.installments.map(i => ({ ...i, bucket: 'أكثر من ٩٠ يوم', badgeBg: 'bg-red-200 text-red-950 font-black' })),
+                      ...agingData.buckets.under30.installments.map(i => ({ ...i, bucket: '1 - 30 يوم', badgeBg: 'bg-amber-100 text-amber-900' })),
+                      ...agingData.buckets.days30to60.installments.map(i => ({ ...i, bucket: '31 - 60 يوم', badgeBg: 'bg-orange-100 text-orange-900' })),
+                      ...agingData.buckets.days60to90.installments.map(i => ({ ...i, bucket: '61 - 90 يوم', badgeBg: 'bg-rose-100 text-rose-900' })),
+                      ...agingData.buckets.over90.installments.map(i => ({ ...i, bucket: 'أكثر من 90 يوم', badgeBg: 'bg-red-200 text-red-950 font-black' })),
                     ].map((item, idx) => (
                       <tr key={idx} className="hover:bg-[#FFFCF6] transition-colors">
                         <td className="p-3">
                           <strong className="block text-[#282824]">{item.tenantName}</strong>
-                          <span className="text-[10px] text-[#68675F]" dir="ltr">{item.tenantPhone}</span>
+                          <span className="text-[10px] text-[#68675F]" dir="ltr">{formatNumber(item.tenantPhone)}</span>
                         </td>
                         <td className="p-3">
                           <span className="block text-[#282824] font-medium">{item.propertyName}</span>
-                          <span className="text-[10px] text-[#68675F]">شقة رقم #{item.unitNumber}</span>
+                          <span className="text-[10px] text-[#68675F]">شقة رقم #{formatNumber(item.unitNumber)}</span>
                         </td>
                         <td className="p-3">
-                          <strong className="block text-[#282824] font-mono select-all">{item.contractNumber}</strong>
+                          <strong className="block text-[#282824] font-mono select-all" dir="ltr">{formatNumber(item.contractNumber)}</strong>
                           <span className="text-[10px] text-[#68675F]">{item.label}</span>
                         </td>
-                        <td className="p-3 tabular-nums font-medium text-[#282824]">{item.dueDate}</td>
-                        <td className="p-3 font-bold text-rose-700 tabular-nums">{item.daysOverdue} يوم متأخر</td>
+                        <td className="p-3 tabular-nums font-medium text-[#282824]">
+                          <bdi dir="ltr">{formatDate(item.dueDate)}</bdi>
+                        </td>
+                        <td className="p-3 font-bold text-rose-700 tabular-nums">
+                          <bdi dir="ltr">{formatNumber(item.daysOverdue)}</bdi> يوم متأخر
+                        </td>
                         <td className="p-3">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${item.badgeBg}`}>
                             {item.bucket}
                           </span>
                         </td>
-                        <td className="p-3 font-black text-rose-800 tabular-nums">
-                          {item.remainingAmount.toLocaleString('ar-SA')} ر.س
+                        <td className="p-3 font-black text-rose-800 whitespace-nowrap">
+                          <CurrencyAmount amount={item.remainingAmount} className="font-black text-rose-800" />
                         </td>
                       </tr>
                     ))
@@ -182,30 +195,30 @@ export const OversightReportsView: React.FC = () => {
         <div className="space-y-6 animate-in fade-in duration-150">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 select-none">
             <div className="bg-white p-5 rounded-3xl border border-[#E3DCCD] shadow-xs">
-              <span className="text-xs text-[#68675F] block mb-1">الأيام الـ ٣٠ القادمة (شهر)</span>
-              <span className="text-2xl font-black text-[#282824] tabular-nums">
-                {cashflowData.next30Days.expectedInflow.toLocaleString('ar-SA')} ر.س
-              </span>
+              <span className="text-xs text-[#68675F] block mb-1">الأيام الـ 30 القادمة (شهر)</span>
+              <div className="text-2xl font-black text-[#282824]">
+                <CurrencyAmount amount={cashflowData.next30Days.expectedInflow} className="text-2xl font-black text-[#282824]" />
+              </div>
               <span className="block text-[11px] text-[#B69A68] font-bold mt-1">
-                توقع تحصيل عدد {cashflowData.next30Days.count} أقساط مجدولة
+                توقع تحصيل عدد {formatNumber(cashflowData.next30Days.count)} أقساط مجدولة
               </span>
             </div>
             <div className="bg-white p-5 rounded-3xl border border-[#E3DCCD] shadow-xs">
-              <span className="text-xs text-[#68675F] block mb-1">الربع القادم (من ٣١ إلى ٩٠ يوم)</span>
-              <span className="text-2xl font-black text-[#282824] tabular-nums">
-                {cashflowData.nextQuarter.expectedInflow.toLocaleString('ar-SA')} ر.س
-              </span>
+              <span className="text-xs text-[#68675F] block mb-1">الربع القادم (من 31 إلى 90 يوم)</span>
+              <div className="text-2xl font-black text-[#282824]">
+                <CurrencyAmount amount={cashflowData.nextQuarter.expectedInflow} className="text-2xl font-black text-[#282824]" />
+              </div>
               <span className="block text-[11px] text-[#B69A68] font-bold mt-1">
-                توقع تحصيل عدد {cashflowData.nextQuarter.count} أقساط مجدولة
+                توقع تحصيل عدد {formatNumber(cashflowData.nextQuarter.count)} أقساط مجدولة
               </span>
             </div>
             <div className="bg-white p-5 rounded-3xl border border-[#E3DCCD] shadow-xs">
-              <span className="text-xs text-[#68675F] block mb-1">باقي العام (من ٩١ إلى ٣٦٥ يوم)</span>
-              <span className="text-2xl font-black text-[#282824] tabular-nums">
-                {cashflowData.nextYear.expectedInflow.toLocaleString('ar-SA')} ر.س
-              </span>
+              <span className="text-xs text-[#68675F] block mb-1">باقي العام (من 91 إلى 365 يوم)</span>
+              <div className="text-2xl font-black text-[#282824]">
+                <CurrencyAmount amount={cashflowData.nextYear.expectedInflow} className="text-2xl font-black text-[#282824]" />
+              </div>
               <span className="block text-[11px] text-[#B69A68] font-bold mt-1">
-                توقع تحصيل عدد {cashflowData.nextYear.count} أقساط مجدولة
+                توقع تحصيل عدد {formatNumber(cashflowData.nextYear.count)} أقساط مجدولة
               </span>
             </div>
           </div>
@@ -230,15 +243,17 @@ export const OversightReportsView: React.FC = () => {
                     ...cashflowData.nextYear.installments,
                   ].map((item, idx) => (
                     <tr key={idx} className="hover:bg-[#FFFCF6] transition-colors">
-                      <td className="p-3 font-medium text-[#282824] tabular-nums">{item.dueDate}</td>
+                      <td className="p-3 font-medium text-[#282824]">
+                        <bdi dir="ltr">{formatDate(item.dueDate)}</bdi>
+                      </td>
                       <td className="p-3 font-bold text-[#282824]">{item.tenantName}</td>
                       <td className="p-3 text-[#68675F]">
-                        <span className="block text-[#282824] font-semibold font-mono select-all">{item.contractNumber}</span>
+                        <span className="block text-[#282824] font-semibold font-mono select-all" dir="ltr">{formatNumber(item.contractNumber)}</span>
                         <span>{item.propertyName}</span>
                       </td>
-                      <td className="p-3 font-bold text-[#282824]">شقة #{item.unitNumber}</td>
-                      <td className="p-3 font-black text-emerald-700 tabular-nums">
-                        {item.remainingAmount.toLocaleString('ar-SA')} ر.س
+                      <td className="p-3 font-bold text-[#282824]">شقة #{formatNumber(item.unitNumber)}</td>
+                      <td className="p-3 font-black text-emerald-700 whitespace-nowrap">
+                        <CurrencyAmount amount={item.remainingAmount} className="font-black text-emerald-700" />
                       </td>
                     </tr>
                   ))}
@@ -255,32 +270,33 @@ export const OversightReportsView: React.FC = () => {
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 select-none">
             <div className="bg-white p-5 rounded-3xl border border-[#E3DCCD]">
               <span className="text-xs text-[#68675F] block mb-1">معدل الإشغال الكلي للمجمع</span>
-              <span className="text-2xl font-black text-[#282824] tabular-nums">{occupancyData.occupancyRate}%</span>
+              <span className="text-2xl font-black text-[#282824] tabular-nums" dir="ltr">{formatNumber(occupancyData.occupancyRate)}%</span>
               <span className="text-[10px] text-[#68675F] block mt-1">
-                تشغل {occupancyData.occupiedCount} شقة من أصل {occupancyData.totalUnitsCount} وحدة سكنية متوفرة
+                تشغل {formatNumber(occupancyData.occupiedCount)} شقة من أصل {formatNumber(occupancyData.totalUnitsCount)} وحدة سكنية متوفرة
               </span>
             </div>
             <div className="bg-white p-5 rounded-3xl border border-[#E3DCCD]">
               <span className="text-xs text-[#68675F] block mb-1">الهدف الشهري الإجمالي المتوقع</span>
-              <span className="text-2xl font-black text-[#282824] tabular-nums">
-                {occupancyData.monthlyPotentialRevenue.toLocaleString('ar-SA')} ر.س
-              </span>
-              <span className="text-[10px] text-[#68675F] block mt-1">بفرض إشغال ١٠٠٪ للغرف</span>
+              <div className="text-2xl font-black text-[#282824]">
+                <CurrencyAmount amount={occupancyData.monthlyPotentialRevenue} className="text-2xl font-black text-[#282824]" />
+              </div>
+              <span className="text-[10px] text-[#68675F] block mt-1">بفرض إشغال 100% للغرف</span>
             </div>
             <div className="bg-white p-5 rounded-3xl border border-rose-200 bg-rose-50/40">
               <span className="text-xs text-rose-800 block mb-1">خسارة الشواغر (Vacancy Loss)</span>
-              <span className="text-2xl font-black text-rose-700 tabular-nums">
-                {occupancyData.vacancyLossMonthly.toLocaleString('ar-SA')} ر.س
-              </span>
+              <div className="text-2xl font-black text-rose-700">
+                <CurrencyAmount amount={occupancyData.vacancyLossMonthly} className="text-2xl font-black text-rose-700" />
+              </div>
               <span className="text-[10px] text-rose-800 block mt-1">
-                ناتج عن {occupancyData.vacantCount} شقة شاغرة غير مسكونة
+                ناتج عن {formatNumber(occupancyData.vacantCount)} شقة شاغرة غير مسكونة
               </span>
             </div>
             <div className="bg-white p-5 rounded-3xl border border-emerald-200 bg-emerald-50/40">
               <span className="text-xs text-emerald-800 block mb-1">كفاءة ونسبة التحصيل الفعلي</span>
-              <span className="text-2xl font-black text-emerald-700 tabular-nums">{occupancyData.collectionEfficiency}%</span>
-              <span className="text-[10px] text-emerald-800 block mt-1">
-                إجمالي المحصل النقدي هذا الشهر: {occupancyData.cashCollectedThisMonth.toLocaleString('ar-SA')} ر.س
+              <span className="text-2xl font-black text-emerald-700 tabular-nums" dir="ltr">{formatNumber(occupancyData.collectionEfficiency)}%</span>
+              <span className="text-[10px] text-emerald-800 block mt-1 flex items-center gap-1">
+                <span>إجمالي المحصل النقدي هذا الشهر:</span>
+                <CurrencyAmount amount={occupancyData.cashCollectedThisMonth} />
               </span>
             </div>
           </div>

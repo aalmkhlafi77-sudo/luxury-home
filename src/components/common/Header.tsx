@@ -100,14 +100,15 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <>
       <header 
-        className={`site-header transition-shadow duration-300 ${
+        className={`site-header transition-all duration-300 ${
           isScrolled ? 'shadow-md' : 'shadow-xs'
         } ${className || ''}`}
-        style={
-          navConfig?.headerHeightPx && navConfig.headerHeightPx !== 80
+        style={{
+          backgroundColor: state.settings.theme?.headerBg || '#FFFCF6',
+          ...(navConfig?.headerHeightPx && navConfig.headerHeightPx !== 80
             ? ({ '--site-header-height': `${navConfig.headerHeightPx}px` } as React.CSSProperties)
-            : undefined
-        }
+            : {})
+        }}
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-full flex items-center justify-between gap-4">
           

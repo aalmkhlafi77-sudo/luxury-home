@@ -408,25 +408,25 @@ export const UnitDetailModal: React.FC<UnitDetailModalProps> = ({
 
               {/* Price Breakdown */}
               <div className="pt-2 border-t border-[#E3DCCD]/80 space-y-1.5 text-xs text-[#68675F]">
-                <div className="flex justify-between">
+                <div className="flex justify-between items-center">
                   <span>قيمة الإقامة المخصصة ({calculatedNights} ليلة)</span>
-                  <span className="font-medium text-[#282824] tabular-nums">{subtotal} {state.settings.currencySymbol}</span>
+                  <CurrencyAmount amount={subtotal} className="font-medium text-[#282824]" />
                 </div>
-                <div className="flex justify-between">
+                <div className="flex justify-between items-center">
                   <span>رسوم التجهيز والتدبير المنزلي</span>
-                  <span className="font-medium text-[#282824] tabular-nums">{unit.cleaningFee} {state.settings.currencySymbol}</span>
+                  <CurrencyAmount amount={unit.cleaningFee} className="font-medium text-[#282824]" />
                 </div>
-                <div className="flex justify-between">
-                  <span>ضريبة القيمة المضافة الحكومية (١٥٪)</span>
-                  <span className="font-medium text-[#282824] tabular-nums">{taxes} {state.settings.currencySymbol}</span>
+                <div className="flex justify-between items-center">
+                  <span>ضريبة القيمة المضافة الحكومية (15%)</span>
+                  <CurrencyAmount amount={taxes} className="font-medium text-[#282824]" />
                 </div>
-                <div className="flex justify-between text-amber-800">
+                <div className="flex justify-between items-center text-amber-800">
                   <span>تأمين الأثاث المسترد (حجز مؤقت)</span>
-                  <span className="font-medium tabular-nums">{unit.securityDeposit} {state.settings.currencySymbol}</span>
+                  <CurrencyAmount amount={unit.securityDeposit} className="font-medium" />
                 </div>
-                <div className="flex justify-between pt-2 border-t border-[#E3DCCD] font-bold text-sm text-[#282824]">
+                <div className="flex justify-between items-center pt-2 border-t border-[#E3DCCD] font-bold text-sm text-[#282824]">
                   <span>إجمالي السعر الشامل</span>
-                  <span className="tabular-nums">{estimatedTotal} {state.settings.currencySymbol}</span>
+                  <CurrencyAmount amount={estimatedTotal} className="text-[#282824]" />
                 </div>
               </div>
 

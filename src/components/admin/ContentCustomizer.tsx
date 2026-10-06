@@ -10,7 +10,8 @@ import {
   FontWeight
 } from '../../types';
 import { initialCustomTypography } from '../../data/initialData';
-import { SaudiRiyalSymbol, formatNumber } from '../../utils/formatters';
+import { SaudiRiyalSymbol, formatNumber, setGlobalCurrencyDisplayMode } from '../../utils/formatters';
+import { applyCssThemeVariables } from '../../utils/themeManager';
 import {
   Save,
   RotateCcw,
@@ -63,9 +64,13 @@ const SECTION_OPTIONS = [
   { key: 'contact', label: 'قسم التواصل والكونسيرج (Contact & Concierge)', icon: Phone },
 ];
 
-export const ContentCustomizer: React.FC = () => {
+interface ContentCustomizerProps {
+  initialTab?: 'branding' | 'typography' | 'navigation' | 'sections' | 'theme';
+}
+
+export const ContentCustomizer: React.FC<ContentCustomizerProps> = ({ initialTab = 'theme' }) => {
   const { state, updateCompanySettings, updateContentSections, resetToFactoryDefaults } = useAppStore();
-  const [activeTab, setActiveTab] = useState<'branding' | 'typography' | 'navigation' | 'sections' | 'theme'>('typography');
+  const [activeTab, setActiveTab] = useState<'branding' | 'typography' | 'navigation' | 'sections' | 'theme'>(initialTab);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   // Selected Section for Typography Customization
@@ -136,7 +141,35 @@ export const ContentCustomizer: React.FC = () => {
   };
 
   // Theme Form State
-  const [themeForm, setThemeForm] = useState({ ...state.settings.theme });
+  const [themeForm, setThemeForm] = useState({
+    headerBg: state.settings.theme?.headerBg || '#FFFCF6',
+    footerBg: state.settings.theme?.footerBg || '#282824',
+    primaryBtnBg: state.settings.theme?.primaryBtnBg || '#B69A68',
+    pageBg: state.settings.theme?.pageBg || '#FAF8F5',
+    ...state.settings.theme,
+  });
+
+  const handleResetThemeColors = () => {
+    const defaultTheme = {
+      headerBg: '#FFFCF6',
+      footerBg: '#282824',
+      primaryBtnBg: '#B69A68',
+      pageBg: '#FAF8F5',
+      primaryColor: '#B69A68',
+      ivoryBg: '#F7F3EB',
+      ivorySurface: '#FFFCF6',
+      textColor: '#282824',
+      textMuted: '#68675F',
+      borderColor: '#E3DCCD',
+      glassBlurIntensity: 14,
+      borderRadius: 'xl' as const,
+      enableAnimations: true,
+    };
+    setThemeForm(defaultTheme);
+    updateCompanySettings({ theme: defaultTheme });
+    setSuccessMsg('تم استعادة الألوان الافتراضية بنجاح.');
+    setTimeout(() => setSuccessMsg(null), 3000);
+  };
 
   // Sections State
   const [sections, setSections] = useState<ContentSection[]>(() => {
@@ -190,8 +223,16 @@ export const ContentCustomizer: React.FC = () => {
 
   const handleSaveBrand = (e: React.FormEvent) => {
     e.preventDefault();
-    updateCompanySettings({ ...brandForm, navigation: navForm, theme: themeForm });
-    setSuccessMsg('تم حفظ وتعديل إعدادات وهوية الكيان بنجاح.');
+    const displayMode = (brandForm.currencyDisplayMode === 'code' ? 'code' : 'symbol') as 'symbol' | 'code';
+    setGlobalCurrencyDisplayMode(displayMode);
+    updateCompanySettings({
+      ...brandForm,
+      currencyDisplayMode: displayMode,
+      currencySymbol: displayMode === 'code' ? 'SAR' : 'ر.س',
+      navigation: navForm,
+      theme: themeForm,
+    });
+    setSuccessMsg('تم حفظ وتعديل إعدادات وهوية الكيان وعرض العملة بنجاح.');
     setTimeout(() => setSuccessMsg(null), 3000);
   };
 
@@ -636,6 +677,173 @@ export const ContentCustomizer: React.FC = () => {
             </div>
           </div>
 
+          {/* BRAND THEME COLOR CUSTOMIZATION */}
+          <div className="p-4 bg-[#F7F3EB]/80 rounded-2xl border border-[#E3DCCD] space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h5 className="font-bold text-xs text-[#282824] flex items-center gap-2">
+                  <Palette className="w-4 h-4 text-[#B69A68]" />
+                  <span>تخصيص ألوان الهوية البصرية الرئيسية للموقع (Theme Colors)</span>
+                </h5>
+                <p className="text-[11px] text-[#68675F] mt-0.5">
+                  تعديل ألوان الهيدر، الفوتر، الأزرار الرئيسية، وخلفية الصفحات مع حفظها دائمًا على الخادم عبر API وإمكانيّة استعادة الافتراضي.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleResetThemeColors}
+                className="px-3 py-1.5 bg-white border border-[#E3DCCD] hover:bg-[#EFE9DF] text-[#68675F] text-xs font-semibold rounded-xl transition-colors cursor-pointer flex items-center gap-1 shrink-0 self-start sm:self-auto"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-[#B69A68]" />
+                <span>استعادة الألوان الافتراضية</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+              {/* 1. Header Background */}
+              <div className="p-3 bg-white rounded-xl border border-[#E3DCCD] space-y-1.5">
+                <label className="block text-xs font-bold text-[#282824]">خلفية الهيدر</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={themeForm.headerBg || '#FFFCF6'}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setThemeForm(prev => ({ ...prev, headerBg: val }));
+                    }}
+                    className="w-8 h-8 rounded-lg border border-[#E3DCCD] cursor-pointer p-0.5"
+                  />
+                  <input
+                    type="text"
+                    value={themeForm.headerBg || '#FFFCF6'}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setThemeForm(prev => ({ ...prev, headerBg: val }));
+                    }}
+                    className="flex-1 p-1.5 text-xs font-mono border border-[#E3DCCD] rounded-lg dir-ltr text-center uppercase"
+                  />
+                </div>
+              </div>
+
+              {/* 2. Footer Background */}
+              <div className="p-3 bg-white rounded-xl border border-[#E3DCCD] space-y-1.5">
+                <label className="block text-xs font-bold text-[#282824]">خلفية الفوتر</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={themeForm.footerBg || '#282824'}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setThemeForm(prev => ({ ...prev, footerBg: val }));
+                    }}
+                    className="w-8 h-8 rounded-lg border border-[#E3DCCD] cursor-pointer p-0.5"
+                  />
+                  <input
+                    type="text"
+                    value={themeForm.footerBg || '#282824'}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setThemeForm(prev => ({ ...prev, footerBg: val }));
+                    }}
+                    className="flex-1 p-1.5 text-xs font-mono border border-[#E3DCCD] rounded-lg dir-ltr text-center uppercase"
+                  />
+                </div>
+              </div>
+
+              {/* 3. Primary Button Background */}
+              <div className="p-3 bg-white rounded-xl border border-[#E3DCCD] space-y-1.5">
+                <label className="block text-xs font-bold text-[#282824]">لون الأزرار الرئيسية</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={themeForm.primaryBtnBg || '#B69A68'}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setThemeForm(prev => ({ ...prev, primaryBtnBg: val, primaryColor: val }));
+                    }}
+                    className="w-8 h-8 rounded-lg border border-[#E3DCCD] cursor-pointer p-0.5"
+                  />
+                  <input
+                    type="text"
+                    value={themeForm.primaryBtnBg || '#B69A68'}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setThemeForm(prev => ({ ...prev, primaryBtnBg: val, primaryColor: val }));
+                    }}
+                    className="flex-1 p-1.5 text-xs font-mono border border-[#E3DCCD] rounded-lg dir-ltr text-center uppercase"
+                  />
+                </div>
+              </div>
+
+              {/* 4. Page Body Background */}
+              <div className="p-3 bg-white rounded-xl border border-[#E3DCCD] space-y-1.5">
+                <label className="block text-xs font-bold text-[#282824]">خلفية هيكل الصفحة</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={themeForm.pageBg || '#FAF8F5'}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setThemeForm(prev => ({ ...prev, pageBg: val }));
+                    }}
+                    className="w-8 h-8 rounded-lg border border-[#E3DCCD] cursor-pointer p-0.5"
+                  />
+                  <input
+                    type="text"
+                    value={themeForm.pageBg || '#FAF8F5'}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setThemeForm(prev => ({ ...prev, pageBg: val }));
+                    }}
+                    className="flex-1 p-1.5 text-xs font-mono border border-[#E3DCCD] rounded-lg dir-ltr text-center uppercase"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Real-time Live Preview Card */}
+            <div className="p-3.5 bg-stone-100 rounded-xl border border-[#E3DCCD] space-y-2">
+              <span className="text-[11px] font-bold text-[#68675F] block">معاينة حية ومباشرة للألوان المختارة:</span>
+              <div className="rounded-xl overflow-hidden border border-[#E3DCCD] shadow-xs text-xs">
+                <div
+                  className="p-2.5 flex items-center justify-between text-xs font-bold"
+                  style={{ backgroundColor: themeForm.headerBg || '#FFFCF6' }}
+                >
+                  <span>الهيدر الرئيسي</span>
+                  <button
+                    type="button"
+                    className="px-3 py-1 text-white font-bold rounded-lg text-[10px]"
+                    style={{ backgroundColor: themeForm.primaryBtnBg || '#B69A68' }}
+                  >
+                    زر رئيسي
+                  </button>
+                </div>
+
+                <div
+                  className="p-4 text-center text-[#282824]"
+                  style={{ backgroundColor: themeForm.pageBg || '#FAF8F5' }}
+                >
+                  <p className="font-semibold text-xs mb-2">محتوى الصفحة العام وهيكل الموقع</p>
+                  <button
+                    type="button"
+                    className="px-4 py-2 text-white font-bold rounded-xl text-xs shadow-xs"
+                    style={{ backgroundColor: themeForm.primaryBtnBg || '#B69A68' }}
+                  >
+                    تأكيد الحجز الفندقي
+                  </button>
+                </div>
+
+                <div
+                  className="p-2.5 text-center text-[#EFE9DF] text-[10px]"
+                  style={{ backgroundColor: themeForm.footerBg || '#282824' }}
+                >
+                  <span>الفوتر السفلي - © 2026 جميع الحقوق محفوظة · تصميم Abdullah-Almkhlafi.2026</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* CURRENCY FORMATTING OPTIONS */}
           <div className="p-4 bg-[#F7F3EB]/80 rounded-2xl border border-[#E3DCCD] space-y-3">
             <h5 className="font-bold text-xs text-[#282824] flex items-center gap-2">
@@ -658,19 +866,22 @@ export const ContentCustomizer: React.FC = () => {
                     name="currencyDisplayMode"
                     value="symbol"
                     checked={brandForm.currencyDisplayMode === 'symbol'}
-                    onChange={() => setBrandForm(prev => ({ ...prev, currencyDisplayMode: 'symbol' }))}
+                    onChange={() => {
+                      setBrandForm(prev => ({ ...prev, currencyDisplayMode: 'symbol', currencySymbol: 'ر.س' }));
+                      setGlobalCurrencyDisplayMode('symbol');
+                    }}
                     className="accent-[#282824] w-4 h-4"
                   />
                   <div>
-                    <strong className="block text-xs text-[#282824]">رمز الريال السعودي الرسمي (SVG)</strong>
-                    <span className="text-[10px] text-[#68675F]">أصل مرئي رسمي عالي الدقة مع بديل SAR</span>
+                    <strong className="block text-xs text-[#282824]">رمز الريال السعودي الرسمي (SAMA SVG)</strong>
+                    <span className="text-[10px] text-[#68675F]">الرمز الرسمي المعتمد من البنك المركزي السعودي مع بديل SAR</span>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-1 font-bold text-sm text-[#282824] font-mono">
+                <bdi dir="ltr" className="inline-flex items-center gap-1 font-bold text-sm text-[#282824] font-mono">
                   <span>5,400</span>
                   <SaudiRiyalSymbol size={16} />
-                </div>
+                </bdi>
               </label>
 
               <label className={`p-3.5 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${
@@ -684,19 +895,22 @@ export const ContentCustomizer: React.FC = () => {
                     name="currencyDisplayMode"
                     value="code"
                     checked={brandForm.currencyDisplayMode === 'code'}
-                    onChange={() => setBrandForm(prev => ({ ...prev, currencyDisplayMode: 'code' }))}
+                    onChange={() => {
+                      setBrandForm(prev => ({ ...prev, currencyDisplayMode: 'code', currencySymbol: 'SAR' }));
+                      setGlobalCurrencyDisplayMode('code');
+                    }}
                     className="accent-[#282824] w-4 h-4"
                   />
                   <div>
-                    <strong className="block text-xs text-[#282824]">رمز النص (SAR / ر.س)</strong>
-                    <span className="text-[10px] text-[#68675F]">عرض كود العملة النصي بجانب الأرقام</span>
+                    <strong className="block text-xs text-[#282824]">رمز العملة النصي (SAR)</strong>
+                    <span className="text-[10px] text-[#68675F]">عرض الكود القياسي الدولي SAR بجانب المبالغ</span>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-1 font-bold text-sm text-[#282824] font-mono">
+                <bdi dir="ltr" className="inline-flex items-center gap-1 font-bold text-sm text-[#282824] font-mono">
                   <span>5,400</span>
-                  <span className="text-xs font-sans text-[#68675F]">ر.س</span>
-                </div>
+                  <span className="text-xs font-bold text-[#68675F]">SAR</span>
+                </bdi>
               </label>
             </div>
           </div>
@@ -1183,62 +1397,209 @@ export const ContentCustomizer: React.FC = () => {
         </div>
       )}
 
-      {/* THEME & GLASSMORPHISM */}
+      {/* THEME & COLOR CUSTOMIZATION TAB */}
       {activeTab === 'theme' && (
-        <div className="bg-white rounded-3xl p-6 border border-[#E3DCCD] space-y-4 shadow-xs text-right">
-          <h4 className="font-bold text-sm text-[#282824]">تخصيص الهوية البصرية والألوان السكنية المترفة</h4>
-          <p className="text-[#68675F]">التحكم الحصري بلون السطح، اللون المميز للكونسيرج، والتناغم البصري لعلامة منزل الفخامة الفاخرة:</p>
-          
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+        <div className="bg-white rounded-3xl p-6 border border-[#E3DCCD] space-y-6 shadow-xs text-right">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#E3DCCD]">
             <div>
-              <label className="font-semibold text-[#68675F] block mb-1">اللون المميز الفاخر (Accent Color)</label>
-              <div className="flex items-center gap-2 justify-start mt-1">
+              <h4 className="font-bold text-sm text-[#282824] flex items-center gap-2">
+                <Palette className="w-5 h-5 text-[#B69A68]" />
+                <span>إعدادات المظهر وتخصيص الألوان البصرية (Theme Color Variables)</span>
+              </h4>
+              <p className="text-[#68675F] mt-0.5">
+                تعديل وتطبيق ألوان الهيدر، الفوتر، الأزرار الرئيسية، وخلفية هيكل الصفحات مباشرة وتحديث قيم CSS Variables فوراً مع حفظها دائمًا في قاعدة البيانات عبر API الخادم.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                handleResetThemeColors();
+                applyCssThemeVariables({
+                  headerBg: '#FFFCF6',
+                  footerBg: '#282824',
+                  primaryBtnBg: '#B69A68',
+                  pageBg: '#FAF8F5'
+                });
+              }}
+              className="px-4 py-2 bg-[#F7F3EB] border border-[#E3DCCD] hover:bg-[#EFE9DF] text-[#282824] text-xs font-bold rounded-xl transition-colors cursor-pointer flex items-center gap-1.5 shrink-0"
+            >
+              <RotateCcw className="w-4 h-4 text-[#B69A68]" />
+              <span>استعادة الألوان الافتراضية</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* 1. Header Background */}
+            <div className="p-4 bg-[#F7F3EB]/50 rounded-2xl border border-[#E3DCCD] space-y-2">
+              <label className="font-bold text-xs text-[#282824] block">خلفية الهيدر العلوي</label>
+              <div className="flex items-center gap-2">
                 <input
                   type="color"
-                  value={themeForm.primaryColor}
-                  onChange={(e) => setThemeForm(prev => ({ ...prev, primaryColor: e.target.value }))}
-                  className="w-10 h-10 rounded-lg border border-[#E3DCCD] cursor-pointer"
+                  value={themeForm.headerBg || '#FFFCF6'}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    const updated = { ...themeForm, headerBg: val };
+                    setThemeForm(updated);
+                    applyCssThemeVariables(updated);
+                  }}
+                  className="w-10 h-10 rounded-xl border border-[#E3DCCD] cursor-pointer p-1"
                 />
-                <span className="font-mono text-sm uppercase">{themeForm.primaryColor}</span>
+                <input
+                  type="text"
+                  value={themeForm.headerBg || '#FFFCF6'}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    const updated = { ...themeForm, headerBg: val };
+                    setThemeForm(updated);
+                    applyCssThemeVariables(updated);
+                  }}
+                  className="w-full p-2 text-xs font-mono border border-[#E3DCCD] rounded-xl dir-ltr text-center uppercase font-bold"
+                />
               </div>
             </div>
-            <div>
-              <label className="font-semibold text-[#68675F] block mb-1">لون خلفية الكانفاس (Background Field)</label>
-              <div className="flex items-center gap-2 justify-start mt-1">
+
+            {/* 2. Footer Background */}
+            <div className="p-4 bg-[#F7F3EB]/50 rounded-2xl border border-[#E3DCCD] space-y-2">
+              <label className="font-bold text-xs text-[#282824] block">خلفية الفوتر السفلي</label>
+              <div className="flex items-center gap-2">
                 <input
                   type="color"
-                  value={themeForm.ivoryBg}
-                  onChange={(e) => setThemeForm(prev => ({ ...prev, ivoryBg: e.target.value }))}
-                  className="w-10 h-10 rounded-lg border border-[#E3DCCD] cursor-pointer"
+                  value={themeForm.footerBg || '#282824'}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    const updated = { ...themeForm, footerBg: val };
+                    setThemeForm(updated);
+                    applyCssThemeVariables(updated);
+                  }}
+                  className="w-10 h-10 rounded-xl border border-[#E3DCCD] cursor-pointer p-1"
                 />
-                <span className="font-mono text-sm uppercase">{themeForm.ivoryBg}</span>
+                <input
+                  type="text"
+                  value={themeForm.footerBg || '#282824'}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    const updated = { ...themeForm, footerBg: val };
+                    setThemeForm(updated);
+                    applyCssThemeVariables(updated);
+                  }}
+                  className="w-full p-2 text-xs font-mono border border-[#E3DCCD] rounded-xl dir-ltr text-center uppercase font-bold"
+                />
               </div>
             </div>
-            <div>
-              <label className="font-semibold text-[#68675F] block mb-1">لون خلفية أسطح الكروت والبطاقات</label>
-              <div className="flex items-center gap-2 justify-start mt-1">
+
+            {/* 3. Primary Button Background */}
+            <div className="p-4 bg-[#F7F3EB]/50 rounded-2xl border border-[#E3DCCD] space-y-2">
+              <label className="font-bold text-xs text-[#282824] block">لون الأزرار الرئيسية</label>
+              <div className="flex items-center gap-2">
                 <input
                   type="color"
-                  value={themeForm.ivorySurface}
-                  onChange={(e) => setThemeForm(prev => ({ ...prev, ivorySurface: e.target.value }))}
-                  className="w-10 h-10 rounded-lg border border-[#E3DCCD] cursor-pointer"
+                  value={themeForm.primaryBtnBg || '#B69A68'}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    const updated = { ...themeForm, primaryBtnBg: val, primaryColor: val };
+                    setThemeForm(updated);
+                    applyCssThemeVariables(updated);
+                  }}
+                  className="w-10 h-10 rounded-xl border border-[#E3DCCD] cursor-pointer p-1"
                 />
-                <span className="font-mono text-sm uppercase">{themeForm.ivorySurface}</span>
+                <input
+                  type="text"
+                  value={themeForm.primaryBtnBg || '#B69A68'}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    const updated = { ...themeForm, primaryBtnBg: val, primaryColor: val };
+                    setThemeForm(updated);
+                    applyCssThemeVariables(updated);
+                  }}
+                  className="w-full p-2 text-xs font-mono border border-[#E3DCCD] rounded-xl dir-ltr text-center uppercase font-bold"
+                />
+              </div>
+            </div>
+
+            {/* 4. Page Body Background */}
+            <div className="p-4 bg-[#F7F3EB]/50 rounded-2xl border border-[#E3DCCD] space-y-2">
+              <label className="font-bold text-xs text-[#282824] block">خلفية هيكل الصفحة العام</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={themeForm.pageBg || '#FAF8F5'}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    const updated = { ...themeForm, pageBg: val };
+                    setThemeForm(updated);
+                    applyCssThemeVariables(updated);
+                  }}
+                  className="w-10 h-10 rounded-xl border border-[#E3DCCD] cursor-pointer p-1"
+                />
+                <input
+                  type="text"
+                  value={themeForm.pageBg || '#FAF8F5'}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    const updated = { ...themeForm, pageBg: val };
+                    setThemeForm(updated);
+                    applyCssThemeVariables(updated);
+                  }}
+                  className="w-full p-2 text-xs font-mono border border-[#E3DCCD] rounded-xl dir-ltr text-center uppercase font-bold"
+                />
               </div>
             </div>
           </div>
 
-          <div className="pt-3 border-t border-[#E3DCCD]/60">
+          {/* Live Dynamic Preview */}
+          <div className="p-4 bg-stone-100 rounded-2xl border border-[#E3DCCD] space-y-3">
+            <span className="text-xs font-bold text-[#68675F] block">معاينة حية ومباشرة للألوان والتغيرات البصرية:</span>
+            <div className="rounded-2xl overflow-hidden border border-[#E3DCCD] shadow-md text-xs">
+              <div
+                className="p-3.5 flex items-center justify-between text-xs font-bold transition-all"
+                style={{ backgroundColor: themeForm.headerBg || '#FFFCF6' }}
+              >
+                <span>الهيدر الرئيسي وشريط التنقل</span>
+                <button
+                  type="button"
+                  className="px-3.5 py-1.5 text-white font-bold rounded-xl text-xs transition-all shadow-xs"
+                  style={{ backgroundColor: themeForm.primaryBtnBg || '#B69A68' }}
+                >
+                  زر رئيسي
+                </button>
+              </div>
+
+              <div
+                className="p-6 text-center text-[#282824] transition-all"
+                style={{ backgroundColor: themeForm.pageBg || '#FAF8F5' }}
+              >
+                <p className="font-semibold text-xs mb-3">محتوى الصفحة العام وهيكل موقع منزل الفخامة</p>
+                <button
+                  type="button"
+                  className="px-5 py-2.5 text-white font-bold rounded-xl text-xs shadow-md transition-all"
+                  style={{ backgroundColor: themeForm.primaryBtnBg || '#B69A68' }}
+                >
+                  تأكيد الحجز الفندقي المباشر
+                </button>
+              </div>
+
+              <div
+                className="p-3.5 text-center text-[#EFE9DF] text-xs transition-all"
+                style={{ backgroundColor: themeForm.footerBg || '#282824' }}
+              >
+                <span>الفوتر السفلي - © 2026 جميع الحقوق محفوظة · تصميم Abdullah-Almkhlafi.2026</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="pt-3 border-t border-[#E3DCCD]/60 flex justify-end">
             <button
               onClick={() => {
+                applyCssThemeVariables(themeForm);
                 updateCompanySettings({ theme: themeForm });
-                setSuccessMsg('تم حفظ وتحديث المظهر البصري لعلامة منزل الفخامة الفندقية بنجاح.');
+                setSuccessMsg('تم حفظ وتحديث إعدادات المظهر والألوان في قاعدة البيانات وتطبيق قيم CSS Variables فورياً.');
                 setTimeout(() => setSuccessMsg(null), 3000);
               }}
               className="px-6 py-2.5 bg-[#282824] hover:bg-[#1a1a18] text-white font-bold rounded-xl flex items-center gap-2 shadow-xs cursor-pointer"
             >
               <Save className="w-4 h-4 text-[#B69A68]" />
-              <span>تفعيل وحفظ خيارات المظهر الجديد</span>
+              <span>حفظ إعدادات المظهر وتطبيقه دائمًا عبر API</span>
             </button>
           </div>
         </div>

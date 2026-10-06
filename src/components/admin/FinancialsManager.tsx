@@ -21,6 +21,7 @@ import { ExpenseCategoriesManager } from './financials/ExpenseCategoriesManager'
 import { PaymentAllocationModal } from './financials/PaymentAllocationModal';
 import { AdjustmentModal } from './financials/AdjustmentModal';
 import { DepositSettlementModal } from './financials/DepositSettlementModal';
+import { CurrencyAmount, formatDate } from '../../utils/formatters';
 
 export const FinancialsManager: React.FC = () => {
   const { state } = useAppStore();
@@ -403,8 +404,8 @@ export const FinancialsManager: React.FC = () => {
                     <td className="p-3.5 text-[#68675F]">
                       {dep.bookingOrLeaseId.startsWith('bk') ? 'حجز فندقي قصير' : 'عقد إيجار ممتد'}
                     </td>
-                    <td className="p-3.5 font-bold text-[#282824] tabular-nums">
-                      {dep.amount.toLocaleString('ar-SA')} ر.س
+                    <td className="p-3.5 font-bold text-[#282824]">
+                      <CurrencyAmount amount={dep.amount} />
                     </td>
                     <td className="p-3.5 text-[#68675F]">
                       {dep.heldType === 'authorized_hold' ? 'حجز تفويض أمني (Hold)' : 'مستلم كاش / حوالة'}
@@ -412,7 +413,10 @@ export const FinancialsManager: React.FC = () => {
                     <td className="p-3.5">
                       {totalDeducted > 0 ? (
                         <div>
-                          <span className="text-rose-700 font-bold tabular-nums">-{totalDeducted.toLocaleString('ar-SA')} ر.س</span>
+                          <span className="text-rose-700 font-bold inline-flex items-center gap-0.5">
+                            <span>-</span>
+                            <CurrencyAmount amount={totalDeducted} />
+                          </span>
                           <span className="block text-[10px] text-[#68675F]">بسبب: ({dep.deductions[0]?.reason})</span>
                         </div>
                       ) : (
@@ -452,9 +456,11 @@ export const FinancialsManager: React.FC = () => {
                           </button>
                           <button
                             onClick={() => handleRefundFull(dep.id, remaining)}
-                            className="px-2.5 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg font-bold cursor-pointer"
+                            className="px-2.5 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg font-bold cursor-pointer inline-flex items-center gap-1"
                           >
-                            تصفية إرجاع ({remaining} ر.س)
+                            <span>تصفية إرجاع (</span>
+                            <CurrencyAmount amount={remaining} symbolSize={11} />
+                            <span>)</span>
                           </button>
                         </div>
                       )}
@@ -515,16 +521,18 @@ export const FinancialsManager: React.FC = () => {
                     {p.method === 'bank_transfer' && 'حوالة مصرفية سريعة'}
                     {p.method === 'cash' && 'نقداً لدى الصندوق'}
                   </td>
-                  <td className="p-3.5 font-bold text-[#282824] tabular-nums">
-                    {p.amount.toLocaleString('ar-SA')} ر.س
+                  <td className="p-3.5 font-bold text-[#282824]">
+                    <CurrencyAmount amount={p.amount} />
                   </td>
-                  <td className="p-3.5 font-bold text-indigo-700 tabular-nums">
-                    {p.unallocatedAmount && p.unallocatedAmount > 0
-                      ? `${p.unallocatedAmount.toLocaleString('ar-SA')} ر.س`
-                      : '-'}
+                  <td className="p-3.5 font-bold text-indigo-700">
+                    {p.unallocatedAmount && p.unallocatedAmount > 0 ? (
+                      <CurrencyAmount amount={p.unallocatedAmount} />
+                    ) : (
+                      '-'
+                    )}
                   </td>
                   <td className="p-3.5 text-[#68675F] text-[11px] tabular-nums font-mono">
-                    {new Date(p.createdAt).toLocaleString('ar-SA')}
+                    <bdi dir="ltr">{formatDate(p.createdAt)}</bdi>
                   </td>
                   <td className="p-3.5">
                     <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded font-bold text-[10px] select-none">

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { Booking } from '../../types';
 import { CurrencyAmount, formatDate } from '../../utils/formatters';
@@ -28,6 +28,17 @@ export const ClientPortalModal: React.FC<ClientPortalModalProps> = ({
   const [pinVisible, setPinVisible] = useState(false);
   const [pinViewError, setPinViewError] = useState<string | null>(null);
 
+  // Close modal on Escape key press
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     setPinVisible(false);
@@ -54,11 +65,17 @@ export const ClientPortalModal: React.FC<ClientPortalModalProps> = ({
   const assignedParking = unit?.assignedParkingId ? state.parkingSpots.find(p => p.id === unit.assignedParkingId) : null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/60 backdrop-blur-sm overflow-y-auto">
-      <div className="bg-[#FFFCF6] w-full max-w-2xl rounded-3xl overflow-hidden shadow-2xl border border-[#E3DCCD] my-auto text-xs text-right">
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/60 backdrop-blur-sm overflow-hidden select-none"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="bg-[#FFFCF6] w-full max-w-2xl max-h-[90dvh] flex flex-col rounded-3xl overflow-hidden shadow-2xl border border-[#E3DCCD] my-auto text-xs text-right select-text"
+      >
         
-        {/* Header */}
-        <div className="p-4 sm:p-5 border-b border-[#E3DCCD] flex items-center justify-between bg-[#F7F3EB]/80">
+        {/* Header - Fixed at Top */}
+        <div className="p-4 sm:p-5 border-b border-[#E3DCCD] flex items-center justify-between bg-[#F7F3EB]/80 shrink-0 sticky top-0 z-10">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-[#282824] rounded-xl text-white">
               <KeyRound className="w-5 h-5 text-[#B69A68]" />
@@ -70,13 +87,18 @@ export const ClientPortalModal: React.FC<ClientPortalModalProps> = ({
               </span>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 text-[#68675F] hover:text-[#282824] rounded-full cursor-pointer">
+          <button
+            onClick={onClose}
+            aria-label="إغلاق بوابة النزيل"
+            title="إغلاق"
+            className="p-2 text-[#68675F] hover:text-[#282824] hover:bg-[#EFE9DF] rounded-full transition-colors cursor-pointer shrink-0"
+          >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Search Booking Bar */}
-        <div className="p-4 bg-white border-b border-[#E3DCCD]">
+        <div className="p-4 bg-white border-b border-[#E3DCCD] shrink-0">
           <form onSubmit={handleSearch} className="flex gap-2">
             <input
               type="text"
@@ -94,8 +116,8 @@ export const ClientPortalModal: React.FC<ClientPortalModalProps> = ({
           </form>
         </div>
 
-        {/* Content Body */}
-        <div className="p-5 sm:p-6 space-y-6">
+        {/* Content Body - Scrollable */}
+        <div className="p-5 sm:p-6 space-y-6 overflow-y-auto flex-1">
           
           {activeBooking ? (
             <div className="space-y-5">
@@ -104,7 +126,7 @@ export const ClientPortalModal: React.FC<ClientPortalModalProps> = ({
               <div className="p-4 bg-[#F7F3EB]/50 rounded-2xl border border-[#E3DCCD] space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="px-2.5 py-0.5 rounded bg-[#282824] text-white font-bold text-[11px] font-mono select-all">
-                    رقم الحجز: #{activeBooking.bookingNumber}
+                    رقم الحجز: <bdi dir="ltr">#{activeBooking.bookingNumber}</bdi>
                   </span>
                   <span className={`px-2.5 py-0.5 rounded font-bold text-[11px] ${
                     activeBooking.status === 'checked_in' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
@@ -120,15 +142,19 @@ export const ClientPortalModal: React.FC<ClientPortalModalProps> = ({
                   </div>
                   <div>
                     <span className="text-[#68675F] block text-[10px]">المجمع السكني والشقة:</span>
-                    <strong className="text-[#282824]">{property?.name} · شقة #{unit?.unitNumber}</strong>
+                    <strong className="text-[#282824]">{property?.name} · شقة <bdi dir="ltr">#{unit?.unitNumber}</bdi></strong>
                   </div>
                   <div>
                     <span className="text-[#68675F] block text-[10px]">تاريخ الدخول والوصول:</span>
-                    <strong className="text-[#282824]">{activeBooking.checkIn} (٣:٠٠ م)</strong>
+                    <strong className="text-[#282824]">
+                      <bdi dir="ltr">{formatDate(activeBooking.checkIn)} (15:00)</bdi>
+                    </strong>
                   </div>
                   <div>
                     <span className="text-[#68675F] block text-[10px]">تاريخ المغادرة والتحرير:</span>
-                    <strong className="text-[#282824]">{activeBooking.checkOut} (١٢:٠٠ م)</strong>
+                    <strong className="text-[#282824]">
+                      <bdi dir="ltr">{formatDate(activeBooking.checkOut)} (12:00)</bdi>
+                    </strong>
                   </div>
                 </div>
               </div>
@@ -153,11 +179,11 @@ export const ClientPortalModal: React.FC<ClientPortalModalProps> = ({
                   
                   {pinVisible ? (
                     <div className="space-y-1">
-                      <span className="text-3xl font-mono font-bold tracking-widest text-[#B69A68] block">
-                        {activeBooking.smartLockPin || '829410#'}
+                      <span className="text-3xl font-mono font-bold tracking-widest text-[#B69A68] block select-all">
+                        <bdi dir="ltr">{activeBooking.smartLockPin || '829410#'}</bdi>
                       </span>
                       <span className="text-[10px] text-[#EFE9DF]/60 block">
-                        صالح للدخول حتى تاريخ {activeBooking.checkOut} الساعة ١٢:٠٠ مساءً
+                        صالح للدخول حتى تاريخ <bdi dir="ltr">{formatDate(activeBooking.checkOut)}</bdi> الساعة <bdi dir="ltr">12:00</bdi> مساءً
                       </span>
                     </div>
                   ) : (
@@ -195,7 +221,7 @@ export const ClientPortalModal: React.FC<ClientPortalModalProps> = ({
                 {assignedParking ? (
                   <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200 text-emerald-900 space-y-1">
                     <div className="flex justify-between font-bold">
-                      <span>رقم الموقف المخصص: {assignedParking.spotNumber}</span>
+                      <span>رقم الموقف المخصص: <bdi dir="ltr">#{assignedParking.spotNumber}</bdi></span>
                       <span>الموقع: {assignedParking.locationLabel || assignedParking.location} ({assignedParking.type === 'ev_charging' ? 'شاحن كهربائي' : 'مظلل مغطى'})</span>
                     </div>
                     <p className="text-[11px] text-emerald-800 text-right leading-relaxed mt-1">

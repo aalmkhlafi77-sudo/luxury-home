@@ -23,6 +23,7 @@ import {
   getTemporalDistributionLabel,
   getCostAllocationMethodLabel
 } from '../../../utils/financialCalculations';
+import { GregorianDatePicker } from '../../common/GregorianDatePicker';
 import { formatNumber, CurrencyAmount, formatDate } from '../../../utils/formatters';
 
 interface Props {
@@ -347,12 +348,11 @@ export const ExpenseDetailsModal: React.FC<Props> = ({
                   </div>
                   <div>
                     <label className="block text-[10px] text-[#68675F] mb-1">تاريخ الدفع *</label>
-                    <input
-                      type="date"
+                    <GregorianDatePicker
                       value={payDate}
-                      onChange={(e) => setPayDate(e.target.value)}
-                      className="w-full bg-white border border-[#E3DCCD] rounded-lg px-2.5 py-1.5 text-xs font-mono"
-                      required
+                      onChange={(val) => setPayDate(val)}
+                      placeholder="اختر تاريخ الدفع"
+                      className="w-full"
                     />
                   </div>
                   <div>

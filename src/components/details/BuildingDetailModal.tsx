@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { Property, Unit } from '../../types';
 import { ImageWithFallback } from '../common/ImageWithFallback';
+import { CurrencyAmount } from '../../utils/formatters';
 import {
   X,
   MapPin,
@@ -206,9 +207,7 @@ export const BuildingDetailModal: React.FC<BuildingDetailModalProps> = ({
 
                       <div className="flex items-center justify-between pt-2 border-t border-[#E3DCCD]/60 mt-2">
                         <div>
-                          <span className="text-sm font-bold text-[#282824] tabular-nums">
-                            {unit.dailyRate} ر.س
-                          </span>
+                          <CurrencyAmount amount={unit.dailyRate} className="text-sm font-bold text-[#282824]" />
                           <span className="text-[10px] text-[#68675F] mr-1">/ الليلة</span>
                         </div>
                         <div className="flex items-center gap-1.5">

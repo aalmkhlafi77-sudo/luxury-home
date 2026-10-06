@@ -1,6 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { useAppStore } from '../../../store/useAppStore';
 import { generateTenantStatement } from '../../../utils/financialCalculations';
+import { CurrencyAmount, formatDate, formatNumber } from '../../../utils/formatters';
+import { GregorianDatePicker } from '../../common/GregorianDatePicker';
 import {
   FileText,
   Printer,
@@ -150,7 +152,7 @@ export const TenantStatementView: React.FC<Props> = ({
             >
               {uniqueTenants.map(t => (
                 <option key={t.nationalId || t.name} value={t.nationalId || t.name}>
-                  {t.name} ({t.nationalId})
+                  {t.name} ({formatNumber(t.nationalId)})
                 </option>
               ))}
             </select>
@@ -170,20 +172,20 @@ export const TenantStatementView: React.FC<Props> = ({
           </div>
           <div>
             <label className="block text-[11px] font-bold text-[#68675F] mb-1">من تاريخ الحركات</label>
-            <input
-              type="date"
+            <GregorianDatePicker
               value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="w-full bg-[#FAF8F5] border border-[#E3DCCD] rounded-xl px-3 py-2 text-xs text-[#282824]"
+              onChange={(val) => setStartDate(val)}
+              placeholder="اختر تاريخ البداية"
+              className="w-full"
             />
           </div>
           <div>
             <label className="block text-[11px] font-bold text-[#68675F] mb-1">إلى تاريخ الحركات</label>
-            <input
-              type="date"
+            <GregorianDatePicker
               value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="w-full bg-[#FAF8F5] border border-[#E3DCCD] rounded-xl px-3 py-2 text-xs text-[#282824]"
+              onChange={(val) => setEndDate(val)}
+              placeholder="اختر تاريخ النهاية"
+              className="w-full"
             />
           </div>
         </div>
@@ -199,8 +201,8 @@ export const TenantStatementView: React.FC<Props> = ({
               <span className="text-lg sm:text-xl font-black text-[#282824] tracking-tight whitespace-nowrap">{state.settings.companyName}</span>
               <span className="text-xs bg-[#F7F3EB] text-[#B69A68] px-2.5 py-1 rounded-lg font-bold select-none whitespace-nowrap">كشف حساب مستأجر رسمي</span>
             </div>
-            <p className="text-xs text-[#68675F] mt-1">الرقم الضريبي الكلي: <span className="font-mono tabular-nums">{state.settings.taxNumber}</span></p>
-            <p className="text-xs text-[#68675F]">توقيت الطباعة: <span className="tabular-nums">{new Date().toLocaleDateString('ar-SA')}</span> · <span className="tabular-nums">{new Date().toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}</span></p>
+            <p className="text-xs text-[#68675F]">الرقم الضريبي الكلي: <span className="font-mono tabular-nums" dir="ltr">{formatNumber(state.settings.taxNumber)}</span></p>
+            <p className="text-xs text-[#68675F]">توقيت الطباعة: <bdi dir="ltr" className="font-mono tabular-nums">{formatDate(new Date().toISOString().slice(0, 10))}</bdi> · <bdi dir="ltr" className="font-mono tabular-nums">{new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })}</bdi></p>
           </div>
           
           <div className="bg-[#FAF8F5] p-3.5 rounded-2xl border border-[#E3DCCD] w-full sm:w-auto sm:min-w-[250px] text-right space-y-1">
@@ -209,9 +211,9 @@ export const TenantStatementView: React.FC<Props> = ({
               <span>بيانات المستأجر الرئيسي</span>
             </h4>
             <div className="text-xs sm:text-sm text-[#282824] font-bold break-words">{statement.tenantName}</div>
-            <div className="text-[11px] text-[#68675F]">رقم الهوية / السجل: <span className="font-mono tabular-nums">{statement.nationalIdOrPassport || '-'}</span></div>
-            <div className="text-[11px] text-[#68675F]">رقم الجوال الفعال: <span className="font-mono tabular-nums" dir="ltr">{statement.phone || '-'}</span></div>
-            <div className="text-[11px] text-[#68675F]">عدد العقود النشطة: <span className="font-bold tabular-nums">{statement.associatedLeases.length}</span> عقود</div>
+            <div className="text-[11px] text-[#68675F]">رقم الهوية / السجل: <span className="font-mono tabular-nums" dir="ltr">{formatNumber(statement.nationalIdOrPassport || '-')}</span></div>
+            <div className="text-[11px] text-[#68675F]">رقم الجوال الفعال: <span className="font-mono tabular-nums" dir="ltr">{formatNumber(statement.phone || '-')}</span></div>
+            <div className="text-[11px] text-[#68675F]">عدد العقود النشطة: <span className="font-bold tabular-nums" dir="ltr">{formatNumber(statement.associatedLeases.length)}</span> عقود</div>
           </div>
         </div>
 
@@ -219,27 +221,27 @@ export const TenantStatementView: React.FC<Props> = ({
         <div className="grid grid-cols-2 md:grid-cols-6 gap-3 select-none">
           <div className="p-3 bg-[#FAF8F5] rounded-2xl border border-[#E3DCCD]">
             <span className="block text-[10px] font-bold text-[#68675F] mb-1">المفوتر الكلي المجمع</span>
-            <span className="text-base font-bold text-[#282824] tabular-nums">{statement.summary.totalInvoiced.toLocaleString('ar-SA')} ر.س</span>
+            <CurrencyAmount amount={statement.summary.totalInvoiced} className="text-base font-bold text-[#282824]" />
           </div>
           <div className="p-3 bg-[#FAF8F5] rounded-2xl border border-[#E3DCCD]">
             <span className="block text-[10px] font-bold text-[#68675F] mb-1">المستحق حتى اليوم</span>
-            <span className="text-base font-bold text-[#282824] tabular-nums">{statement.summary.dueToDate.toLocaleString('ar-SA')} ر.س</span>
+            <CurrencyAmount amount={statement.summary.dueToDate} className="text-base font-bold text-[#282824]" />
           </div>
           <div className="p-3 bg-rose-50 border border-rose-200 rounded-2xl">
             <span className="block text-[10px] font-bold text-rose-800 mb-1">المتأخر الفعلي الدائن</span>
-            <span className="text-base font-bold text-rose-700 tabular-nums">{statement.summary.overdueAmount.toLocaleString('ar-SA')} ر.س</span>
+            <CurrencyAmount amount={statement.summary.overdueAmount} className="text-base font-bold text-rose-700" />
           </div>
           <div className="p-3 bg-[#FAF8F5] rounded-2xl border border-[#E3DCCD]">
             <span className="block text-[10px] font-bold text-[#68675F] mb-1">أقساط مستقبلية معلقة</span>
-            <span className="text-base font-bold text-[#68675F] tabular-nums">{statement.summary.futureDues.toLocaleString('ar-SA')} ر.s</span>
+            <CurrencyAmount amount={statement.summary.futureDues} className="text-base font-bold text-[#68675F]" />
           </div>
           <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-2xl">
             <span className="block text-[10px] font-bold text-emerald-800 mb-1">المحصل والمسدد فعلاً</span>
-            <span className="text-base font-bold text-emerald-700 tabular-nums">{statement.summary.totalCollected.toLocaleString('ar-SA')} ر.س</span>
+            <CurrencyAmount amount={statement.summary.totalCollected} className="text-base font-bold text-emerald-700" />
           </div>
           <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-2xl">
             <span className="block text-[10px] font-bold text-indigo-900 mb-1">الرصيد الدائن المستجد</span>
-            <span className="text-base font-bold text-indigo-700 tabular-nums">{statement.summary.unallocatedCredit.toLocaleString('ar-SA')} ر.س</span>
+            <CurrencyAmount amount={statement.summary.unallocatedCredit} className="text-base font-bold text-indigo-700" />
           </div>
         </div>
 
@@ -247,9 +249,9 @@ export const TenantStatementView: React.FC<Props> = ({
         <div className="flex items-center justify-between p-4 bg-[#282824] text-white rounded-2xl select-none text-right">
           <div>
             <span className="text-xs text-stone-300 block">صافي الرصيد المستحق الدفع (Net Balance Due)</span>
-            <span className="text-2xl font-black text-[#E8D7B0] tabular-nums">
-              {statement.summary.currentNetBalance.toLocaleString('ar-SA')} ر.س
-            </span>
+            <div className="text-2xl font-black text-[#E8D7B0]">
+              <CurrencyAmount amount={statement.summary.currentNetBalance} className="text-2xl font-black text-[#E8D7B0]" />
+            </div>
           </div>
           {statement.summary.currentNetBalance > 0 ? (
             <div>
@@ -294,7 +296,7 @@ export const TenantStatementView: React.FC<Props> = ({
                 statement.entries.map((entry) => (
                   <tr key={entry.id} className="hover:bg-[#FFFCF6] transition-colors">
                     <td className="p-3 font-medium text-[#282824] whitespace-nowrap">
-                      {entry.date}
+                      <bdi dir="ltr" className="tabular-nums font-mono">{formatDate(entry.date)}</bdi>
                     </td>
                     <td className="p-3">
                       <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-bold ${
@@ -312,24 +314,24 @@ export const TenantStatementView: React.FC<Props> = ({
                         {entry.type === 'deposit_hold' && 'تأمين محتجز'}
                       </span>
                     </td>
-                    <td className="p-3 font-mono text-[11px] text-[#68675F] whitespace-nowrap select-all">
-                      {entry.referenceNumber}
+                    <td className="p-3 font-mono text-[11px] text-[#68675F] whitespace-nowrap select-all" dir="ltr">
+                      {formatNumber(entry.referenceNumber)}
                     </td>
                     <td className="p-3 whitespace-nowrap">
-                      <strong className="block text-[#282824] text-[11px]">{entry.contractNumber}</strong>
-                      <span className="text-[10px] text-[#68675F]">وحدة سكنية #{entry.unitNumber}</span>
+                      <strong className="block text-[#282824] text-[11px]" dir="ltr">{formatNumber(entry.contractNumber)}</strong>
+                      <span className="text-[10px] text-[#68675F]">وحدة سكنية #{formatNumber(entry.unitNumber)}</span>
                     </td>
                     <td className="p-3 max-w-[280px] text-[#68675F] text-[11px] leading-relaxed">
-                      {entry.description}
+                      {formatNumber(entry.description)}
                     </td>
-                    <td className="p-3 font-bold text-rose-700 tabular-nums">
-                      {entry.debitAmount > 0 ? `${entry.debitAmount.toLocaleString('ar-SA')} ر.س` : '-'}
+                    <td className="p-3 font-bold text-rose-700 whitespace-nowrap">
+                      {entry.debitAmount > 0 ? <CurrencyAmount amount={entry.debitAmount} className="text-rose-700 font-bold" /> : '-'}
                     </td>
-                    <td className="p-3 font-bold text-emerald-700 tabular-nums">
-                      {entry.creditAmount > 0 ? `${entry.creditAmount.toLocaleString('ar-SA')} ر.س` : '-'}
+                    <td className="p-3 font-bold text-emerald-700 whitespace-nowrap">
+                      {entry.creditAmount > 0 ? <CurrencyAmount amount={entry.creditAmount} className="text-emerald-700 font-bold" /> : '-'}
                     </td>
-                    <td className="p-3 font-black text-[#282824] tabular-nums whitespace-nowrap">
-                      {entry.runningBalance.toLocaleString('ar-SA')} ر.س
+                    <td className="p-3 font-black text-[#282824] whitespace-nowrap">
+                      <CurrencyAmount amount={entry.runningBalance} className="font-black text-[#282824]" />
                     </td>
                   </tr>
                 ))
@@ -338,7 +340,7 @@ export const TenantStatementView: React.FC<Props> = ({
           </table>
         </div>
 
-        {/* ISOLATED SECURITY DEPOSIT SECTION (معزول تماماً عن الإيرادات) */}
+        {/* ISOLATED SECURITY DEPOSIT SECTION */}
         <div className="pt-5 border-t border-[#E3DCCD] space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -355,9 +357,9 @@ export const TenantStatementView: React.FC<Props> = ({
             
             <div className="text-left bg-amber-50 px-3.5 py-1.5 rounded-xl border border-amber-200 text-right">
               <span className="text-[10px] text-amber-900 block font-semibold">رصيد الودائع المحتجز الفعال حالياً</span>
-              <span className="text-sm font-black text-amber-950 tabular-nums">
-                {statement.summary.securityDepositHeld.toLocaleString('ar-SA')} ر.س
-              </span>
+              <div className="text-sm font-black text-amber-950">
+                <CurrencyAmount amount={statement.summary.securityDepositHeld} className="text-amber-950 font-black" />
+              </div>
             </div>
           </div>
 
@@ -387,13 +389,13 @@ export const TenantStatementView: React.FC<Props> = ({
                     const available = Math.max(0, d.amount - deducted);
                     return (
                       <tr key={d.id} className="hover:bg-white/80">
-                        <td className="p-2 font-mono text-[11px] select-all">{d.id}</td>
-                        <td className="p-2 font-medium font-mono">{d.bookingOrLeaseId}</td>
-                        <td className="p-2 font-bold tabular-nums">{d.amount} ر.س</td>
-                        <td className="p-2 text-rose-700 font-medium tabular-nums">
-                          {deducted > 0 ? `${deducted} ر.س` : '-'}
+                        <td className="p-2 font-mono text-[11px] select-all" dir="ltr">{formatNumber(d.id)}</td>
+                        <td className="p-2 font-medium font-mono" dir="ltr">{formatNumber(d.bookingOrLeaseId)}</td>
+                        <td className="p-2 font-bold whitespace-nowrap"><CurrencyAmount amount={d.amount} /></td>
+                        <td className="p-2 text-rose-700 font-medium whitespace-nowrap">
+                          {deducted > 0 ? <CurrencyAmount amount={deducted} className="text-rose-700 font-medium" /> : '-'}
                         </td>
-                        <td className="p-2 font-black text-[#282824] tabular-nums">{available} ر.س</td>
+                        <td className="p-2 font-black text-[#282824] whitespace-nowrap"><CurrencyAmount amount={available} className="font-black text-[#282824]" /></td>
                         <td className="p-2">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                             d.status === 'held' ? 'bg-amber-100 text-amber-900' : 'bg-emerald-100 text-emerald-900'

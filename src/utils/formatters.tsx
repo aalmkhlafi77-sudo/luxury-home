@@ -108,37 +108,86 @@ export function formatDate(
   return dateFormatter.format(d);
 }
 
+//Official SAMA Saudi Riyal Symbol SVG Paths (Approved Feb 20, 2025 - Unicode U+20C1)
+export const OFFICIAL_SAUDI_RIYAL_VIEWBOX = '0 0 1124.14 1256.39';
+export const OFFICIAL_SAUDI_RIYAL_PATH_1 =
+  'M699.62,1113.02h0c-20.06,44.48-33.32,92.75-38.4,143.37l424.51-90.24c20.06-44.47,33.31-92.75,38.4-143.37l-424.51,90.24Z';
+export const OFFICIAL_SAUDI_RIYAL_PATH_2 =
+  'M1085.73,895.8c20.06-44.47,33.32-92.75,38.4-143.37l-330.68,70.33v-135.2l292.27-62.11c20.06-44.47,33.32-92.75,38.4-143.37l-330.68,70.27V66.13c-50.67,28.45-95.67,66.32-132.25,110.99v403.35l-132.25,28.11V0c-50.67,28.44-95.67,66.32-132.25,110.99v525.69l-295.91,62.88c-20.06,44.47-33.33,92.75-38.42,143.37l334.33-71.05v170.26l-358.3,76.14c-20.06,44.47-33.32,92.75-38.4,143.37l375.04-79.7c30.53-6.35,56.77-24.4,73.83-49.24l68.78-101.97v-.02c7.14-10.55,11.3-23.27,11.3-36.97v-149.98l132.25-28.11v270.4l424.53-90.28Z';
+
+let globalCurrencyDisplayMode: 'symbol' | 'code' = 'symbol';
+
+export function setGlobalCurrencyDisplayMode(mode: 'symbol' | 'code') {
+  globalCurrencyDisplayMode = mode === 'code' ? 'code' : 'symbol';
+}
+
+export function getGlobalCurrencyDisplayMode(): 'symbol' | 'code' {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const raw = window.localStorage.getItem('luxury_home_platform_data_v1');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.settings?.currencyDisplayMode === 'code') return 'code';
+        if (parsed?.settings?.currencyDisplayMode === 'symbol') return 'symbol';
+      }
+    }
+  } catch {
+    // Ignore storage read errors
+  }
+  return globalCurrencyDisplayMode;
+}
+
 /**
- * Official Saudi Riyal Symbol (SVG Emblem with SAR fallback)
+ * Official Saudi Riyal Symbol (SAMA Official SVG Emblem with SAR fallback)
  */
-export const SaudiRiyalSymbol: React.FC<{ className?: string; size?: number; color?: string }> = ({
+export const SaudiRiyalSymbol: React.FC<{
+  className?: string;
+  size?: number;
+  color?: string;
+  forceFallback?: boolean;
+}> = ({
   className = 'inline-block align-middle',
   size = 14,
   color = 'currentColor',
+  forceFallback = false,
 }) => {
+  const [svgFailed, setSvgFailed] = React.useState(false);
+
+  if (forceFallback || svgFailed) {
+    return (
+      <bdi
+        dir="ltr"
+        className={`inline-flex items-center align-middle mx-0.5 font-mono font-bold text-[0.85em] ${className}`}
+        title="ريال سعودي (SAR)"
+      >
+        SAR
+      </bdi>
+    );
+  }
+
+  const height = Math.round(size * (1256.39 / 1124.14) * 10) / 10;
+
   return (
     <span
-      className={`inline-flex items-center align-middle mx-1 select-none font-bold ${className}`}
+      className={`inline-flex items-center align-middle mx-0.5 select-none ${className}`}
       title="ريال سعودي (SAR)"
-      aria-label="ر.س"
+      aria-label="SAR"
+      data-testid="saudi-riyal-symbol"
     >
       <svg
         width={size}
-        height={size}
-        viewBox="0 0 24 24"
+        height={height}
+        viewBox={OFFICIAL_SAUDI_RIYAL_VIEWBOX}
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
-        className="shrink-0"
+        className="shrink-0 inline-block"
         style={{ color }}
+        role="img"
+        aria-hidden="true"
+        onError={() => setSvgFailed(true)}
       >
-        {/* Official Saudi Riyal Currency Symbol Glyph */}
-        <path
-          d="M6 4H18M6 8.5H18M6 13H15M6 17.5H12M9 4V20M15 4V13"
-          stroke="currentColor"
-          strokeWidth="2.2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
+        <path fill="currentColor" d={OFFICIAL_SAUDI_RIYAL_PATH_1} />
+        <path fill="currentColor" d={OFFICIAL_SAUDI_RIYAL_PATH_2} />
       </svg>
       <span className="sr-only">SAR</span>
     </span>
@@ -169,13 +218,7 @@ export function formatCurrency(
   mode: 'symbol' | 'sar_text' | 'sar_code' = 'symbol'
 ): string {
   const formatted = formatNumber(amount);
-  if (mode === 'sar_text') {
-    return `${formatted} SAR`;
-  }
-  if (mode === 'sar_code') {
-    return `${formatted} SAR`;
-  }
-  return `${formatted} ر.س`;
+  return `${formatted} SAR`;
 }
 
 /**
@@ -229,30 +272,29 @@ export const CurrencyAmount: React.FC<{
   decimals?: number;
 }> = ({
   amount,
-  currencyMode = 'symbol',
+  currencyMode,
   currencyCode = 'SAR',
   className = '',
   symbolSize = 14,
   decimals = 0,
 }) => {
+  const effectiveMode = currencyMode || getGlobalCurrencyDisplayMode();
   const formatted = formatNumber(amount, {
     maxFractionDigits: decimals,
     minFractionDigits: decimals,
   });
 
   return (
-    <span className={`inline-flex items-center gap-1 font-bold ${className}`}>
-      <bdi dir="ltr" className="tabular-nums font-mono">
-        {formatted}
-      </bdi>
-      {currencyMode === 'symbol' ? (
+    <bdi dir="ltr" className={`inline-flex items-center gap-1 font-bold tabular-nums font-mono ${className}`}>
+      <span>{formatted}</span>
+      {effectiveMode === 'symbol' ? (
         <SaudiRiyalSymbol size={symbolSize} />
       ) : (
-        <span className="text-[11px] font-semibold text-[#68675F]">
-          {currencyCode === 'SAR' ? 'ر.س' : currencyCode}
+        <span className="text-[0.8em] font-bold tracking-wider opacity-85">
+          {currencyCode}
         </span>
       )}
-    </span>
+    </bdi>
   );
 };
 

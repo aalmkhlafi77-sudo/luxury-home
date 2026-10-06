@@ -931,7 +931,7 @@ export const UnitEditorModal: React.FC<UnitEditorModalProps> = ({
                   basicForm.allowYearly ? 'bg-white border-[#B69A68] shadow-xs' : 'bg-stone-50 border-stone-200 opacity-80'
                 }`}>
                   <div className="flex items-center justify-between pb-2 border-b border-[#E3DCCD]">
-                    <strong className="text-sm font-bold text-[#282824]">٣. الإيجار السنوي</strong>
+                    <strong className="text-sm font-bold text-[#282824]">3. الإيجار السنوي</strong>
                     <label className="flex items-center gap-1.5 cursor-pointer font-bold">
                       <input
                         type="checkbox"
@@ -990,7 +990,7 @@ export const UnitEditorModal: React.FC<UnitEditorModalProps> = ({
                         }}
                         className="accent-[#B69A68]"
                       />
-                      <span>دفعة سنوية كاملة (١٠٠٪)</span>
+                      <span>دفعة سنوية كاملة (100%)</span>
                     </label>
                     <label className="flex items-center gap-2 cursor-pointer text-xs">
                       <input

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { Unit, Booking } from '../../types';
+import { CurrencyAmount, formatNumber } from '../../utils/formatters';
 import {
   X,
   ShieldCheck,
@@ -244,25 +245,29 @@ export const BookingCheckoutModal: React.FC<BookingCheckoutModalProps> = ({
 
               {/* Price Breakdown */}
               <div className="p-4 bg-white rounded-2xl border border-[#E3DCCD] space-y-2 text-xs text-[#68675F]">
-                <div className="flex justify-between">
-                  <span>قيمة الإقامة المفوترة ({calculatedNights} ليلة x {unit.dailyRate} ر.س)</span>
-                  <span className="font-medium text-[#282824] tabular-nums">{subtotal} ر.س</span>
+                <div className="flex justify-between items-center">
+                  <span className="inline-flex items-center gap-1 flex-wrap">
+                    <span>قيمة الإقامة المفوترة ({formatNumber(calculatedNights)} ليلة ×</span>
+                    <CurrencyAmount amount={unit.dailyRate} symbolSize={12} />
+                    <span>)</span>
+                  </span>
+                  <CurrencyAmount amount={subtotal} className="font-medium text-[#282824]" />
                 </div>
-                <div className="flex justify-between">
+                <div className="flex justify-between items-center">
                   <span>رسوم التطهير الفندقي وتجهيز الشقة</span>
-                  <span className="font-medium text-[#282824] tabular-nums">{cleaningFee} ر.س</span>
+                  <CurrencyAmount amount={cleaningFee} className="font-medium text-[#282824]" />
                 </div>
-                <div className="flex justify-between">
-                  <span>ضريبة القيمة المضافة الحكومية (١٥٪)</span>
-                  <span className="font-medium text-[#282824] tabular-nums">{taxes} ر.س</span>
+                <div className="flex justify-between items-center">
+                  <span>ضريبة القيمة المضافة الحكومية (<bdi dir="ltr">15%</bdi>)</span>
+                  <CurrencyAmount amount={taxes} className="font-medium text-[#282824]" />
                 </div>
-                <div className="flex justify-between pt-2 border-t border-[#E3DCCD] text-sm font-bold text-[#282824]">
+                <div className="flex justify-between items-center pt-2 border-t border-[#E3DCCD] text-sm font-bold text-[#282824]">
                   <span>إجمالي المبلغ المطلوب للدفع الآن</span>
-                  <span className="tabular-nums text-emerald-800">{totalAmountToPay} ر.س</span>
+                  <CurrencyAmount amount={totalAmountToPay} className="text-emerald-800" />
                 </div>
-                <div className="flex justify-between pt-1 text-[11px] text-amber-800 border-t border-dashed border-[#E3DCCD]/60 mt-1">
+                <div className="flex justify-between items-center pt-1 text-[11px] text-amber-800 border-t border-dashed border-[#E3DCCD]/60 mt-1">
                   <span>تأمين الأثاث المسترد (تفويض معلق على البطاقة)</span>
-                  <span className="tabular-nums">{securityDeposit} ر.س</span>
+                  <CurrencyAmount amount={securityDeposit} symbolSize={12} />
                 </div>
               </div>
 
@@ -403,9 +408,11 @@ export const BookingCheckoutModal: React.FC<BookingCheckoutModalProps> = ({
 
               {/* Security Deposit Note */}
               <div className="p-4 bg-amber-50/80 rounded-2xl border border-amber-200/80 text-xs text-amber-900 space-y-1">
-                <div className="font-bold flex items-center gap-1.5">
+                <div className="font-bold flex items-center gap-1.5 flex-wrap">
                   <ShieldCheck className="w-4 h-4 text-amber-700" />
-                  <span>تأمين الأثاث المسترد ({securityDeposit} ر.س)</span>
+                  <span>تأمين الأثاث المسترد (</span>
+                  <CurrencyAmount amount={securityDeposit} symbolSize={12} />
+                  <span>)</span>
                 </div>
                 <p className="text-[11px] leading-relaxed text-amber-800">
                   سيتم تطبيق حجز تفويض أمني مؤقت على البطاقة دون سحب فعلي للرصيد، ويتحرر الحجز بالكامل فور تسليم الشقة بموجب محاضر الفحص الفني.
@@ -415,7 +422,9 @@ export const BookingCheckoutModal: React.FC<BookingCheckoutModalProps> = ({
               <div className="p-4 bg-[#FFFCF6] rounded-2xl border border-[#E3DCCD] flex items-center justify-between">
                 <div>
                   <span className="block text-xs text-[#68675F]">إجمالي السداد الفوري المطلوب:</span>
-                  <span className="text-xl font-bold text-[#282824] tabular-nums">{totalAmountToPay} ر.س</span>
+                  <div className="text-xl font-bold text-[#282824]">
+                    <CurrencyAmount amount={totalAmountToPay} symbolSize={18} />
+                  </div>
                 </div>
                 <span className="text-xs text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-200 font-semibold select-none">
                   جاهز للتعميد
@@ -441,7 +450,10 @@ export const BookingCheckoutModal: React.FC<BookingCheckoutModalProps> = ({
                   ) : (
                     <>
                       <Lock className="w-4 h-4 text-[#B69A68]" />
-                      <span>سداد وأرشفة الحجز {totalAmountToPay} ر.س</span>
+                      <span className="inline-flex items-center gap-1.5">
+                        <span>سداد وأرشفة الحجز</span>
+                        <CurrencyAmount amount={totalAmountToPay} symbolSize={13} />
+                      </span>
                     </>
                   )}
                 </button>

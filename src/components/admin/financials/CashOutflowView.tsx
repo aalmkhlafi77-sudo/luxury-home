@@ -12,6 +12,7 @@ import {
   TrendingDown
 } from 'lucide-react';
 import { calculateCashOutflowReport } from '../../../utils/financialCalculations';
+import { CurrencyAmount, formatNumber, formatDate } from '../../../utils/formatters';
 
 export const CashOutflowView: React.FC = () => {
   const { state } = useAppStore();
@@ -88,7 +89,7 @@ export const CashOutflowView: React.FC = () => {
                 periodPreset === 'full_year' ? 'bg-[#282824] text-white' : 'text-[#68675F] hover:text-[#282824]'
               }`}
             >
-              كامل عام {currentYear}
+              كامل عام {formatNumber(currentYear)}
             </button>
           </div>
 
@@ -115,7 +116,7 @@ export const CashOutflowView: React.FC = () => {
             مبدأ الفصل الرقابي: السداد الفعلي مقابل التكلفة والاستحقاق
           </span>
           <p className="text-[11px] text-[#68675F] leading-relaxed">
-            مثال توضيحي: إيجار عمارة النخيل السنوي بقيمة <strong>١٢٠,٠٠٠ ريال</strong> يغطي سنة وسُدد مقدماً: يظهر كاملاً (١٢٠,٠٠٠ ريال) في هذا التقرير بتاريخ سداده الفعلي في شهر يناير، بينما يظهر في تقرير أرباح التشغيل (NOI) محملاً على السنة بالتساوي بنصيب <strong>١٠,٠٠٠ ريال شهرياً</strong> وموزعاً على الوحدات حسب المساحة.
+            مثال توضيحي: إيجار عمارة النخيل السنوي بقيمة <strong><CurrencyAmount amount={120000} /></strong> يغطي سنة وسُدد مقدماً: يظهر كاملاً في هذا التقرير بتاريخ سداده الفعلي في شهر يناير، بينما يظهر في تقرير أرباح التشغيل (NOI) محملاً على السنة بالتساوي بنصيب <strong><CurrencyAmount amount={10000} /> شهرياً</strong> وموزعاً على الوحدات حسب المساحة.
           </p>
         </div>
       </div>
@@ -124,34 +125,34 @@ export const CashOutflowView: React.FC = () => {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 select-none">
         <div className="p-4 bg-white rounded-3xl border border-[#E3DCCD] shadow-xs">
           <span className="block text-[11px] font-bold text-[#68675F] mb-1">إجمالي النقدية الخارجة</span>
-          <span className="text-2xl font-black text-rose-800 tabular-nums">
-            {report.totalOutflow.toLocaleString('ar-SA')} ر.س
-          </span>
-          <span className="text-[10px] text-[#68675F] block mt-0.5 font-mono">
-            {report.entries.length} دفعة مالية مسددة
+          <div className="text-2xl font-black text-rose-800">
+            <CurrencyAmount amount={report.totalOutflow} className="text-2xl font-black text-rose-800" />
+          </div>
+          <span className="text-[10px] text-[#68675F] block mt-0.5 font-mono" dir="ltr">
+            {formatNumber(report.entries.length)} دفعة مالية مسددة
           </span>
         </div>
 
         <div className="p-4 bg-white rounded-3xl border border-[#E3DCCD] shadow-xs">
           <span className="block text-[11px] font-bold text-[#68675F] mb-1">مدفوعات تشغيلية (OPEX)</span>
-          <span className="text-xl font-black text-[#282824] tabular-nums">
-            {report.operatingOutflow.toLocaleString('ar-SA')} ر.س
-          </span>
+          <div className="text-xl font-black text-[#282824]">
+            <CurrencyAmount amount={report.operatingOutflow} className="text-xl font-black text-[#282824]" />
+          </div>
           <span className="text-[10px] text-[#68675F] block mt-0.5">إيجارات، فواتير، صيانة</span>
         </div>
 
         <div className="p-4 bg-purple-50 rounded-3xl border border-purple-200 shadow-xs">
           <span className="block text-[11px] font-bold text-purple-900 mb-1">مدفوعات أثاث وأجهزة (FF&E)</span>
-          <span className="text-xl font-black text-purple-950 tabular-nums">
-            {report.capitalFfeOutflow.toLocaleString('ar-SA')} ر.س
-          </span>
+          <div className="text-xl font-black text-purple-950">
+            <CurrencyAmount amount={report.capitalFfeOutflow} className="text-xl font-black text-purple-950" />
+          </div>
           <span className="text-[10px] text-purple-800 block mt-0.5">مشتريات رأسمالية للأصول</span>
         </div>
 
         <div className="p-4 bg-[#FAF8F5] rounded-3xl border border-[#E3DCCD] shadow-xs">
           <span className="block text-[11px] font-bold text-[#68675F] mb-1">فترة الرصد والتقرير</span>
-          <span className="text-xs font-mono font-bold text-[#282824] block mt-1">
-            {periodStart} إلى {periodEnd}
+          <span className="text-xs font-mono font-bold text-[#282824] block mt-1" dir="ltr">
+            {formatDate(periodStart)} إلى {formatDate(periodEnd)}
           </span>
           <span className="text-[10px] text-[#68675F] block mt-0.5">بحسب تواريخ خروج النقدية</span>
         </div>
@@ -162,7 +163,7 @@ export const CashOutflowView: React.FC = () => {
         <div className="p-4 bg-[#FAF8F5] border-b border-[#E3DCCD] flex items-center justify-between select-none">
           <div>
             <h4 className="font-bold text-[#282824] text-xs sm:text-sm">
-              سجل حركات السداد الفعلي للتدفقات النقدية ({report.entries.length} حركة)
+              سجل حركات السداد الفعلي للتدفقات النقدية ({formatNumber(report.entries.length)} حركة)
             </h4>
             <p className="text-[10px] text-[#68675F] mt-0.5">
               مرتبة تنازلياً بحسب تاريخ خروج المال الفعلي
@@ -189,10 +190,10 @@ export const CashOutflowView: React.FC = () => {
               {report.entries.map((entry) => (
                 <tr key={entry.paymentId} className="hover:bg-[#FFFCF6] transition-colors">
                   <td className="p-3 font-mono font-bold text-[#282824] whitespace-nowrap">
-                    {entry.paymentDate}
+                    <bdi dir="ltr">{formatDate(entry.paymentDate)}</bdi>
                   </td>
-                  <td className="p-3 font-mono font-semibold text-[#68675F] whitespace-nowrap">
-                    {entry.expenseNumber}
+                  <td className="p-3 font-mono font-semibold text-[#68675F] whitespace-nowrap" dir="ltr">
+                    {formatNumber(entry.expenseNumber)}
                   </td>
                   <td className="p-3 whitespace-nowrap">
                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
@@ -204,22 +205,22 @@ export const CashOutflowView: React.FC = () => {
                     </span>
                   </td>
                   <td className="p-3 whitespace-nowrap text-[#282824]">
-                    {entry.propertyName ? `${entry.propertyName} ${entry.unitNumber ? `(#${entry.unitNumber})` : ''}` : entry.level}
+                    {entry.propertyName ? `${entry.propertyName} ${entry.unitNumber ? `(#${formatNumber(entry.unitNumber)})` : ''}` : entry.level}
                   </td>
                   <td className="p-3 font-semibold text-[#282824] whitespace-nowrap">
                     {entry.vendorOrBeneficiary}
                   </td>
                   <td className="p-3 text-[#282824] max-w-xs leading-relaxed truncate">
-                    <span title={entry.description}>{entry.description}</span>
+                    <span title={entry.description}>{formatNumber(entry.description)}</span>
                   </td>
                   <td className="p-3 whitespace-nowrap text-[#68675F]">
                     {entry.paymentMethod}
                   </td>
-                  <td className="p-3 font-mono text-[#68675F] whitespace-nowrap">
-                    {entry.receiptReference || '-'}
+                  <td className="p-3 font-mono text-[#68675F] whitespace-nowrap" dir="ltr">
+                    {formatNumber(entry.receiptReference || '-')}
                   </td>
-                  <td className="p-3 font-bold text-rose-800 tabular-nums whitespace-nowrap">
-                    {entry.amount.toLocaleString('ar-SA')} ر.س
+                  <td className="p-3 font-bold text-rose-800 whitespace-nowrap">
+                    <CurrencyAmount amount={entry.amount} className="font-bold text-rose-800" />
                   </td>
                 </tr>
               ))}

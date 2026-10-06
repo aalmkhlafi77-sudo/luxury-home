@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAppStore, loadAuthoritativeServerState } from '../../../store/useAppStore';
+import { CurrencyAmount, formatNumber } from '../../../utils/formatters';
 import { X, ShieldAlert, AlertCircle, CheckCircle2 } from 'lucide-react';
 
 interface Props {
@@ -401,9 +402,9 @@ export const DepositSettlementModal: React.FC<Props> = ({
 
               <div className="p-3 bg-[#FAF8F5] rounded-2xl border border-[#E3DCCD] flex items-center justify-between">
                 <span className="text-[11px] text-[#68675F]">رصيد التأمين الأمني المتاح للاقتطاع:</span>
-                <span className="text-base font-black text-amber-950 tabular-nums">
-                  {availableDeposit.toLocaleString('ar-SA')} ر.س
-                </span>
+                <div className="text-base font-black text-amber-950">
+                  <CurrencyAmount amount={availableDeposit} className="text-base font-black text-amber-950" />
+                </div>
               </div>
 
               <div>
