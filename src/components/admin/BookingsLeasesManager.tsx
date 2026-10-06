@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAppStore } from '../../store/useAppStore';
+import { formatNumber, formatDate, CurrencyAmount } from '../../utils/formatters';
 import {
   CalendarDays,
   FileText,
@@ -293,11 +294,13 @@ export const BookingsLeasesManager: React.FC = () => {
                         <span className="text-[11px] text-[#68675F]">{prop?.name || 'مجمع الفخامة'}</span>
                       </td>
                       <td className="p-3.5">
-                        <span className="tabular-nums font-semibold">{b.checkIn || (b as any).startDate?.slice(0, 10)} إلى {b.checkOut || (b as any).endDate?.slice(0, 10)}</span>
+                        <span className="tabular-nums font-semibold">
+                          <bdi dir="ltr">{formatDate(b.checkIn || (b as any).startDate)}</bdi> إلى <bdi dir="ltr">{formatDate(b.checkOut || (b as any).endDate)}</bdi>
+                        </span>
                         <span className="block text-[10px] text-[#68675F]">({b.totalNights || 1} ليلة)</span>
                       </td>
-                      <td className="p-3.5 font-bold text-[#282824] tabular-nums">
-                        {(Number(b.totalAmount) || 0).toLocaleString('ar-SA')} ر.س
+                      <td className="p-3.5 font-bold text-[#282824]">
+                        <CurrencyAmount amount={Number(b.totalAmount) || 0} />
                       </td>
                       <td className="p-3.5">
                         <span className="px-2 py-1 bg-[#282824] text-[#B69A68] rounded font-mono font-bold text-xs">
@@ -401,9 +404,9 @@ export const BookingsLeasesManager: React.FC = () => {
                   <div className="flex items-center gap-3">
                     <div className="text-right sm:text-left select-none">
                       <span className="text-xs text-[#68675F] block mb-0.5">القيمة التعاقدية الشاملة</span>
-                      <span className="text-lg font-bold text-[#282824] tabular-nums">
-                        {(Number((lease as any).annualRent) || Number(lease.yearlyRent) || Number(lease.totalContractValue) || 0).toLocaleString('ar-SA')} ر.س
-                      </span>
+                      <div className="text-lg font-bold text-[#282824]">
+                        <CurrencyAmount amount={Number((lease as any).annualRent) || Number(lease.yearlyRent) || Number(lease.totalContractValue) || 0} />
+                      </div>
                       <span className="block text-[10px] text-[#68675F]">
                         {(lease.yearlyPaymentOption === 'semi_annual' || (lease as any).yearlyPaymentOption === '2_payments' || (lease as any).paymentOption === '2_payments') ? 'سداد بدفعتين (نصف سنويتين)' : (lease.yearlyPaymentOption === 'single_annual' || (lease as any).yearlyPaymentOption === '1_payment' || (lease as any).paymentOption === '1_payment') ? 'دفعة سنوية واحدة' : 'أقساط مجدولة'}
                       </span>
@@ -451,10 +454,12 @@ export const BookingsLeasesManager: React.FC = () => {
                           }`}
                         >
                           <span className="block text-[10px] text-[#68675F] select-none">{inst.label || `الدفعة رقم ${inst.installmentNumber || inst.number || idx + 1}`}</span>
-                          <strong className="block text-xs font-bold text-[#282824] tabular-nums">
-                            {amount.toLocaleString('ar-SA')} ر.س
-                          </strong>
-                          <span className="text-[10px] text-[#68675F] block mt-0.5 tabular-nums">{dueDate}</span>
+                          <div className="text-xs font-bold text-[#282824]">
+                            <CurrencyAmount amount={amount} />
+                          </div>
+                          <span className="text-[10px] text-[#68675F] block mt-0.5 tabular-nums">
+                            <bdi dir="ltr">{dueDate ? formatDate(dueDate) : ''}</bdi>
+                          </span>
                           <span className={`inline-block mt-1 px-1.5 py-0.2 rounded text-[10px] font-bold ${
                             inst.status === 'paid' ? 'text-emerald-800' : 'text-amber-800'
                           }`}>

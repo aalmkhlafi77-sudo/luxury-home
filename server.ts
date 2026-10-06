@@ -58,7 +58,19 @@ import {
   REQUIRED_FULL_BACKUP_COLLECTIONS,
   saveDocumentRecordInDb,
   getDocumentRecordFromDb,
-  getAllocationsFromDb
+  getAllocationsFromDb,
+  getCitiesFromDb,
+  createCityInDb,
+  updateCityInDb,
+  deleteCityInDb,
+  getAllUsersFromDb,
+  getUserByIdFromDb,
+  countActiveSuperAdminsInDb,
+  createUserInDb,
+  updateUserInDb,
+  deleteUserInDb,
+  resetUserPasswordInDb,
+  changeUserPasswordInDb
 } from './src/server/repository.js';
 import {
   processDailyReservation,
@@ -99,8 +111,53 @@ import {
   initialExpenseCategories,
   initialRecurringExpenses,
   initialExpenses,
-  initialAdjustments
+  initialAdjustments,
+  initialCities
 } from './src/data/initialData.js';
+
+export function ensureAndMigrateCitiesInState(targetState: any) {
+  if (!targetState || typeof targetState !== 'object') return;
+  if (!Array.isArray(targetState.cities) || targetState.cities.length === 0) {
+    targetState.cities = Array.isArray(initialCities) ? JSON.parse(JSON.stringify(initialCities)) : [
+      { id: 'city-riyadh', name: 'الرياض', nameEn: 'Riyadh', region: 'منطقة الرياض', country: 'المملكة العربية السعودية', status: 'active', displayOrder: 1 },
+      { id: 'city-dammam', name: 'الدمام', nameEn: 'Dammam', region: 'المنطقة الشرقية', country: 'المملكة العربية السعودية', status: 'active', displayOrder: 2 },
+      { id: 'city-jeddah', name: 'جدة', nameEn: 'Jeddah', region: 'منطقة مكة المكرمة', country: 'المملكة العربية السعودية', status: 'active', displayOrder: 3 },
+    ];
+  } else {
+    // Ensure base cities exist without duplicating
+    for (const defCity of (initialCities || [])) {
+      const exists = targetState.cities.some((c: any) => c.id === defCity.id || (String(c.name || '').trim() === defCity.name && (c.country || 'المملكة العربية السعودية') === defCity.country));
+      if (!exists) {
+        targetState.cities.push({ ...defCity });
+      }
+    }
+  }
+
+  if (Array.isArray(targetState.properties)) {
+    for (const p of targetState.properties) {
+      const rawCityName = String(p.city || 'الرياض').trim() || 'الرياض';
+      let matchedCity = p.cityId ? targetState.cities.find((c: any) => c.id === p.cityId) : null;
+      if (!matchedCity) {
+        matchedCity = targetState.cities.find((c: any) => String(c.name || '').trim() === rawCityName);
+      }
+      if (!matchedCity) {
+        matchedCity = {
+          id: `city-migrated-${Buffer.from(rawCityName).toString('hex').slice(0, 12)}`,
+          name: rawCityName,
+          nameEn: null,
+          region: null,
+          country: 'المملكة العربية السعودية',
+          status: 'active',
+          displayOrder: targetState.cities.length + 1,
+          createdAt: new Date().toISOString()
+        };
+        targetState.cities.push(matchedCity);
+      }
+      p.cityId = matchedCity.id;
+      p.city = matchedCity.name;
+    }
+  }
+}
 
 const ROOT_DIR = process.cwd();
 const BACKUP_DIR = path.resolve(ROOT_DIR, 'backups');
@@ -217,6 +274,7 @@ async function initializeFallbackState() {
         companyNameEn: 'Luxury Home',
         tagline: 'تجربة سكنية فاخرة تدمج بين خصوصية المنزل وخدمات الضيافة الراقية'
       },
+      cities: Array.isArray(initialCities) ? JSON.parse(JSON.stringify(initialCities)) : [],
       properties: Array.isArray(initialProperties) ? JSON.parse(JSON.stringify(initialProperties)) : [],
       floors: Array.isArray(initialFloors) ? JSON.parse(JSON.stringify(initialFloors)) : [],
       amenities: Array.isArray(initialAmenities) ? JSON.parse(JSON.stringify(initialAmenities)) : [],
@@ -322,6 +380,7 @@ async function initializeFallbackState() {
     const depositIds = new Set((memoryState.securityDeposits || []).map((d: any) => d.id));
     memoryState.securityDepositTransactions = (memoryState.securityDepositTransactions || []).filter((sdt: any) => depositIds.has(sdt.depositId));
   }
+  ensureAndMigrateCitiesInState(memoryState);
 }
 
 export function persistFallbackState() {
@@ -641,18 +700,523 @@ export async function startServer(customPort?: number) {
     }
   });
 
-  // Logout
-  apiRouter.post('/auth/logout', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
-    await recordAuditLogInDb({
-      userId: req.user?.userId,
-      userName: req.user?.username || 'مستخدم',
-      action: 'تسجيل خروج',
-      module: 'المصادقة والأمان',
-      details: 'تسجيل الخروج من الجلسة',
-      ipAddress: req.ip
-    });
-    res.json({ success: true, message: 'تم تسجيل الخروج بنجاح.' });
+  // Change own password (requires verifying current password)
+  apiRouter.post('/auth/change-password', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+    const { currentPassword, newPassword } = req.body;
+    const userId = req.user?.userId;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ success: false, message: 'كلمة المرور الحالية وكلمة المرور الجديدة مطلوبتان.' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ success: false, message: 'يجب أن تتكون كلمة المرور الجديدة من ٦ خانات على الأقل لضمان الأمان.' });
+    }
+
+    try {
+      let userRecord: any = null;
+
+      if (process.env.DATABASE_URL) {
+        userRecord = await prisma.user.findUnique({ where: { id: userId } });
+      } else if (memoryState?.users) {
+        userRecord = memoryState.users.find((u: any) => u.id === userId);
+      }
+
+      if (!userRecord) {
+        return res.status(404).json({ success: false, message: 'المستخدم غير موجود.' });
+      }
+
+      const isCurrentValid = await verifyPassword(currentPassword, userRecord.passwordHash);
+      if (!isCurrentValid) {
+        return res.status(400).json({ success: false, message: 'كلمة المرور الحالية غير صحيحة.' });
+      }
+
+      const newHash = await hashPassword(newPassword);
+
+      if (process.env.DATABASE_URL) {
+        userRecord = await prisma.user.update({
+          where: { id: userId },
+          data: {
+            passwordHash: newHash,
+          }
+        });
+      } else if (memoryState?.users) {
+        userRecord.passwordHash = newHash;
+        userRecord.mustChangePassword = false;
+        userRecord.updatedAt = new Date().toISOString();
+        persistFallbackState();
+      }
+
+      await recordAuditLogInDb({
+        userId: userRecord.id,
+        userName: `${userRecord.name || userRecord.username} (${userRecord.role})`,
+        action: 'تغيير كلمة المرور',
+        module: 'المصادقة والأمان',
+        details: `قام المستخدم (${userRecord.username}) بتحديث كلمة المرور الخاصة به بنجاح بعد تأكيد كلمة المرور الحالية.`,
+        ipAddress: req.ip
+      });
+
+      const tokenPayload: TokenPayload = {
+        userId: userRecord.id,
+        username: userRecord.username,
+        email: userRecord.email,
+        role: userRecord.role,
+        allowedProperties: userRecord.allowedProperties || ['all']
+      };
+      const newToken = generateToken(tokenPayload);
+
+      return res.json({
+        success: true,
+        message: 'تم تحديث كلمة المرور بنجاح.',
+        token: newToken,
+        user: sanitizeUser(userRecord)
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message || 'فشل تحديث كلمة المرور.' });
+    }
   });
+
+  // Change own profile details (requires verifying current password)
+  apiRouter.post('/auth/change-profile', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+    const { currentPassword, username, name, email, phone } = req.body;
+    const userId = req.user?.userId;
+
+    if (!currentPassword) {
+      return res.status(400).json({ success: false, message: 'يرجى إدخال كلمة المرور الحالية لتأكيد الهوية وحفظ التعديلات.' });
+    }
+
+    try {
+      let userRecord: any = null;
+
+      if (process.env.DATABASE_URL) {
+        userRecord = await prisma.user.findUnique({ where: { id: userId } });
+      } else if (memoryState?.users) {
+        userRecord = memoryState.users.find((u: any) => u.id === userId);
+      }
+
+      if (!userRecord) {
+        return res.status(404).json({ success: false, message: 'المستخدم غير موجود.' });
+      }
+
+      const isCurrentValid = await verifyPassword(currentPassword, userRecord.passwordHash);
+      if (!isCurrentValid) {
+        return res.status(400).json({ success: false, message: 'كلمة المرور الحالية غير صحيحة. تم رفض تعديل البيانات.' });
+      }
+
+      // Check unique username if changing
+      if (username && username.toLowerCase() !== userRecord.username.toLowerCase()) {
+        if (process.env.DATABASE_URL) {
+          const dup = await prisma.user.findFirst({
+            where: {
+              username: { equals: username, mode: 'insensitive' },
+              id: { not: userId }
+            }
+          });
+          if (dup) return res.status(409).json({ success: false, message: 'اسم المستخدم مسجل مسبقاً لمستخدم آخر.' });
+        } else if (memoryState?.users) {
+          const dup = memoryState.users.find((u: any) => u.username.toLowerCase() === username.toLowerCase() && u.id !== userId);
+          if (dup) return res.status(409).json({ success: false, message: 'اسم المستخدم مسجل مسبقاً لمستخدم آخر.' });
+        }
+      }
+
+      // Check unique email if changing
+      if (email && email.toLowerCase() !== userRecord.email.toLowerCase()) {
+        if (process.env.DATABASE_URL) {
+          const dup = await prisma.user.findFirst({
+            where: {
+              email: { equals: email, mode: 'insensitive' },
+              id: { not: userId }
+            }
+          });
+          if (dup) return res.status(409).json({ success: false, message: 'البريد الإلكتروني مسجل مسبقاً لمستخدم آخر.' });
+        } else if (memoryState?.users) {
+          const dup = memoryState.users.find((u: any) => u.email.toLowerCase() === email.toLowerCase() && u.id !== userId);
+          if (dup) return res.status(409).json({ success: false, message: 'البريد الإلكتروني مسجل مسبقاً لمستخدم آخر.' });
+        }
+      }
+
+      if (process.env.DATABASE_URL) {
+        userRecord = await prisma.user.update({
+          where: { id: userId },
+          data: {
+            ...(username ? { username } : {}),
+            ...(name ? { name } : {}),
+            ...(email ? { email } : {}),
+            ...(phone !== undefined ? { phone } : {})
+          }
+        });
+      } else if (memoryState?.users) {
+        if (username) userRecord.username = username;
+        if (name) userRecord.name = name;
+        if (email) userRecord.email = email;
+        if (phone !== undefined) userRecord.phone = phone;
+        userRecord.updatedAt = new Date().toISOString();
+        persistFallbackState();
+      }
+
+      await recordAuditLogInDb({
+        userId: userRecord.id,
+        userName: `${userRecord.name || userRecord.username} (${userRecord.role})`,
+        action: 'تعديل الملف الشخصي',
+        module: 'المصادقة والأمان',
+        details: `تم تحديث بيانات المستخدم (${userRecord.username}).`,
+        ipAddress: req.ip
+      });
+
+      const tokenPayload: TokenPayload = {
+        userId: userRecord.id,
+        username: userRecord.username,
+        email: userRecord.email,
+        role: userRecord.role,
+        allowedProperties: userRecord.allowedProperties || ['all']
+      };
+      const newToken = generateToken(tokenPayload);
+
+      return res.json({
+        success: true,
+        message: 'تم حفظ وتحديث بيانات الملف الشخصي بنجاح.',
+        token: newToken,
+        user: sanitizeUser(userRecord)
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message || 'فشل تعديل الملف الشخصي.' });
+    }
+  });
+
+  // --- Users & Permissions Management Endpoints (SUPER_ADMIN only) ---
+
+  // List all users
+  apiRouter.get('/users', authenticateToken, requireRoles(['SUPER_ADMIN']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      if (process.env.DATABASE_URL) {
+        const users = await getAllUsersFromDb();
+        return res.json({ success: true, users });
+      }
+
+      const users = (memoryState?.users || []).map((u: any) => sanitizeUser(u));
+      return res.json({ success: true, users });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message || 'فشل جلب قائمة المستخدمين.' });
+    }
+  });
+
+  // Create new company account / user
+  apiRouter.post('/users', authenticateToken, requireRoles(['SUPER_ADMIN']), async (req: AuthenticatedRequest, res: Response) => {
+    const { username, password, name, email, phone, role, allowedProperties, mustChangePassword } = req.body;
+
+    if (!username || !password || !name) {
+      return res.status(400).json({ success: false, message: 'اسم المستخدم، الاسم الكامل، وكلمة المرور مطلوبة.' });
+    }
+
+    if (username.length < 3) {
+      return res.status(400).json({ success: false, message: 'اسم المستخدم يجب ألا يقل عن ٣ أحرف.' });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ success: false, message: 'كلمة المرور يجب ألا تقل عن ٦ خانات.' });
+    }
+
+    const assignedRole = role || 'PROPERTY_MANAGER';
+    const userEmail = email || `${username}@luxuryhome.sa`;
+
+    try {
+      if (process.env.DATABASE_URL) {
+        const existing = await prisma.user.findFirst({
+          where: {
+            OR: [
+              { username: { equals: username, mode: 'insensitive' } },
+              { email: { equals: userEmail, mode: 'insensitive' } }
+            ]
+          }
+        });
+        if (existing) {
+          return res.status(409).json({ success: false, message: 'اسم المستخدم أو البريد الإلكتروني مسجل مسبقاً.' });
+        }
+
+        const hashedPassword = await hashPassword(password);
+        const newUser = await createUserInDb({
+          username,
+          email: userEmail,
+          passwordHash: hashedPassword,
+          name,
+          phone,
+          role: assignedRole,
+          allowedProperties: Array.isArray(allowedProperties) ? allowedProperties : ['all'],
+          isActive: true,
+          mustChangePassword: Boolean(mustChangePassword)
+        });
+
+        await recordAuditLogInDb({
+          userId: req.user?.userId,
+          userName: req.user?.username || 'المسؤول',
+          action: 'إنشاء حساب مستخدم',
+          module: 'المستخدمون والصلاحيات',
+          details: `تم إنشاء حساب جديد (${username}) بصلاحية (${assignedRole}) ونطاق مبانٍ [${(allowedProperties || ['all']).join(', ')}].`,
+          ipAddress: req.ip
+        });
+
+        return res.json({
+          success: true,
+          message: 'تم إنشاء حساب المستخدم بنجاح.',
+          user: newUser
+        });
+      }
+
+      // Memory fallback
+      const existsInMemory = (memoryState?.users || []).some(
+        (u: any) => u.username.toLowerCase() === username.toLowerCase() || u.email.toLowerCase() === userEmail.toLowerCase()
+      );
+      if (existsInMemory) {
+        return res.status(409).json({ success: false, message: 'اسم المستخدم أو البريد الإلكتروني مسجل مسبقاً.' });
+      }
+
+      const hashedPassword = await hashPassword(password);
+      const newUser = {
+        id: `usr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        username,
+        email: userEmail,
+        passwordHash: hashedPassword,
+        name,
+        phone: phone || null,
+        role: assignedRole,
+        allowedProperties: Array.isArray(allowedProperties) ? allowedProperties : ['all'],
+        isActive: true,
+        mustChangePassword: Boolean(mustChangePassword),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      if (!memoryState.users) memoryState.users = [];
+      memoryState.users.push(newUser);
+      persistFallbackState();
+
+      await recordAuditLogInDb({
+        userId: req.user?.userId,
+        userName: req.user?.username || 'المسؤول',
+        action: 'إنشاء حساب مستخدم',
+        module: 'المستخدمون والصلاحيات',
+        details: `تم إنشاء حساب جديد (${username}) بصلاحية (${assignedRole}).`,
+        ipAddress: req.ip
+      });
+
+      return res.json({
+        success: true,
+        message: 'تم إنشاء حساب المستخدم بنجاح.',
+        user: sanitizeUser(newUser)
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message || 'فشل إنشاء الحساب.' });
+    }
+  });
+
+  // Update user details, roles, allowed properties, or active status
+  apiRouter.put('/users/:id', authenticateToken, requireRoles(['SUPER_ADMIN']), async (req: AuthenticatedRequest, res: Response) => {
+    const targetUserId = req.params.id;
+    const { name, email, phone, role, allowedProperties, isActive } = req.body;
+
+    try {
+      let targetUser: any = null;
+
+      if (process.env.DATABASE_URL) {
+        targetUser = await prisma.user.findUnique({ where: { id: targetUserId } });
+      } else if (memoryState?.users) {
+        targetUser = memoryState.users.find((u: any) => u.id === targetUserId);
+      }
+
+      if (!targetUser) {
+        return res.status(404).json({ success: false, message: 'المستخدم المطلوب غير موجود.' });
+      }
+
+      // Protect last active SUPER_ADMIN
+      const isTargetSuperAdmin = targetUser.role === 'SUPER_ADMIN' && targetUser.isActive;
+      const isChangingRoleAway = role !== undefined && role !== 'SUPER_ADMIN';
+      const isDeactivating = isActive === false;
+
+      if (isTargetSuperAdmin && (isChangingRoleAway || isDeactivating)) {
+        const activeSuperAdminCount = process.env.DATABASE_URL
+          ? await countActiveSuperAdminsInDb()
+          : (memoryState?.users || []).filter((u: any) => u.role === 'SUPER_ADMIN' && u.isActive).length;
+
+        if (activeSuperAdminCount <= 1) {
+          return res.status(400).json({
+            success: false,
+            message: 'مرفوض: لا يمكن تعطيل أو تغيير دور آخر مسؤول عام (SUPER_ADMIN) نشط للنظام للحفاظ على استمرارية الإدارة وأمن المنصة.'
+          });
+        }
+      }
+
+      if (process.env.DATABASE_URL) {
+        const updated = await updateUserInDb(targetUserId, {
+          name,
+          email,
+          phone,
+          role,
+          allowedProperties,
+          isActive
+        });
+
+        await recordAuditLogInDb({
+          userId: req.user?.userId,
+          userName: req.user?.username || 'المسؤول',
+          action: 'تعديل صلاحيات وحساب مستخدم',
+          module: 'المستخدمون والصلاحيات',
+          details: `تم تحديث بيانات وصلاحيات الحساب (${targetUser.username}) إلى الدور (${role || targetUser.role}) والحالة (${isActive === false ? 'معطل' : 'نشط'}).`,
+          ipAddress: req.ip
+        });
+
+        return res.json({
+          success: true,
+          message: 'تم تحديث بيانات المستخدم وصلاحياته بنجاح.',
+          user: updated
+        });
+      }
+
+      // Memory fallback
+      if (name !== undefined) targetUser.name = name;
+      if (email !== undefined) targetUser.email = email;
+      if (phone !== undefined) targetUser.phone = phone;
+      if (role !== undefined) targetUser.role = role;
+      if (allowedProperties !== undefined) targetUser.allowedProperties = allowedProperties;
+      if (isActive !== undefined) targetUser.isActive = Boolean(isActive);
+      targetUser.updatedAt = new Date().toISOString();
+      persistFallbackState();
+
+      await recordAuditLogInDb({
+        userId: req.user?.userId,
+        userName: req.user?.username || 'المسؤول',
+        action: 'تعديل صلاحيات وحساب مستخدم',
+        module: 'المستخدمون والصلاحيات',
+        details: `تم تحديث بيانات الحساب (${targetUser.username}).`,
+        ipAddress: req.ip
+      });
+
+      return res.json({
+        success: true,
+        message: 'تم تحديث بيانات المستخدم بنجاح.',
+        user: sanitizeUser(targetUser)
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message || 'فشل تحديث بيانات المستخدم.' });
+    }
+  });
+
+  // Reset user password with temporary password & forced change on next login
+  apiRouter.post('/users/:id/reset-password', authenticateToken, requireRoles(['SUPER_ADMIN']), async (req: AuthenticatedRequest, res: Response) => {
+    const targetUserId = req.params.id;
+    const { customTemporaryPassword } = req.body;
+
+    try {
+      let targetUser: any = null;
+
+      if (process.env.DATABASE_URL) {
+        targetUser = await prisma.user.findUnique({ where: { id: targetUserId } });
+      } else if (memoryState?.users) {
+        targetUser = memoryState.users.find((u: any) => u.id === targetUserId);
+      }
+
+      if (!targetUser) {
+        return res.status(404).json({ success: false, message: 'المستخدم غير موجود.' });
+      }
+
+      // Generate a secure temporary password if not provided
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%&*';
+      let temporaryPassword = customTemporaryPassword;
+      if (!temporaryPassword || temporaryPassword.length < 6) {
+        temporaryPassword = 'Temp-' + Array.from({ length: 8 }, () => chars[Math.floor(Math.random() * chars.length)]).join('') + '!';
+      }
+
+      const newHash = await hashPassword(temporaryPassword);
+
+      if (process.env.DATABASE_URL) {
+        await prisma.user.update({
+          where: { id: targetUserId },
+          data: {
+            passwordHash: newHash,
+          }
+        });
+      } else if (memoryState?.users) {
+        targetUser.passwordHash = newHash;
+        targetUser.mustChangePassword = true;
+        targetUser.updatedAt = new Date().toISOString();
+        persistFallbackState();
+      }
+
+      await recordAuditLogInDb({
+        userId: req.user?.userId,
+        userName: req.user?.username || 'المسؤول',
+        action: 'إعادة تعيين كلمة المرور',
+        module: 'المستخدمون والصلاحيات',
+        details: `قام المسؤول بإعادة تعيين كلمة مرور الحساب (${targetUser.username})، مع إجبار المستخدم على تغييرها عند الدخول التالي.`,
+        ipAddress: req.ip
+      });
+
+      return res.json({
+        success: true,
+        message: 'تم إعادة تعيين كلمة المرور بنجاح وتوليد كلمة المرور المؤقتة.',
+        temporaryPassword,
+        mustChangePassword: true
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message || 'فشل إعادة تعيين كلمة المرور.' });
+    }
+  });
+
+  // Delete user (SUPER_ADMIN only, protects last active Super Admin)
+  apiRouter.delete('/users/:id', authenticateToken, requireRoles(['SUPER_ADMIN']), async (req: AuthenticatedRequest, res: Response) => {
+    const targetUserId = req.params.id;
+
+    try {
+      let targetUser: any = null;
+
+      if (process.env.DATABASE_URL) {
+        targetUser = await prisma.user.findUnique({ where: { id: targetUserId } });
+      } else if (memoryState?.users) {
+        targetUser = memoryState.users.find((u: any) => u.id === targetUserId);
+      }
+
+      if (!targetUser) {
+        return res.status(404).json({ success: false, message: 'المستخدم غير موجود.' });
+      }
+
+      // Check if deleting self or last super admin
+      if (targetUser.role === 'SUPER_ADMIN') {
+        const activeSuperAdminCount = process.env.DATABASE_URL
+          ? await countActiveSuperAdminsInDb()
+          : (memoryState?.users || []).filter((u: any) => u.role === 'SUPER_ADMIN' && u.isActive).length;
+
+        if (activeSuperAdminCount <= 1) {
+          return res.status(400).json({
+            success: false,
+            message: 'مرفوض: لا يمكن حذف آخر مسؤول عام (SUPER_ADMIN) للنظام.'
+          });
+        }
+      }
+
+      if (process.env.DATABASE_URL) {
+        await deleteUserInDb(targetUserId);
+      } else if (memoryState?.users) {
+        memoryState.users = memoryState.users.filter((u: any) => u.id !== targetUserId);
+        persistFallbackState();
+      }
+
+      await recordAuditLogInDb({
+        userId: req.user?.userId,
+        userName: req.user?.username || 'المسؤول',
+        action: 'حذف حساب مستخدم',
+        module: 'المستخدمون والصلاحيات',
+        details: `تم حذف حساب المستخدم (${targetUser.username}) نهائياً.`,
+        ipAddress: req.ip
+      });
+
+      return res.json({
+        success: true,
+        message: 'تم حذف حساب المستخدم بنجاح.'
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message || 'فشل حذف المستخدم.' });
+    }
+  });
+
 
   // 3. Public APIs (Sanitized Public Content)
   apiRouter.get('/public/settings', async (req: Request, res: Response) => {
@@ -697,24 +1261,54 @@ export async function startServer(customPort?: number) {
   });
 
   apiRouter.get('/public/properties', async (req: Request, res: Response) => {
+    const cityFilter = typeof req.query.cityId === 'string' ? req.query.cityId.trim() : (typeof req.query.city === 'string' ? req.query.city.trim() : '');
     if (process.env.DATABASE_URL) {
       const props = await getPropertiesFromDb();
-      const activeProps = props.filter((p: any) => p.isActive !== false);
+      let activeProps = props.filter((p: any) => p.isActive !== false);
+      if (cityFilter && cityFilter !== 'all') {
+        activeProps = activeProps.filter((p: any) => p.cityId === cityFilter || p.city === cityFilter);
+      }
       const floors = activeProps.flatMap((p: any) => p.floors || []);
       return res.json({ success: true, properties: activeProps, floors });
     }
-    const properties = (memoryState?.properties || []).filter((p: any) => p.isActive !== false);
+    let properties = (memoryState?.properties || []).filter((p: any) => p.isActive !== false);
+    if (cityFilter && cityFilter !== 'all') {
+      properties = properties.filter((p: any) => p.cityId === cityFilter || p.city === cityFilter);
+    }
     const allowedIds = new Set(properties.map((p: any) => p.id));
     const floors = (memoryState?.floors || []).filter((f: any) => allowedIds.has(f.propertyId));
     res.json({ success: true, properties, floors });
   });
 
   apiRouter.get('/public/units', async (req: Request, res: Response) => {
+    const cityFilter = typeof req.query.cityId === 'string' ? req.query.cityId.trim() : (typeof req.query.city === 'string' ? req.query.city.trim() : '');
+    const propFilter = typeof req.query.propertyId === 'string' ? req.query.propertyId.trim() : '';
     if (process.env.DATABASE_URL) {
-      const units = await getUnitsFromDb();
-      return res.json({ success: true, units: units.filter((u: any) => u.publicationStatus !== 'archived') });
+      const [units, props] = await Promise.all([getUnitsFromDb(), getPropertiesFromDb()]);
+      const propMap = new Map(props.map((p: any) => [p.id, p]));
+      let filtered = units.filter((u: any) => u.publicationStatus !== 'archived');
+      if (propFilter && propFilter !== 'all') {
+        filtered = filtered.filter((u: any) => u.propertyId === propFilter);
+      }
+      if (cityFilter && cityFilter !== 'all') {
+        filtered = filtered.filter((u: any) => {
+          const p: any = propMap.get(u.propertyId) || u.property;
+          return p && (p.cityId === cityFilter || p.city === cityFilter);
+        });
+      }
+      return res.json({ success: true, units: filtered });
     }
-    const units = (memoryState?.units || []).filter((u: any) => u.publicationStatus !== 'archived');
+    const propMap = new Map((memoryState?.properties || []).map((p: any) => [p.id, p]));
+    let units = (memoryState?.units || []).filter((u: any) => u.publicationStatus !== 'archived');
+    if (propFilter && propFilter !== 'all') {
+      units = units.filter((u: any) => u.propertyId === propFilter);
+    }
+    if (cityFilter && cityFilter !== 'all') {
+      units = units.filter((u: any) => {
+        const p: any = propMap.get(u.propertyId);
+        return p && (p.cityId === cityFilter || p.city === cityFilter);
+      });
+    }
     res.json({ success: true, units });
   });
 
@@ -723,13 +1317,20 @@ export async function startServer(customPort?: number) {
   apiRouter.get('/properties', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
     const user = req.user!;
     const allowed = user.role === 'SUPER_ADMIN' ? ['all'] : user.allowedProperties;
+    const cityFilter = typeof req.query.cityId === 'string' ? req.query.cityId.trim() : (typeof req.query.city === 'string' ? req.query.city.trim() : '');
     if (process.env.DATABASE_URL) {
-      const properties = await getPropertiesFromDb(allowed);
+      let properties = await getPropertiesFromDb(allowed);
+      if (cityFilter && cityFilter !== 'all') {
+        properties = properties.filter((p: any) => p.cityId === cityFilter || p.city === cityFilter);
+      }
       const floors = properties.flatMap((p: any) => p.floors || []);
       return res.json({ success: true, properties, floors });
     }
     const isUniversal = allowed.includes('all');
-    const filtered = isUniversal ? (memoryState?.properties || []) : (memoryState?.properties || []).filter((p: any) => allowed.includes(p.id));
+    let filtered = isUniversal ? (memoryState?.properties || []) : (memoryState?.properties || []).filter((p: any) => allowed.includes(p.id));
+    if (cityFilter && cityFilter !== 'all') {
+      filtered = filtered.filter((p: any) => p.cityId === cityFilter || p.city === cityFilter);
+    }
     const allowedIds = new Set(filtered.map((p: any) => p.id));
     const floors = (memoryState?.floors || []).filter((f: any) => allowedIds.has(f.propertyId));
     res.json({ success: true, properties: filtered, floors });
@@ -737,19 +1338,40 @@ export async function startServer(customPort?: number) {
 
   apiRouter.post('/properties', authenticateToken, requireRoles(['SUPER_ADMIN', 'PROPERTY_MANAGER']), async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const { name, code, address, city, district, floorsCount, unitsCount, totalAreaSqm, rooftopPayment, description, images, isActive } = req.body;
+      const user = req.user!;
+      if (user.role !== 'SUPER_ADMIN' && !user.allowedProperties?.includes('all')) {
+        return res.status(403).json({
+          success: false,
+          message: 'غير مصرح لمدير العقار المقيد بمبانٍ محددة بإنشاء مبانٍ جديدة خارج نطاق صلاحياته.'
+        });
+      }
+
+      const { name, code, address, cityId, district, floorsCount, unitsCount, totalAreaSqm, rooftopPayment, description, images, isActive } = req.body;
       if (!name || !code || !address || !district) {
         return res.status(400).json({ success: false, message: 'بيانات المبنى غير مكتملة (الاسم، الكود، العنوان، الحي مطلوبة).' });
       }
+      if (!cityId) {
+        return res.status(400).json({ success: false, message: 'يرجى اختيار مدينة صالحة للمبنى.' });
+      }
 
       if (process.env.DATABASE_URL) {
+        const cityRecord = await prisma.city.findUnique({ where: { id: cityId } });
+        if (!cityRecord) {
+          return res.status(400).json({ success: false, message: 'المدينة المحددة غير موجودة في سجل النظام.' });
+        }
+        if (cityRecord.status === 'inactive') {
+          return res.status(400).json({ success: false, message: 'لا يمكن ربط مبنى جديد بمدينة معطلة (غير نشطة).' });
+        }
+        req.body.city = cityRecord.name;
+        req.body.cityId = cityId;
+
         const prop = await createPropertyInDb(req.body);
         await recordAuditLogInDb({
           userId: req.user?.userId,
           userName: req.user?.username || 'المسؤول',
           action: 'إنشاء مبنى / عقار جديد',
           module: 'إدارة العقارات',
-          details: `إنشاء المبنى ${name} (${code})`,
+          details: `إنشاء المبنى ${name} (${code}) في مدينة ${cityRecord.name}`,
           ipAddress: req.ip
         });
         return res.json({ success: true, property: prop, floors: prop?.floors || [], message: 'تم حفظ المبنى بنجاح في قاعدة البيانات.' });
@@ -757,6 +1379,15 @@ export async function startServer(customPort?: number) {
 
       if (!memoryState.properties) memoryState.properties = [];
       if (!memoryState.floors) memoryState.floors = [];
+      if (!memoryState.cities) memoryState.cities = [];
+
+      const cityRecord = (memoryState.cities || []).find((c: any) => c.id === cityId);
+      if (!cityRecord) {
+        return res.status(400).json({ success: false, message: 'المدينة المحددة غير موجودة في سجل النظام.' });
+      }
+      if (cityRecord.status === 'inactive') {
+        return res.status(400).json({ success: false, message: 'لا يمكن ربط مبنى جديد بمدينة معطلة (غير نشطة).' });
+      }
 
       // Check duplicate code
       const duplicate = memoryState.properties.find((p: any) => p.code?.toLowerCase() === code.trim().toLowerCase());
@@ -784,7 +1415,8 @@ export async function startServer(customPort?: number) {
         name: name.trim(),
         code: code.trim(),
         address: address.trim(),
-        city: city || 'الرياض',
+        city: cityRecord.name,
+        cityId: cityId,
         district: district.trim(),
         floorsCount: fCount,
         unitsCount: Number(unitsCount) || 0,
@@ -806,7 +1438,7 @@ export async function startServer(customPort?: number) {
         userName: req.user?.username || 'المسؤول',
         action: 'إنشاء مبنى / عقار جديد',
         module: 'إدارة العقارات',
-        details: `إنشاء المبنى ${name} (${code})`,
+        details: `إنشاء المبنى ${name} (${code}) في مدينة ${cityRecord.name}`,
         ipAddress: req.ip
       });
 
@@ -819,6 +1451,25 @@ export async function startServer(customPort?: number) {
   apiRouter.put('/properties/:id', authenticateToken, requireRoles(['SUPER_ADMIN', 'PROPERTY_MANAGER']), checkPropertyAccess, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { id } = req.params;
+      const { cityId } = req.body;
+
+      if (cityId) {
+        if (process.env.DATABASE_URL) {
+          const cityRecord = await prisma.city.findUnique({ where: { id: cityId } });
+          if (!cityRecord) {
+            return res.status(400).json({ success: false, message: 'المدينة المحددة غير موجودة في سجل النظام.' });
+          }
+          req.body.city = cityRecord.name;
+        } else {
+          if (!memoryState.cities) memoryState.cities = [];
+          const cityRecord = (memoryState.cities || []).find((c: any) => c.id === cityId);
+          if (!cityRecord) {
+            return res.status(400).json({ success: false, message: 'المدينة المحددة غير موجودة في سجل النظام.' });
+          }
+          req.body.city = cityRecord.name;
+        }
+      }
+
       if (process.env.DATABASE_URL) {
         const updated = await updatePropertyInDb(id, req.body);
         await recordAuditLogInDb({
@@ -925,6 +1576,216 @@ export async function startServer(customPort?: number) {
       return res.json({ success: true, message: 'تم حذف المبنى بنجاح.' });
     } catch (err: any) {
       return res.status(400).json({ success: false, message: err?.message || 'فشل حذف المبنى.' });
+    }
+  });
+
+  // --- Cities API (Read & Mutations) ---
+  apiRouter.get('/cities', async (req: Request, res: Response) => {
+    if (process.env.DATABASE_URL) {
+      try {
+        const cities = await getCitiesFromDb();
+        return res.json({ success: true, cities });
+      } catch (err: any) {
+        return res.status(500).json({ success: false, message: 'فشل جلب المدن من قاعدة البيانات.' });
+      }
+    }
+    const cities = (memoryState?.cities || []).sort((a: any, b: any) => (a.displayOrder || 0) - (b.displayOrder || 0));
+    res.json({ success: true, cities });
+  });
+
+  apiRouter.post('/cities', authenticateToken, requireRoles(['SUPER_ADMIN']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { name, nameEn, region, country, status, displayOrder } = req.body;
+      if (!name) {
+        return res.status(400).json({ success: false, message: 'اسم المدينة مطلوب.' });
+      }
+
+      // Check unintended duplicate (same name, region, country)
+      const rgn = region || null;
+      const cntry = country || "المملكة العربية السعودية";
+
+      if (process.env.DATABASE_URL) {
+        const existing = await prisma.city.findFirst({
+          where: {
+            name: name.trim(),
+            region: rgn,
+            country: cntry
+          }
+        });
+        if (existing) {
+          return res.status(400).json({ success: false, message: 'هذه المدينة مضافة بالفعل في نفس المنطقة والدولة.' });
+        }
+
+        const city = await createCityInDb({ name: name.trim(), nameEn, region: rgn, country: cntry, status, displayOrder });
+        await recordAuditLogInDb({
+          userId: req.user?.userId,
+          userName: req.user?.username || 'المسؤول',
+          action: 'إنشاء مدينة جديدة',
+          module: 'إدارة المدن',
+          details: `إنشاء مدينة ${name.trim()}`,
+          ipAddress: req.ip
+        });
+        return res.json({ success: true, city, message: 'تم حفظ المدينة بنجاح.' });
+      }
+
+      if (!memoryState.cities) memoryState.cities = [];
+      const duplicate = memoryState.cities.find((c: any) => 
+        c.name.trim() === name.trim() && 
+        (c.region || null) === rgn && 
+        (c.country || "المملكة العربية السعودية") === cntry
+      );
+      if (duplicate) {
+        return res.status(400).json({ success: false, message: 'هذه المدينة مضافة بالفعل في نفس المنطقة والدولة.' });
+      }
+
+      const newCity = {
+        id: `city_${Date.now()}`,
+        name: name.trim(),
+        nameEn: nameEn || null,
+        region: rgn,
+        country: cntry,
+        status: status || 'active',
+        displayOrder: Number(displayOrder) || 0,
+        createdAt: new Date().toISOString()
+      };
+      memoryState.cities.push(newCity);
+      persistFallbackState();
+
+      await recordAuditLogInDb({
+        userId: req.user?.userId,
+        userName: req.user?.username || 'المسؤول',
+        action: 'إنشاء مدينة جديدة',
+        module: 'إدارة المدن',
+        details: `إنشاء مدينة ${name.trim()}`,
+        ipAddress: req.ip
+      });
+
+      return res.json({ success: true, city: newCity, message: 'تم حفظ المدينة بنجاح.' });
+    } catch (err: any) {
+      return res.status(400).json({ success: false, message: err?.message || 'فشل حفظ المدينة.' });
+    }
+  });
+
+  apiRouter.put('/cities/:id', authenticateToken, requireRoles(['SUPER_ADMIN']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { name, nameEn, region, country, status, displayOrder } = req.body;
+
+      if (process.env.DATABASE_URL) {
+        // Check uniqueness if name/region/country updated
+        if (name) {
+          const rgn = region !== undefined ? region : null;
+          const cntry = country !== undefined ? country : "المملكة العربية السعودية";
+          const existing = await prisma.city.findFirst({
+            where: {
+              id: { not: id },
+              name: name.trim(),
+              region: rgn,
+              country: cntry
+            }
+          });
+          if (existing) {
+            return res.status(400).json({ success: false, message: 'هذه المدينة مضافة بالفعل في نفس المنطقة والدولة.' });
+          }
+        }
+
+        const city = await updateCityInDb(id, req.body);
+        if (name && city?.name) {
+          await prisma.property.updateMany({
+            where: { cityId: id },
+            data: { city: city.name }
+          });
+        }
+        await recordAuditLogInDb({
+          userId: req.user?.userId,
+          userName: req.user?.username || 'المسؤول',
+          action: 'تعديل مدينة',
+          module: 'إدارة المدن',
+          details: `تعديل مدينة ${id}`,
+          ipAddress: req.ip
+        });
+        return res.json({ success: true, city, message: 'تم تحديث بيانات المدينة بنجاح.' });
+      }
+
+      if (!memoryState.cities) memoryState.cities = [];
+      const idx = memoryState.cities.findIndex((c: any) => c.id === id);
+      if (idx !== -1) {
+        const current = memoryState.cities[idx];
+        const newName = name !== undefined ? name.trim() : current.name;
+        const newRegion = region !== undefined ? region : current.region;
+        const newCountry = country !== undefined ? country : current.country;
+
+        const duplicate = memoryState.cities.find((c: any) => 
+          c.id !== id &&
+          c.name.trim() === newName && 
+          (c.region || null) === newRegion && 
+          (c.country || "المملكة العربية السعودية") === newCountry
+        );
+        if (duplicate) {
+          return res.status(400).json({ success: false, message: 'هذه المدينة مضافة بالفعل في نفس المنطقة والدولة.' });
+        }
+
+        memoryState.cities[idx] = { 
+          ...current, 
+          name: newName,
+          nameEn: nameEn !== undefined ? nameEn : current.nameEn,
+          region: newRegion,
+          country: newCountry,
+          status: status !== undefined ? status : current.status,
+          displayOrder: displayOrder !== undefined ? Number(displayOrder) : current.displayOrder
+        };
+        if (Array.isArray(memoryState.properties)) {
+          memoryState.properties.forEach((p: any) => {
+            if (p.cityId === id) {
+              p.city = newName;
+            }
+          });
+        }
+        persistFallbackState();
+        return res.json({ success: true, city: memoryState.cities[idx], message: 'تم تحديث بيانات المدينة بنجاح.' });
+      }
+      return res.status(404).json({ success: false, message: 'المدينة غير موجودة.' });
+    } catch (err: any) {
+      return res.status(400).json({ success: false, message: err?.message || 'فشل تحديث المدينة.' });
+    }
+  });
+
+  apiRouter.delete('/cities/:id', authenticateToken, requireRoles(['SUPER_ADMIN']), async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      if (process.env.DATABASE_URL) {
+        await deleteCityInDb(id);
+        await recordAuditLogInDb({
+          userId: req.user?.userId,
+          userName: req.user?.username || 'المسؤول',
+          action: 'حذف مدينة',
+          module: 'إدارة المدن',
+          details: `حذف المدينة ${id}`,
+          ipAddress: req.ip
+        });
+        return res.json({ success: true, message: 'تم حذف المدينة بنجاح.' });
+      }
+
+      if (!memoryState.cities) memoryState.cities = [];
+      const propertiesCount = (memoryState?.properties || []).filter((p: any) => p.cityId === id).length;
+      if (propertiesCount > 0) {
+        return res.status(400).json({ success: false, message: 'لا يمكن حذف المدينة نظراً لوجود مبانٍ مرتبطة بها. يرجى نقل المباني أو تعطيل المدينة بدلاً من الحذف.' });
+      }
+
+      memoryState.cities = memoryState.cities.filter((c: any) => c.id !== id);
+      persistFallbackState();
+
+      await recordAuditLogInDb({
+        userId: req.user?.userId,
+        userName: req.user?.username || 'المسؤول',
+        action: 'حذف مدينة',
+        module: 'إدارة المدن',
+        details: `حذف المدينة ${id}`,
+        ipAddress: req.ip
+      });
+      return res.json({ success: true, message: 'تم حذف المدينة بنجاح.' });
+    } catch (err: any) {
+      return res.status(400).json({ success: false, message: err?.message || 'فشل حذف المدينة.' });
     }
   });
 
@@ -1040,12 +1901,36 @@ export async function startServer(customPort?: number) {
   apiRouter.get('/units', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
     const user = req.user!;
     const allowed = user.role === 'SUPER_ADMIN' ? ['all'] : user.allowedProperties;
+    const cityFilter = typeof req.query.cityId === 'string' ? req.query.cityId.trim() : (typeof req.query.city === 'string' ? req.query.city.trim() : '');
+    const propFilter = typeof req.query.propertyId === 'string' ? req.query.propertyId.trim() : '';
     if (process.env.DATABASE_URL) {
-      const units = await getUnitsFromDb(allowed);
+      let units = await getUnitsFromDb(allowed);
+      if (propFilter && propFilter !== 'all') {
+        units = units.filter((u: any) => u.propertyId === propFilter);
+      }
+      if (cityFilter && cityFilter !== 'all') {
+        const props = await getPropertiesFromDb(allowed);
+        const propMap = new Map(props.map((p: any) => [p.id, p]));
+        units = units.filter((u: any) => {
+          const p: any = propMap.get(u.propertyId) || u.property;
+          return p && (p.cityId === cityFilter || p.city === cityFilter);
+        });
+      }
       return res.json({ success: true, units });
     }
     const isUniversal = allowed.includes('all');
-    const filtered = isUniversal ? (memoryState?.units || []) : (memoryState?.units || []).filter((u: any) => allowed.includes(u.propertyId));
+    const allowedProps = isUniversal ? (memoryState?.properties || []) : (memoryState?.properties || []).filter((p: any) => allowed.includes(p.id));
+    const propMap = new Map(allowedProps.map((p: any) => [p.id, p]));
+    let filtered = isUniversal ? (memoryState?.units || []) : (memoryState?.units || []).filter((u: any) => allowed.includes(u.propertyId));
+    if (propFilter && propFilter !== 'all') {
+      filtered = filtered.filter((u: any) => u.propertyId === propFilter);
+    }
+    if (cityFilter && cityFilter !== 'all') {
+      filtered = filtered.filter((u: any) => {
+        const p: any = propMap.get(u.propertyId);
+        return p && (p.cityId === cityFilter || p.city === cityFilter);
+      });
+    }
     res.json({ success: true, units: filtered });
   });
 
@@ -2079,7 +2964,7 @@ export async function startServer(customPort?: number) {
 
     if (process.env.DATABASE_URL) {
       try {
-        const [settings, properties, units, bookings, leases, allocations, expenses, auditLogs] = await Promise.all([
+        const [settings, properties, units, bookings, leases, allocations, expenses, auditLogs, cities] = await Promise.all([
           getCompanySettingsFromDb(),
           getPropertiesFromDb(allowed),
           getUnitsFromDb(allowed),
@@ -2087,7 +2972,8 @@ export async function startServer(customPort?: number) {
           getLeasesFromDb(allowed),
           getAllocationsFromDb(allowed),
           getExpensesFromDb(allowed),
-          user.role === 'SUPER_ADMIN' ? getAuditLogsFromDb(100) : []
+          user.role === 'SUPER_ADMIN' ? getAuditLogsFromDb(100) : [],
+          getCitiesFromDb()
         ]);
 
         const floors = properties.flatMap((p: any) => p.floors || []);
@@ -2162,6 +3048,7 @@ export async function startServer(customPort?: number) {
           success: true,
           state: {
             settings,
+            cities,
             properties,
             floors,
             units,
@@ -2181,13 +3068,44 @@ export async function startServer(customPort?: number) {
       }
     }
 
-    // Fallback
+    // Fallback (with strict RBAC scoping for Property Managers)
+    const isUniversal = allowed.includes('all');
+    const scopedProperties = isUniversal
+      ? (memoryState?.properties || [])
+      : (memoryState?.properties || []).filter((p: any) => allowed.includes(p.id));
+    const allowedPropIds = new Set(scopedProperties.map((p: any) => p.id));
+    const scopedFloors = (memoryState?.floors || []).filter((f: any) => allowedPropIds.has(f.propertyId));
+    const scopedUnits = isUniversal
+      ? (memoryState?.units || [])
+      : (memoryState?.units || []).filter((u: any) => allowedPropIds.has(u.propertyId));
+    const allowedUnitIds = new Set(scopedUnits.map((u: any) => u.id));
+    const scopedBookings = isUniversal
+      ? (memoryState?.bookings || [])
+      : (memoryState?.bookings || []).filter((b: any) => allowedUnitIds.has(b.unitId) || allowedPropIds.has(b.propertyId));
+    const scopedLeases = isUniversal
+      ? (memoryState?.leases || [])
+      : (memoryState?.leases || []).filter((l: any) => allowedUnitIds.has(l.unitId) || allowedPropIds.has(l.propertyId));
+    const scopedAllocations = isUniversal
+      ? (memoryState?.allocations || [])
+      : (memoryState?.allocations || []).filter((a: any) => allowedUnitIds.has(a.unitId));
+    const scopedExpenses = isUniversal
+      ? (memoryState?.expenses || [])
+      : (memoryState?.expenses || []).filter((e: any) => e.propertyId && allowedPropIds.has(e.propertyId));
+
     res.json({
       success: true,
       state: {
         ...memoryState,
-        floors: memoryState?.floors || [],
-        allocations: memoryState?.allocations || []
+        cities: memoryState?.cities || [],
+        properties: scopedProperties,
+        floors: scopedFloors,
+        units: scopedUnits,
+        bookings: scopedBookings,
+        leases: scopedLeases,
+        allocations: scopedAllocations,
+        expenses: scopedExpenses,
+        auditLogs: user.role === 'SUPER_ADMIN' ? (memoryState?.auditLogs || []) : [],
+        users: undefined
       },
       timestamp: Date.now()
     });
@@ -2971,6 +3889,20 @@ export async function startServer(customPort?: number) {
         return res.status(404).json({ success: false, message: 'لم يتم العثور على عقد أو كشف حساب للبيانات المحددة.' });
       }
 
+      const leaseUnit = (memoryState?.units || []).find((u: any) => u.id === lease.unitId);
+      const leasePropId = lease.propertyId || leaseUnit?.propertyId || lease.unit?.propertyId;
+      const isSuperAdmin = user.role === 'SUPER_ADMIN';
+      const isPropertyAllowed = Array.isArray(user.allowedProperties) && (user.allowedProperties.includes('all') || (leasePropId && user.allowedProperties.includes(leasePropId)));
+      const isTenantOwner = (user.role === 'TENANT' && (user.email === lease.tenantEmail || user.userId === lease.tenantIdNumber));
+
+      if (!isSuperAdmin && !isPropertyAllowed && !isTenantOwner) {
+        return res.status(403).json({
+          success: false,
+          code: 'FORBIDDEN',
+          message: 'غير مصرح لك بعرض كشف الحساب المالي لهذا العقد.'
+        });
+      }
+
       return res.json({ success: true, statement: buildStatementObj(lease) });
     } catch (err: any) {
       return res.status(500).json({ success: false, message: err.message || 'فشل توليد كشف الحساب.' });
@@ -2980,8 +3912,22 @@ export async function startServer(customPort?: number) {
   // Comprehensive Financial Reports & NOI Endpoint (Unit, Building, Company levels, Accrual vs Cash, Arrears, Aging)
   apiRouter.get('/financials/reports', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
     try {
+      const user = req.user!;
+      const allowed = user.role === 'SUPER_ADMIN' ? ['all'] : (user.allowedProperties || []);
+      const isUniversal = allowed.includes('all');
+      const cityFilter = typeof req.query.cityId === 'string' ? req.query.cityId.trim() : '';
+      const propFilter = typeof req.query.propertyId === 'string' ? req.query.propertyId.trim() : '';
+
+      if (propFilter && propFilter !== 'all' && !isUniversal && !allowed.includes(propFilter)) {
+        return res.status(403).json({
+          success: false,
+          message: 'غير مصرح لك بعرض التقارير المالية لعقار خارج نطاق صلاحياتك.'
+        });
+      }
+
       if (process.env.DATABASE_URL) {
-        const properties = await prisma.property.findMany({
+        let properties = await prisma.property.findMany({
+          where: isUniversal ? {} : { id: { in: allowed } },
           include: {
             units: {
               include: {
@@ -3001,6 +3947,13 @@ export async function startServer(customPort?: number) {
             }
           }
         });
+
+        if (propFilter && propFilter !== 'all') {
+          properties = properties.filter(p => p.id === propFilter);
+        }
+        if (cityFilter && cityFilter !== 'all') {
+          properties = properties.filter(p => p.cityId === cityFilter || p.city === cityFilter);
+        }
 
         const allExpenses = await prisma.operationalExpense.findMany({
           include: { allocations: true }
@@ -3140,7 +4093,17 @@ export async function startServer(customPort?: number) {
         });
       }
 
-      // Memory fallback report
+      // Memory fallback report (with RBAC & City/Property filtering)
+      let fallbackProps = isUniversal
+        ? (memoryState?.properties || [])
+        : (memoryState?.properties || []).filter((p: any) => allowed.includes(p.id));
+      if (propFilter && propFilter !== 'all') {
+        fallbackProps = fallbackProps.filter((p: any) => p.id === propFilter);
+      }
+      if (cityFilter && cityFilter !== 'all') {
+        fallbackProps = fallbackProps.filter((p: any) => p.cityId === cityFilter || p.city === cityFilter);
+      }
+
       return res.json({
         success: true,
         companySummary: {
@@ -3150,7 +4113,12 @@ export async function startServer(customPort?: number) {
           netOperatingIncomeAccrual: 105000,
           totalArrears: 10000
         },
-        properties: []
+        properties: fallbackProps.map((p: any) => ({
+          propertyId: p.id,
+          propertyName: p.name,
+          city: p.city,
+          cityId: p.cityId
+        }))
       });
     } catch (err: any) {
       return res.status(500).json({ success: false, message: err.message || 'فشل توليد التقارير المالية.' });
@@ -3200,6 +4168,8 @@ export async function startServer(customPort?: number) {
             ...memoryState,
             ...dataToImport
           };
+          ensureAndMigrateCitiesInState(memoryState);
+          persistFallbackState();
           importedStats = previewSummary;
         }
 

@@ -54,9 +54,17 @@ export const BuildingDetailModal: React.FC<BuildingDetailModalProps> = ({
               <h2 className="text-lg sm:text-xl font-bold text-[#282824]">
                 {property.name}
               </h2>
-              <span className="text-xs text-[#68675F] flex items-center gap-1 mt-0.5">
-                <MapPin className="w-3.5 h-3.5 text-[#B69A68]" />
-                {property.address} ({property.district})
+              <span className="text-xs text-[#68675F] flex items-center gap-1.5 mt-0.5 flex-wrap">
+                <MapPin className="w-3.5 h-3.5 text-[#B69A68] shrink-0" />
+                <span className="font-semibold text-[#282824]">{state.cities.find(c => c.id === property.cityId)?.name || property.city}</span>
+                <span>·</span>
+                <span>{property.district}</span>
+                {property.address && (
+                  <>
+                    <span>·</span>
+                    <span>{property.address}</span>
+                  </>
+                )}
               </span>
             </div>
           </div>

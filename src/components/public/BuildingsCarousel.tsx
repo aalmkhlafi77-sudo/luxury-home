@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { Property } from '../../types';
 import { ImageWithFallback } from '../common/ImageWithFallback';
@@ -12,31 +12,74 @@ export const BuildingsCarousel: React.FC<BuildingsCarouselProps> = ({
   onSelectProperty,
 }) => {
   const { state } = useAppStore();
+  const [selectedCityId, setSelectedCityId] = useState<string>('all');
   const sectionMeta = state.contentSections.find(s => s.sectionKey === 'buildings');
+  const bldTypo = state.settings.typography?.buildings;
 
   if (sectionMeta && !sectionMeta.visible) return null;
+
+  const title = bldTypo?.title?.text || sectionMeta?.title || 'مواقع ومجمعات منزل الفخامة الحصرية';
+  const subtitle = bldTypo?.subtitle?.text || sectionMeta?.subtitle || 'مجمعات سكنية تم انتقاؤها وتجهيزها بأحدث التصاميم المعمارية والمرافق الخدمية الفندقية المتكاملة لتلائم تطلعاتك وتطلعات المقيمين والشركات.';
+
+  const filteredProperties = state.properties.filter(p => {
+    if (selectedCityId === 'all') return true;
+    return p.cityId === selectedCityId || p.city === selectedCityId;
+  });
 
   return (
     <section id="buildings" className="py-16 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
       {/* Editorial Header */}
-      <div className="max-w-3xl mb-10">
-        <div className="inline-flex items-center gap-2 text-xs font-semibold text-[#B69A68] tracking-wider mb-2 select-none">
-          <Sparkles className="w-3.5 h-3.5" />
-          <span>مجمعات سكنية فاخرة في أرقى أحياء العاصمة</span>
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-10">
+        <div className="max-w-3xl">
+          <div className="inline-flex items-center gap-2 text-xs font-semibold text-[#B69A68] tracking-wider mb-2 select-none">
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>مجمعات سكنية فاخرة في أرقى مدن وأحياء المملكة</span>
+          </div>
+          <h2 className="text-2xl sm:text-4xl font-bold text-[#282824] tracking-tight">
+            {sectionMeta?.title || 'مواقع ومجمعات منزل الفخامة الحصرية'}
+          </h2>
+          <p className="text-sm sm:text-base text-[#68675F] mt-3 leading-relaxed">
+            {sectionMeta?.subtitle || 'مجمعات سكنية تم انتقاؤها وتجهيزها بأحدث التصاميم المعمارية والمرافق الخدمية الفندقية المتكاملة لتلائم تطلعاتك وتطلعات المقيمين والشركات.'}
+          </p>
         </div>
-        <h2 className="text-2xl sm:text-4xl font-bold text-[#282824] tracking-tight">
-          {sectionMeta?.title || 'مواقعنا الحصرية في مدينة الرياض'}
-        </h2>
-        <p className="text-sm sm:text-base text-[#68675F] mt-3 leading-relaxed">
-          {sectionMeta?.subtitle || 'مجمعات سكنية تم انتقاؤها وتجهيزها بأحدث التصاميم المعمارية والمرافق الخدمية الفندقية المتكاملة لتلائم تطلعاتك وتطلعات المقيمين والشركات.'}
-        </p>
+
+        {/* City Filter Segmented Control */}
+        <div className="flex items-center gap-1 p-1 bg-[#EFE9DF]/80 rounded-xl border border-[#E3DCCD] self-start md:self-auto overflow-x-auto max-w-full">
+          <button
+            onClick={() => setSelectedCityId('all')}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap cursor-pointer ${
+              selectedCityId === 'all'
+                ? 'bg-[#282824] text-white shadow-xs'
+                : 'text-[#68675F] hover:text-[#282824]'
+            }`}
+          >
+            جميع المدن ({state.properties.length})
+          </button>
+          {state.cities.map(c => {
+            const count = state.properties.filter(p => p.cityId === c.id || p.city === c.name).length;
+            return (
+              <button
+                key={c.id}
+                onClick={() => setSelectedCityId(c.id)}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap cursor-pointer ${
+                  selectedCityId === c.id
+                    ? 'bg-[#282824] text-white shadow-xs'
+                    : 'text-[#68675F] hover:text-[#282824]'
+                }`}
+              >
+                {c.name} ({count})
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Buildings Cards */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {state.properties.map((prop) => {
+        {filteredProperties.map((prop) => {
           const coverImage = prop.media.find(m => m.isCover)?.url || prop.media[0]?.url;
           const unitsInProp = state.units.filter(u => u.propertyId === prop.id && u.publicationStatus !== 'archived');
+          const cityName = state.cities.find(c => c.id === prop.cityId)?.name || prop.city || 'الرياض';
           
           return (
             <div
@@ -54,11 +97,14 @@ export const BuildingsCarousel: React.FC<BuildingsCarouselProps> = ({
                 <div className="absolute inset-0 bg-gradient-to-t from-[#282824]/80 via-transparent to-transparent" />
                 
                 {/* Top Markers (Interactive Filter Controls, unboxed labels) */}
-                <div className="absolute top-4 right-4 flex items-center gap-2">
+                <div className="absolute top-4 right-4 flex items-center gap-2 flex-wrap">
+                  <span className="px-3 py-1 rounded-md bg-[#B69A68] text-xs font-bold text-white shadow-xs">
+                    {cityName}
+                  </span>
                   <span className="px-3 py-1 rounded-md bg-[#282824]/80 backdrop-blur-md text-xs font-medium text-white border border-white/10">
                     {prop.district}
                   </span>
-                  <span className="px-3 py-1 rounded-md bg-[#B69A68]/90 backdrop-blur-md text-xs font-semibold text-white">
+                  <span className="px-3 py-1 rounded-md bg-white/90 backdrop-blur-md text-xs font-semibold text-[#282824]">
                     {unitsInProp.length} جناح فاخر
                   </span>
                 </div>
@@ -69,7 +115,7 @@ export const BuildingsCarousel: React.FC<BuildingsCarouselProps> = ({
                   </h3>
                   <div className="flex items-center gap-2 text-xs text-white/80">
                     <MapPin className="w-3.5 h-3.5 text-[#B69A68]" />
-                    <span>{prop.address}</span>
+                    <span>{cityName} · {prop.district} {prop.address ? `· ${prop.address}` : ''}</span>
                   </div>
                 </div>
               </div>

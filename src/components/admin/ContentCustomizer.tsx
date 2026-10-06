@@ -1,17 +1,81 @@
 import React, { useState } from 'react';
 import { useAppStore } from '../../store/useAppStore';
-import { ContentSection, NavigationSettings } from '../../types';
+import {
+  ContentSection,
+  NavigationSettings,
+  CustomizableTypographyConfig,
+  SectionTextElementConfig,
+  TextStyleConfig,
+  TextAlignment,
+  FontWeight
+} from '../../types';
+import { initialCustomTypography } from '../../data/initialData';
+import { SaudiRiyalSymbol, formatNumber } from '../../utils/formatters';
 import {
   Save,
   RotateCcw,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  Type,
+  Eye,
+  Smartphone,
+  Monitor,
+  Palette,
+  Sparkles,
+  Check,
+  AlignRight,
+  AlignCenter,
+  AlignLeft,
+  Building2,
+  DollarSign,
+  HelpCircle,
+  Phone
 } from 'lucide-react';
+
+const FONT_SIZES = [
+  { label: 'صغير جداً (12px / 0.75rem)', value: 0.75 },
+  { label: 'صغير (14px / 0.875rem)', value: 0.875 },
+  { label: 'متوسط قياسي (16px / 1rem)', value: 1.0 },
+  { label: 'متوسط كبير (18px / 1.125rem)', value: 1.125 },
+  { label: 'كبير (20px / 1.25rem)', value: 1.25 },
+  { label: 'كبير جداً (24px / 1.5rem)', value: 1.5 },
+  { label: 'عنوان فرعي (30px / 1.875rem)', value: 1.875 },
+  { label: 'عنوان رئيسي (36px / 2.25rem)', value: 2.25 },
+  { label: 'عنوان ضخم (48px / 3.0rem)', value: 3.0 },
+  { label: 'عنوان فندقي فخم (56px / 3.5rem)', value: 3.5 },
+];
+
+const FONT_WEIGHTS: { label: string; value: FontWeight }[] = [
+  { label: 'عادي (Regular 400)', value: 'normal' },
+  { label: 'متوسط (Medium 500)', value: 'medium' },
+  { label: 'شبه عريض (Semibold 600)', value: 'semibold' },
+  { label: 'عريض (Bold 700)', value: 'bold' },
+  { label: 'عريض جداً (Extrabold 800)', value: 'extrabold' },
+];
+
+const SECTION_OPTIONS = [
+  { key: 'hero', label: 'القسم الترحيبي الرئيسي (Hero Section)', icon: Sparkles },
+  { key: 'search_bar', label: 'محرك البحث والحجز السريع (Search Bar)', icon: Building2 },
+  { key: 'buildings', label: 'قسم المجمعات والأبراج (Buildings Carousel)', icon: Building2 },
+  { key: 'units', label: 'قسم الوحدات الفاخرة (Featured Units)', icon: Sparkles },
+  { key: 'amenities', label: 'قسم الخدمات الفندقية (Hotel Amenities)', icon: Sparkles },
+  { key: 'faq', label: 'قسم الأسئلة الشائعة (FAQ Section)', icon: HelpCircle },
+  { key: 'contact', label: 'قسم التواصل والكونسيرج (Contact & Concierge)', icon: Phone },
+];
 
 export const ContentCustomizer: React.FC = () => {
   const { state, updateCompanySettings, updateContentSections, resetToFactoryDefaults } = useAppStore();
-  const [activeTab, setActiveTab] = useState<'branding' | 'navigation' | 'sections' | 'theme'>('branding');
+  const [activeTab, setActiveTab] = useState<'branding' | 'typography' | 'navigation' | 'sections' | 'theme'>('typography');
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  // Selected Section for Typography Customization
+  const [selectedTypoSection, setSelectedTypoSection] = useState<string>('hero');
+  const [previewViewport, setPreviewViewport] = useState<'desktop' | 'mobile'>('desktop');
+
+  // Typography Form State
+  const [typoForm, setTypoForm] = useState<CustomizableTypographyConfig>(() => {
+    return state.settings.typography || initialCustomTypography;
+  });
 
   // Navigation Form State
   const [navForm, setNavForm] = useState<NavigationSettings>(() => {
@@ -52,8 +116,10 @@ export const ContentCustomizer: React.FC = () => {
     taxNumber: state.settings.taxNumber,
     commercialReg: state.settings.commercialReg,
     address: state.settings.address,
-    currency: state.settings.currency,
-    timezone: state.settings.timezone,
+    currency: state.settings.currency || 'SAR',
+    currencySymbol: state.settings.currencySymbol || 'ر.س',
+    currencyDisplayMode: state.settings.currencyDisplayMode || 'symbol',
+    timezone: state.settings.timezone || 'Asia/Riyadh',
   });
 
   const handleImageFileUpload = (e: React.ChangeEvent<HTMLInputElement>, field: 'logoUrl' | 'iconUrl') => {
@@ -76,6 +142,51 @@ export const ContentCustomizer: React.FC = () => {
   const [sections, setSections] = useState<ContentSection[]>(() => {
     return [...state.contentSections].sort((a, b) => a.order - b.order);
   });
+
+  // Save Typography
+  const handleSaveTypography = () => {
+    updateCompanySettings({ typography: typoForm });
+    setSuccessMsg('تم حفظ وتحديث نصوص وتنسيقات الموقع في قاعدة البيانات بنجاح.');
+    setTimeout(() => setSuccessMsg(null), 3000);
+  };
+
+  // Reset Typography Element
+  const handleResetElement = (secKey: string, elKey: string) => {
+    const defSec = initialCustomTypography[secKey];
+    if (defSec && defSec[elKey]) {
+      setTypoForm(prev => ({
+        ...prev,
+        [secKey]: {
+          ...prev[secKey],
+          [elKey]: { ...defSec[elKey] }
+        }
+      }));
+    }
+  };
+
+  // Reset Entire Section Typography
+  const handleResetSection = (secKey: string) => {
+    const defSec = initialCustomTypography[secKey];
+    if (defSec) {
+      setTypoForm(prev => ({
+        ...prev,
+        [secKey]: JSON.parse(JSON.stringify(defSec))
+      }));
+      setSuccessMsg(`تم استعادة القيم الافتراضية لقسم (${secKey}) بنجاح.`);
+      setTimeout(() => setSuccessMsg(null), 3000);
+    }
+  };
+
+  // Reset All Typography
+  const handleResetAllTypography = () => {
+    if (confirm('هل أنت متأكد من رغبتك في استعادة النصوص والتنسيقات الافتراضية لكافة أقسام الموقع؟')) {
+      const cloned = JSON.parse(JSON.stringify(initialCustomTypography));
+      setTypoForm(cloned);
+      updateCompanySettings({ typography: cloned });
+      setSuccessMsg('تمت استعادة كافة النصوص والتنسيقات الافتراضية وحفظها بنجاح.');
+      setTimeout(() => setSuccessMsg(null), 3000);
+    }
+  };
 
   const handleSaveBrand = (e: React.FormEvent) => {
     e.preventDefault();
@@ -104,7 +215,6 @@ export const ContentCustomizer: React.FC = () => {
     const temp = copy[idx];
     copy[idx] = copy[targetIdx];
     copy[targetIdx] = temp;
-    // re-index order
     const updated = copy.map((sec, i) => ({ ...sec, order: i + 1 }));
     setSections(updated);
   };
@@ -113,19 +223,30 @@ export const ContentCustomizer: React.FC = () => {
     setSections(sections.map(s => s.id === id ? { ...s, visible: !s.visible } : s));
   };
 
+  const currentSectionElements = typoForm[selectedTypoSection] || initialCustomTypography[selectedTypoSection] || {};
+
   return (
-    <div className="space-y-6 text-xs text-right max-w-4xl mx-auto">
+    <div className="space-y-6 text-xs text-right max-w-5xl mx-auto">
       
       {/* Header and Mode Tabs */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 bg-white rounded-3xl border border-[#E3DCCD]">
         <div className="flex items-center gap-1.5 p-1 bg-[#F7F3EB] rounded-xl select-none flex-wrap">
+          <button
+            onClick={() => setActiveTab('typography')}
+            className={`px-3.5 py-2 rounded-lg font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+              activeTab === 'typography' ? 'bg-[#282824] text-white shadow-xs' : 'text-[#68675F] hover:text-[#282824]'
+            }`}
+          >
+            <Type className="w-4 h-4 text-[#B69A68]" />
+            <span>تخصيص النصوص والتنسيق</span>
+          </button>
           <button
             onClick={() => setActiveTab('branding')}
             className={`px-3.5 py-2 rounded-lg font-bold transition-all cursor-pointer ${
               activeTab === 'branding' ? 'bg-[#282824] text-white shadow-xs' : 'text-[#68675F] hover:text-[#282824]'
             }`}
           >
-            الهوية والشعار
+            الهوية والعملة
           </button>
           <button
             onClick={() => setActiveTab('navigation')}
@@ -169,14 +290,328 @@ export const ContentCustomizer: React.FC = () => {
 
       {successMsg && (
         <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl text-emerald-800 flex items-center gap-2">
-          ✓ <span>{successMsg}</span>
+          <Check className="w-4 h-4 text-emerald-600" />
+          <span className="font-semibold">{successMsg}</span>
         </div>
       )}
 
-      {/* BRANDING FORM */}
+      {/* TYPOGRAPHY & TEXT CUSTOMIZATION TAB */}
+      {activeTab === 'typography' && (
+        <div className="space-y-6">
+          
+          {/* Controls Header */}
+          <div className="bg-white rounded-3xl p-6 border border-[#E3DCCD] shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#E3DCCD]">
+              <div>
+                <h4 className="font-bold text-sm text-[#282824]">تخصيص نصوص وتنسيقات واجهة الموقع العام</h4>
+                <p className="text-[#68675F] mt-0.5">
+                  تحرير العناوين، الأوصاف، الأزرار، الإحصائيات والشارات، مع التحكم في الحجم واللون والوزن والمحاذاة ومعاينة فورية قبل الحفظ.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleResetAllTypography}
+                  className="px-3 py-2 bg-[#F7F3EB] hover:bg-[#EFE9DF] text-[#68675F] hover:text-[#282824] rounded-xl font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                  title="استعادة كافة النصوص الافتراضية"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>استعادة الكل الافتراضي</span>
+                </button>
+
+                <button
+                  onClick={handleSaveTypography}
+                  className="px-5 py-2 bg-[#282824] hover:bg-[#1a1a18] text-[#B69A68] font-bold rounded-xl flex items-center gap-2 shadow-xs transition-colors cursor-pointer"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>حفظ التعديلات في الخادم</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Section Selector Pills */}
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 custom-horizontal-scrollbar">
+              {SECTION_OPTIONS.map((sec) => {
+                const IconComponent = sec.icon;
+                const isSelected = selectedTypoSection === sec.key;
+                return (
+                  <button
+                    key={sec.key}
+                    onClick={() => setSelectedTypoSection(sec.key)}
+                    className={`px-3.5 py-2 rounded-xl font-bold flex items-center gap-2 whitespace-nowrap transition-all cursor-pointer ${
+                      isSelected
+                        ? 'bg-[#282824] text-[#B69A68] shadow-xs'
+                        : 'bg-[#F7F3EB] text-[#68675F] hover:bg-[#EFE9DF] hover:text-[#282824]'
+                    }`}
+                  >
+                    <IconComponent className="w-3.5 h-3.5" />
+                    <span>{sec.label.split('(')[0]}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Editor & Live Preview Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            
+            {/* Left/Main Column: Text Elements Editor */}
+            <div className="lg:col-span-7 space-y-4">
+              <div className="flex items-center justify-between">
+                <h5 className="font-bold text-xs text-[#282824] flex items-center gap-1.5">
+                  <span>✏️</span>
+                  <span>عناصر ومكونات قسم: {SECTION_OPTIONS.find(s => s.key === selectedTypoSection)?.label}</span>
+                </h5>
+                <button
+                  onClick={() => handleResetSection(selectedTypoSection)}
+                  className="text-[11px] text-[#B69A68] hover:text-[#8f7547] font-bold flex items-center gap-1 cursor-pointer"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>استعادة افتراضيات هذا القسم</span>
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                {Object.entries(currentSectionElements).map(([elKey, elConfig]) => {
+                  const element: SectionTextElementConfig = elConfig;
+
+                  const updateElement = (updates: Partial<SectionTextElementConfig>) => {
+                    setTypoForm(prev => ({
+                      ...prev,
+                      [selectedTypoSection]: {
+                        ...prev[selectedTypoSection],
+                        [elKey]: {
+                          ...element,
+                          ...updates,
+                          style: {
+                            ...element.style,
+                            ...(updates.style || {})
+                          }
+                        }
+                      }
+                    }));
+                  };
+
+                  return (
+                    <div key={elKey} className="bg-white rounded-2xl p-4 sm:p-5 border border-[#E3DCCD] shadow-xs space-y-3">
+                      <div className="flex items-center justify-between border-b border-[#E3DCCD]/60 pb-2">
+                        <label className="font-bold text-xs text-[#282824] flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-[#B69A68]"></span>
+                          <span>{element.label}</span>
+                        </label>
+
+                        <button
+                          type="button"
+                          onClick={() => handleResetElement(selectedTypoSection, elKey)}
+                          className="text-[10px] text-[#68675F] hover:text-[#282824] flex items-center gap-1 font-semibold cursor-pointer"
+                          title="استعادة النص والتنسيق الافتراضي لهذا الحقل"
+                        >
+                          <RotateCcw className="w-3 h-3" />
+                          <span>استعادة الافتراضي</span>
+                        </button>
+                      </div>
+
+                      {/* Text Input */}
+                      <div>
+                        {element.style.fontSizeRem && element.style.fontSizeRem > 1.5 ? (
+                          <textarea
+                            rows={2}
+                            value={element.text}
+                            onChange={(e) => updateElement({ text: e.target.value })}
+                            className="w-full p-2.5 bg-[#F7F3EB]/40 border border-[#E3DCCD] rounded-xl text-xs text-right font-bold focus:outline-none focus:border-[#B69A68]"
+                          />
+                        ) : (
+                          <input
+                            type="text"
+                            value={element.text}
+                            onChange={(e) => updateElement({ text: e.target.value })}
+                            className="w-full p-2.5 bg-[#F7F3EB]/40 border border-[#E3DCCD] rounded-xl text-xs text-right font-medium focus:outline-none focus:border-[#B69A68]"
+                          />
+                        )}
+                        <span className="text-[10px] text-[#68675F] block mt-1">
+                          القيمة الافتراضية: "{element.defaultText}"
+                        </span>
+                      </div>
+
+                      {/* Typography & Style Toolbar */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-[#E3DCCD]/40">
+                        {/* Color Picker */}
+                        <div>
+                          <label className="text-[10px] font-semibold text-[#68675F] block mb-1">اللون</label>
+                          <div className="flex items-center gap-1.5 bg-[#F7F3EB]/60 p-1 rounded-lg border border-[#E3DCCD]">
+                            <input
+                              type="color"
+                              value={element.style.color || '#282824'}
+                              onChange={(e) => updateElement({ style: { ...element.style, color: e.target.value } })}
+                              className="w-6 h-6 rounded border border-[#E3DCCD] cursor-pointer"
+                            />
+                            <span className="text-[10px] font-mono uppercase">{element.style.color || '#282824'}</span>
+                          </div>
+                        </div>
+
+                        {/* Font Size */}
+                        <div>
+                          <label className="text-[10px] font-semibold text-[#68675F] block mb-1">حجم الخط</label>
+                          <select
+                            value={element.style.fontSizeRem || 1.0}
+                            onChange={(e) => updateElement({ style: { ...element.style, fontSizeRem: parseFloat(e.target.value) } })}
+                            className="w-full p-1.5 bg-white border border-[#E3DCCD] rounded-lg text-[11px] font-bold text-right focus:outline-none"
+                          >
+                            {FONT_SIZES.map(f => (
+                              <option key={f.value} value={f.value}>{f.label}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* Font Weight */}
+                        <div>
+                          <label className="text-[10px] font-semibold text-[#68675F] block mb-1">وزن الخط</label>
+                          <select
+                            value={element.style.fontWeight || 'normal'}
+                            onChange={(e) => updateElement({ style: { ...element.style, fontWeight: e.target.value as FontWeight } })}
+                            className="w-full p-1.5 bg-white border border-[#E3DCCD] rounded-lg text-[11px] font-bold text-right focus:outline-none"
+                          >
+                            {FONT_WEIGHTS.map(w => (
+                              <option key={w.value} value={w.value}>{w.label}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* Alignment */}
+                        <div>
+                          <label className="text-[10px] font-semibold text-[#68675F] block mb-1">المحاذاة</label>
+                          <div className="flex items-center gap-1 bg-[#F7F3EB]/60 p-1 rounded-lg border border-[#E3DCCD] justify-center">
+                            <button
+                              type="button"
+                              onClick={() => updateElement({ style: { ...element.style, alignment: 'right' } })}
+                              className={`p-1 rounded cursor-pointer ${
+                                (element.style.alignment || 'right') === 'right' ? 'bg-[#282824] text-white' : 'text-[#68675F]'
+                              }`}
+                              title="محاذاة لليمين"
+                            >
+                              <AlignRight className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => updateElement({ style: { ...element.style, alignment: 'center' } })}
+                              className={`p-1 rounded cursor-pointer ${
+                                element.style.alignment === 'center' ? 'bg-[#282824] text-white' : 'text-[#68675F]'
+                              }`}
+                              title="محاذاة للوسط"
+                            >
+                              <AlignCenter className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => updateElement({ style: { ...element.style, alignment: 'left' } })}
+                              className={`p-1 rounded cursor-pointer ${
+                                element.style.alignment === 'left' ? 'bg-[#282824] text-white' : 'text-[#68675F]'
+                              }`}
+                              title="محاذاة لليسار"
+                            >
+                              <AlignLeft className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Right Column: Live Interactive Responsive Preview */}
+            <div className="lg:col-span-5 sticky top-24 space-y-3">
+              <div className="flex items-center justify-between">
+                <h5 className="font-bold text-xs text-[#282824] flex items-center gap-1.5">
+                  <Eye className="w-4 h-4 text-[#B69A68]" />
+                  <span>معاينة حية للمكونات المتجاوبة</span>
+                </h5>
+
+                <div className="flex items-center gap-1 p-1 bg-[#F7F3EB] rounded-lg border border-[#E3DCCD]">
+                  <button
+                    type="button"
+                    onClick={() => setPreviewViewport('desktop')}
+                    className={`p-1 rounded cursor-pointer ${previewViewport === 'desktop' ? 'bg-[#282824] text-white' : 'text-[#68675F]'}`}
+                    title="معاينة شاشة الكمبيوتر"
+                  >
+                    <Monitor className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewViewport('mobile')}
+                    className={`p-1 rounded cursor-pointer ${previewViewport === 'mobile' ? 'bg-[#282824] text-white' : 'text-[#68675F]'}`}
+                    title="معاينة شاشة الهاتف"
+                  >
+                    <Smartphone className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Preview Box Container */}
+              <div className={`mx-auto transition-all duration-300 ${previewViewport === 'mobile' ? 'max-w-[320px]' : 'w-full'}`}>
+                <div className="bg-[#282824] text-white rounded-3xl p-6 border border-[#3e3e38] shadow-lg space-y-4 text-right">
+                  <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                    <span className="text-[10px] text-[#B69A68] font-mono font-bold">
+                      LIVE PREVIEW · {selectedTypoSection.toUpperCase()}
+                    </span>
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/10 text-white/80">
+                      {previewViewport === 'mobile' ? '📱 شاشة هاتف' : '💻 شاشة حاسوب'}
+                    </span>
+                  </div>
+
+                  {/* Render Section Live Preview */}
+                  <div className="space-y-3 pt-2">
+                    {Object.entries(currentSectionElements).map(([k, el]) => {
+                      const item: SectionTextElementConfig = el;
+                      const fontWeightClass =
+                        item.style.fontWeight === 'extrabold'
+                          ? 'font-extrabold'
+                          : item.style.fontWeight === 'bold'
+                          ? 'font-bold'
+                          : item.style.fontWeight === 'semibold'
+                          ? 'font-semibold'
+                          : item.style.fontWeight === 'medium'
+                          ? 'font-medium'
+                          : 'font-normal';
+
+                      const alignClass =
+                        item.style.alignment === 'center'
+                          ? 'text-center'
+                          : item.style.alignment === 'left'
+                          ? 'text-left'
+                          : 'text-right';
+
+                      return (
+                        <div
+                          key={k}
+                          className={`transition-all leading-snug ${fontWeightClass} ${alignClass}`}
+                          style={{
+                            color: item.style.color || '#FFFFFF',
+                            fontSize: `${item.style.fontSizeRem || 1.0}rem`,
+                          }}
+                        >
+                          {item.text}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="pt-3 border-t border-white/10 text-[10px] text-white/50 text-center">
+                    يتم تطبيق هذه النصوص والتنسيقات فور حفظها عبر الخادم لكافة الزوار.
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* BRANDING & CURRENCY FORM */}
       {activeTab === 'branding' && (
         <form onSubmit={handleSaveBrand} className="bg-white rounded-3xl p-6 border border-[#E3DCCD] space-y-4 shadow-xs">
-          <h4 className="font-bold text-sm text-[#282824]">تخصيص هوية وبيانات الكيان الفندقي</h4>
+          <h4 className="font-bold text-sm text-[#282824]">تخصيص هوية وبيانات الكيان الفندقي وإعدادات العملة</h4>
           <p className="text-[#68675F]">البيانات المطبوعة على سندات القبض، الفواتير، المطبوعات الرسمية، وهوية البريد الإلكتروني الموجه للنزلاء:</p>
           
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -198,6 +633,71 @@ export const ContentCustomizer: React.FC = () => {
                 onChange={(e) => setBrandForm(prev => ({ ...prev, companyNameEn: e.target.value }))}
                 className="w-full p-2.5 bg-[#F7F3EB]/40 border border-[#E3DCCD] rounded-xl text-left focus:outline-none"
               />
+            </div>
+          </div>
+
+          {/* CURRENCY FORMATTING OPTIONS */}
+          <div className="p-4 bg-[#F7F3EB]/80 rounded-2xl border border-[#E3DCCD] space-y-3">
+            <h5 className="font-bold text-xs text-[#282824] flex items-center gap-2">
+              <DollarSign className="w-4 h-4 text-[#B69A68]" />
+              <span>إعدادات عرض العملة الرسمية والمبالغ المالية (Currency Display)</span>
+            </h5>
+            <p className="text-[11px] text-[#68675F]">
+              اختر بين عرض الرمز الرسمي للريال السعودي (Official SVG Emblem) أو كود العملة النصي (SAR / ر.س). الأرقام والمبالغ الحسابية تُحفظ بدقة كاملة دون أي تعديل.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <label className={`p-3.5 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${
+                brandForm.currencyDisplayMode === 'symbol'
+                  ? 'bg-white border-[#B69A68] shadow-xs'
+                  : 'bg-white/50 border-[#E3DCCD] hover:bg-white'
+              }`}>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="radio"
+                    name="currencyDisplayMode"
+                    value="symbol"
+                    checked={brandForm.currencyDisplayMode === 'symbol'}
+                    onChange={() => setBrandForm(prev => ({ ...prev, currencyDisplayMode: 'symbol' }))}
+                    className="accent-[#282824] w-4 h-4"
+                  />
+                  <div>
+                    <strong className="block text-xs text-[#282824]">رمز الريال السعودي الرسمي (SVG)</strong>
+                    <span className="text-[10px] text-[#68675F]">أصل مرئي رسمي عالي الدقة مع بديل SAR</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1 font-bold text-sm text-[#282824] font-mono">
+                  <span>5,400</span>
+                  <SaudiRiyalSymbol size={16} />
+                </div>
+              </label>
+
+              <label className={`p-3.5 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${
+                brandForm.currencyDisplayMode === 'code'
+                  ? 'bg-white border-[#B69A68] shadow-xs'
+                  : 'bg-white/50 border-[#E3DCCD] hover:bg-white'
+              }`}>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="radio"
+                    name="currencyDisplayMode"
+                    value="code"
+                    checked={brandForm.currencyDisplayMode === 'code'}
+                    onChange={() => setBrandForm(prev => ({ ...prev, currencyDisplayMode: 'code' }))}
+                    className="accent-[#282824] w-4 h-4"
+                  />
+                  <div>
+                    <strong className="block text-xs text-[#282824]">رمز النص (SAR / ر.س)</strong>
+                    <span className="text-[10px] text-[#68675F]">عرض كود العملة النصي بجانب الأرقام</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1 font-bold text-sm text-[#282824] font-mono">
+                  <span>5,400</span>
+                  <span className="text-xs font-sans text-[#68675F]">ر.س</span>
+                </div>
+              </label>
             </div>
           </div>
 
@@ -318,7 +818,8 @@ export const ContentCustomizer: React.FC = () => {
                 type="text"
                 value={brandForm.taxNumber}
                 onChange={(e) => setBrandForm(prev => ({ ...prev, taxNumber: e.target.value }))}
-                className="w-full p-2 bg-[#F7F3EB]/40 border border-[#E3DCCD] rounded-xl tabular-nums text-right focus:outline-none"
+                className="w-full p-2 bg-[#F7F3EB]/40 border border-[#E3DCCD] rounded-xl tabular-nums font-mono text-left focus:outline-none"
+                dir="ltr"
               />
             </div>
             <div>
@@ -327,7 +828,8 @@ export const ContentCustomizer: React.FC = () => {
                 type="text"
                 value={brandForm.commercialReg}
                 onChange={(e) => setBrandForm(prev => ({ ...prev, commercialReg: e.target.value }))}
-                className="w-full p-2 bg-[#F7F3EB]/40 border border-[#E3DCCD] rounded-xl tabular-nums text-right focus:outline-none"
+                className="w-full p-2 bg-[#F7F3EB]/40 border border-[#E3DCCD] rounded-xl tabular-nums font-mono text-left focus:outline-none"
+                dir="ltr"
               />
             </div>
           </div>
@@ -381,7 +883,7 @@ export const ContentCustomizer: React.FC = () => {
                   type="number"
                   value={navForm.headerHeightPx}
                   onChange={(e) => setNavForm(prev => ({ ...prev, headerHeightPx: Number(e.target.value) || 80 }))}
-                  className="w-full p-2 bg-white border border-[#E3DCCD] rounded-xl text-center font-bold focus:outline-none"
+                  className="w-full p-2 bg-white border border-[#E3DCCD] rounded-xl text-center font-bold focus:outline-none font-mono"
                 />
               </div>
               <div>
@@ -390,7 +892,7 @@ export const ContentCustomizer: React.FC = () => {
                   type="number"
                   value={navForm.logoMaxHeightPx}
                   onChange={(e) => setNavForm(prev => ({ ...prev, logoMaxHeightPx: Number(e.target.value) || 44 }))}
-                  className="w-full p-2 bg-white border border-[#E3DCCD] rounded-xl text-center font-bold focus:outline-none"
+                  className="w-full p-2 bg-white border border-[#E3DCCD] rounded-xl text-center font-bold focus:outline-none font-mono"
                 />
               </div>
               <div className="flex items-center justify-between sm:justify-start gap-3 pt-6">
@@ -638,7 +1140,7 @@ export const ContentCustomizer: React.FC = () => {
             {sections.map((sec, idx) => (
               <div key={sec.id} className="py-3.5 flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <span className="w-6 h-6 rounded-full bg-[#F7F3EB] text-[#282824] flex items-center justify-center font-bold text-xs tabular-nums select-none">
+                  <span className="w-6 h-6 rounded-full bg-[#F7F3EB] text-[#282824] flex items-center justify-center font-bold text-xs tabular-nums select-none font-mono">
                     {idx + 1}
                   </span>
                   <div>

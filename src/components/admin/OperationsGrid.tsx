@@ -10,7 +10,8 @@ import {
   BellRing,
   Layers,
   Search,
-  Filter
+  Filter,
+  MapPin
 } from 'lucide-react';
 
 interface OperationsGridProps {
@@ -19,22 +20,29 @@ interface OperationsGridProps {
 
 export const OperationsGrid: React.FC<OperationsGridProps> = ({ onSelectUnit }) => {
   const { state } = useAppStore();
+  const [selectedCityId, setSelectedCityId] = useState<string>('all');
   const [selectedPropertyId, setSelectedPropertyId] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   const filteredProperties = state.properties.filter(p => {
+    if (selectedCityId !== 'all' && p.cityId !== selectedCityId && p.city !== selectedCityId) {
+      return false;
+    }
     if (selectedPropertyId === 'all') return true;
     return p.id === selectedPropertyId;
   });
 
+  const propertyIds = new Set(filteredProperties.map(p => p.id));
+  const relevantUnits = state.units.filter(u => propertyIds.has(u.propertyId));
+
   // Calculate Operational Metrics dynamically (not hardcoded)
-  const totalUnits = state.units.filter(u => u.publicationStatus !== 'archived').length;
-  const readyVacant = state.units.filter(u => u.occupancyStatus === 'vacant' && u.operationalStatus === 'ready' && u.publicationStatus !== 'archived').length;
-  const dailyOccupied = state.units.filter(u => u.occupancyStatus === 'daily_occupied' && u.publicationStatus !== 'archived').length;
-  const monthlyOccupied = state.units.filter(u => u.occupancyStatus === 'monthly_occupied' && u.publicationStatus !== 'archived').length;
-  const yearlyOccupied = state.units.filter(u => u.occupancyStatus === 'occupied_yearly' && u.publicationStatus !== 'archived').length;
+  const totalUnits = relevantUnits.filter(u => u.publicationStatus !== 'archived').length;
+  const readyVacant = relevantUnits.filter(u => u.occupancyStatus === 'vacant' && u.operationalStatus === 'ready' && u.publicationStatus !== 'archived').length;
+  const dailyOccupied = relevantUnits.filter(u => u.occupancyStatus === 'daily_occupied' && u.publicationStatus !== 'archived').length;
+  const monthlyOccupied = relevantUnits.filter(u => u.occupancyStatus === 'monthly_occupied' && u.publicationStatus !== 'archived').length;
+  const yearlyOccupied = relevantUnits.filter(u => u.occupancyStatus === 'occupied_yearly' && u.publicationStatus !== 'archived').length;
   
-  const cleaningOrMaint = state.units.filter(u =>
+  const cleaningOrMaint = relevantUnits.filter(u =>
     u.publicationStatus !== 'archived' && (
       u.operationalStatus === 'needs_cleaning' ||
       u.operationalStatus === 'in_cleaning' ||
@@ -42,7 +50,7 @@ export const OperationsGrid: React.FC<OperationsGridProps> = ({ onSelectUnit }) 
     )
   ).length;
 
-  const todayArrivals = state.units.filter(u => u.todayArrival && u.publicationStatus !== 'archived').length;
+  const todayArrivals = relevantUnits.filter(u => u.todayArrival && u.publicationStatus !== 'archived').length;
 
   return (
     <div className="space-y-6 text-right select-none">
@@ -87,20 +95,36 @@ export const OperationsGrid: React.FC<OperationsGridProps> = ({ onSelectUnit }) 
       </div>
 
       {/* 2. Filter & Controls Bar */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 bg-white rounded-2xl border border-[#E3DCCD]">
-        <div className="flex items-center gap-2 w-full sm:w-auto">
-          <Filter className="w-4 h-4 text-[#B69A68]" />
-          <span className="text-xs font-bold text-[#282824]">تصفية المجمعات السكنية:</span>
-          <div className="flex items-center gap-1 bg-[#F7F3EB] p-1 rounded-xl overflow-x-auto">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 p-4 bg-white rounded-2xl border border-[#E3DCCD]">
+        <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto">
+          {/* City Filter */}
+          <div className="flex items-center gap-2 bg-[#F7F3EB] px-3 py-1.5 rounded-xl border border-[#E3DCCD]">
+            <MapPin className="w-3.5 h-3.5 text-[#B69A68] shrink-0" />
+            <select
+              value={selectedCityId}
+              onChange={(e) => {
+                setSelectedCityId(e.target.value);
+                setSelectedPropertyId('all');
+              }}
+              className="text-xs font-bold text-[#282824] bg-transparent focus:outline-none cursor-pointer"
+            >
+              <option value="all">كل المدن ({state.cities.length})</option>
+              {state.cities.map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex items-center gap-1 bg-[#F7F3EB] p-1 rounded-xl overflow-x-auto max-w-full">
             <button
               onClick={() => setSelectedPropertyId('all')}
               className={`px-3 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
                 selectedPropertyId === 'all' ? 'bg-[#282824] text-white shadow-xs' : 'text-[#68675F] hover:text-[#282824]'
               }`}
             >
-              جميع المشاريع
+              جميع المشاريع ({filteredProperties.length})
             </button>
-            {state.properties.map(p => (
+            {filteredProperties.map(p => (
               <button
                 key={p.id}
                 onClick={() => setSelectedPropertyId(p.id)}

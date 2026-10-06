@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { Unit } from '../../types';
 import { ImageWithFallback } from '../common/ImageWithFallback';
+import { formatNumber, CurrencyAmount, SaudiRiyalSymbol } from '../../utils/formatters';
 import {
   X,
   Maximize2,
@@ -12,7 +13,8 @@ import {
   CheckCircle2,
   Building2,
   CalendarCheck,
-  Sparkles
+  Sparkles,
+  MapPin
 } from 'lucide-react';
 
 interface UnitDetailModalProps {
@@ -54,6 +56,7 @@ export const UnitDetailModal: React.FC<UnitDetailModalProps> = ({
   if (!unit) return null;
 
   const property = state.properties.find(p => p.id === unit.propertyId);
+  const cityName = state.cities.find(c => c.id === property?.cityId)?.name || property?.city || 'الرياض';
 
   // Filter media by category
   const filteredMedia = unit.media.filter(m => {
@@ -89,9 +92,16 @@ export const UnitDetailModal: React.FC<UnitDetailModalProps> = ({
               <h2 className="text-base sm:text-xl font-bold text-[#282824] line-clamp-1 text-right">
                 {unit.title}
               </h2>
-              <span className="text-xs text-[#68675F] flex items-center gap-1.5 mt-0.5 justify-start">
-                <Building2 className="w-3.5 h-3.5 text-[#B69A68]" />
-                <span>{property?.name} · الدور {unit.floorNumber}</span>
+              <span className="text-xs text-[#68675F] flex items-center gap-2 mt-0.5 justify-start flex-wrap">
+                <span className="flex items-center gap-1 font-semibold text-[#B69A68]">
+                  <MapPin className="w-3.5 h-3.5 shrink-0" />
+                  <span>{cityName} ({property?.district})</span>
+                </span>
+                <span>·</span>
+                <span className="flex items-center gap-1">
+                  <Building2 className="w-3.5 h-3.5 text-[#68675F]" />
+                  <span>{property?.name} · الدور {unit.floorNumber}</span>
+                </span>
               </span>
             </div>
           </div>
@@ -310,15 +320,19 @@ export const UnitDetailModal: React.FC<UnitDetailModalProps> = ({
                 <div className="space-y-4 text-xs text-[#68675F] leading-relaxed animate-in fade-in duration-150">
                   <div className="p-4 bg-white rounded-xl border border-[#E3DCCD]">
                     <h5 className="font-bold text-sm text-[#282824] mb-1">تسجيل الدخول والمغادرة</h5>
-                    <p>تسجيل الدخول يبدأ من الساعة ٣:٠٠ مساءً، وتوقيت المغادرة هو الساعة ١٢:٠٠ ظهراً لضمان منح طواقم التدبير الوقت الكامل لتجهيز الشقة فندقيًا.</p>
+                    <p>تسجيل الدخول يبدأ من الساعة <bdi dir="ltr">3:00</bdi> مساءً، وتوقيت المغادرة هو الساعة <bdi dir="ltr">12:00</bdi> ظهراً لضمان منح طواقم التدبير الوقت الكامل لتجهيز الشقة فندقيًا.</p>
                   </div>
                   <div className="p-4 bg-white rounded-xl border border-[#E3DCCD]">
                     <h5 className="font-bold text-sm text-[#282824] mb-1">مبلغ التأمين وحظر الأثاث</h5>
-                    <p>مبلغ التأمين المستحق وقدره {unit.securityDeposit} ر.س يتم حزه إلكترونيًا تفويضًا مؤقتًا على بطاقتك الائتمانية، ويتم فكه وإرجاع الرصيد بالكامل فور فحص الشقة وتوقيع محضر الاستلام الميداني عند المغادرة.</p>
+                    <p className="flex items-center gap-1 flex-wrap">
+                      <span>مبلغ التأمين المستحق وقدره</span>
+                      <CurrencyAmount amount={unit.securityDeposit} />
+                      <span>يتم حجزه إلكترونيًا تفويضًا مؤقتًا على بطاقتك الائتمانية، ويتم فكه وإرجاع الرصيد بالكامل فور فحص الشقة وتوقيع محضر الاستلام الميداني عند المغادرة.</span>
+                    </p>
                   </div>
                   <div className="p-4 bg-white rounded-xl border border-[#E3DCCD]">
                     <h5 className="font-bold text-sm text-[#282824] mb-1">شروط الإلغاء المرنة</h5>
-                    <p>إلغاء مجاني كامل واسترداد القيمة بنسبة ١٠٠٪ في حال تقديم طلب الإلغاء قبل موعد الدخول بـ ٤٨ ساعة على الأقل.</p>
+                    <p>إلغاء مجاني كامل واسترداد القيمة بنسبة <bdi dir="ltr">100%</bdi> في حال تقديم طلب الإلغاء قبل موعد الدخول بـ <bdi dir="ltr">48</bdi> ساعة على الأقل.</p>
                   </div>
                 </div>
               )}
@@ -327,12 +341,12 @@ export const UnitDetailModal: React.FC<UnitDetailModalProps> = ({
             {/* Right 1 Col: Live Booking Box */}
             <div className="glass-ivory p-5 rounded-2xl border border-[#E3DCCD] shadow-md space-y-4">
               <div className="flex items-baseline justify-between pb-3 border-b border-[#E3DCCD]/80">
-                <div>
-                  <span className="text-2xl font-bold text-[#282824] tabular-nums">
-                    {rentalType === 'daily' ? unit.dailyRate : unit.monthlyRate.toLocaleString('ar-SA')}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-2xl font-bold text-[#282824]">
+                    <CurrencyAmount amount={rentalType === 'daily' ? unit.dailyRate : unit.monthlyRate} />
                   </span>
-                  <span className="text-xs text-[#68675F] mr-1">
-                    {state.settings.currencySymbol} / {rentalType === 'daily' ? 'الليلة' : 'الشهر'}
+                  <span className="text-xs text-[#68675F]">
+                    / {rentalType === 'daily' ? 'الليلة' : 'الشهر'}
                   </span>
                 </div>
                 <span className="text-[11px] text-[#68675F] font-semibold">

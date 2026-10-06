@@ -233,6 +233,18 @@ export interface Floor {
   label?: string; // مثلا "الدور الأرضي"، "القبو"
 }
 
+export interface City {
+  id: string;
+  name: string;
+  nameEn?: string;
+  region?: string;
+  country: string;
+  status: 'active' | 'inactive';
+  displayOrder: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface Property {
   id: string;
   identifierCode: string; // كود مميز مثلا "BLD-NKH-01"
@@ -243,6 +255,7 @@ export interface Property {
   description: string;
   address: string;
   city: string;
+  cityId?: string;
   district: string;
   latitude: number;
   longitude: number;
@@ -771,6 +784,54 @@ export interface NavigationSettings {
   navActiveColor: string;
 }
 
+export type UserRole =
+  | 'SUPER_ADMIN'
+  | 'PROPERTY_MANAGER'
+  | 'RECEPTIONIST'
+  | 'HOUSEKEEPING'
+  | 'MAINTENANCE'
+  | 'ACCOUNTANT'
+  | 'TENANT';
+
+export interface AppUser {
+  id: string;
+  username: string;
+  email: string;
+  name: string;
+  phone?: string;
+  role: UserRole;
+  allowedProperties: string[];
+  isActive: boolean;
+  mustChangePassword?: boolean;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export type TextAlignment = 'right' | 'center' | 'left';
+export type FontWeight = 'normal' | 'medium' | 'semibold' | 'bold' | 'extrabold';
+
+export interface TextStyleConfig {
+  color?: string;
+  fontSizeRem?: number; // min: 0.75, max: 4.5
+  fontWeight?: FontWeight;
+  alignment?: TextAlignment;
+}
+
+export interface SectionTextElementConfig {
+  id: string;
+  label: string;
+  text: string;
+  style: TextStyleConfig;
+  defaultText: string;
+  defaultStyle: TextStyleConfig;
+}
+
+export interface CustomizableTypographyConfig {
+  [sectionKey: string]: {
+    [elementKey: string]: SectionTextElementConfig;
+  };
+}
+
 export interface CompanySettings {
   companyName: string;
   companyNameEn: string;
@@ -785,7 +846,10 @@ export interface CompanySettings {
   address: string;
   currency: string;
   currencySymbol: string;
+  currencyDisplayMode?: 'code' | 'symbol'; // 'symbol' for official SVG symbol, 'code' for SAR text
   timezone: string;
+  // إعدادات النصوص والتنسيق البصري المتقدم
+  typography?: CustomizableTypographyConfig;
   // اعدادات التنقل الهيدر والشريط السفلي
   navigation?: NavigationSettings;
   // المظهر والتخصيص

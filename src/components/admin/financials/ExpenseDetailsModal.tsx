@@ -23,6 +23,7 @@ import {
   getTemporalDistributionLabel,
   getCostAllocationMethodLabel
 } from '../../../utils/financialCalculations';
+import { formatNumber, CurrencyAmount, formatDate } from '../../../utils/formatters';
 
 interface Props {
   expense: OperationalExpense;
@@ -177,25 +178,25 @@ export const ExpenseDetailsModal: React.FC<Props> = ({
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 select-none">
             <div className="bg-[#FAF8F5] p-3.5 rounded-2xl border border-[#E3DCCD]">
               <span className="text-[10px] text-[#68675F] block font-bold">إجمالي قيمة المصروف</span>
-              <span className="text-lg font-black text-[#282824] block mt-0.5 tabular-nums">
-                {expense.amount.toLocaleString('ar-SA')} ر.س
-              </span>
+              <div className="text-lg font-black text-[#282824] block mt-0.5">
+                <CurrencyAmount amount={expense.amount} />
+              </div>
             </div>
             <div className="bg-emerald-50 p-3.5 rounded-2xl border border-emerald-200">
               <span className="text-[10px] text-emerald-800 block font-bold">المسدد فعلياً</span>
-              <span className="text-lg font-black text-emerald-900 block mt-0.5 tabular-nums">
-                {expense.paidAmount.toLocaleString('ar-SA')} ر.س
-              </span>
+              <div className="text-lg font-black text-emerald-900 block mt-0.5">
+                <CurrencyAmount amount={expense.paidAmount} />
+              </div>
             </div>
             <div className={`p-3.5 rounded-2xl border ${
               remainingToPay > 0 ? 'bg-amber-50 border-amber-200' : 'bg-white border-[#E3DCCD]'
             }`}>
               <span className="text-[10px] text-[#68675F] block font-bold">المتبقي غير المسدد</span>
-              <span className={`text-lg font-black block mt-0.5 tabular-nums ${
+              <div className={`text-lg font-black block mt-0.5 ${
                 remainingToPay > 0 ? 'text-amber-900' : 'text-[#282824]'
               }`}>
-                {remainingToPay.toLocaleString('ar-SA')} ر.س
-              </span>
+                <CurrencyAmount amount={remainingToPay} />
+              </div>
             </div>
             <div className="bg-[#FAF8F5] p-3.5 rounded-2xl border border-[#E3DCCD]">
               <span className="text-[10px] text-[#68675F] block font-bold">حالة السداد</span>
@@ -270,18 +271,21 @@ export const ExpenseDetailsModal: React.FC<Props> = ({
               <div>
                 <span className="text-[#68675F] block text-[10px]">فترة التغطية المعتمدة:</span>
                 <strong className="text-[#282824] font-mono">
-                  {expense.servicePeriodStart || expense.date} إلى {expense.servicePeriodEnd || expense.date}
+                  <bdi dir="ltr">{formatDate(expense.servicePeriodStart || expense.date)}</bdi> إلى <bdi dir="ltr">{formatDate(expense.servicePeriodEnd || expense.date)}</bdi>
                 </strong>
               </div>
               <div>
                 <span className="text-[#68675F] block text-[10px]">التكلفة المقدرة شهرياً:</span>
-                <strong className="text-emerald-800 tabular-nums">
+                <div className="text-emerald-800 font-bold">
                   {expense.temporalDistribution === 'equal_monthly' && expense.servicePeriodStart && expense.servicePeriodEnd ? (
-                    `${Math.round(expense.amount / Math.max(1, (new Date(expense.servicePeriodEnd).getFullYear() - new Date(expense.servicePeriodStart).getFullYear()) * 12 + (new Date(expense.servicePeriodEnd).getMonth() - new Date(expense.servicePeriodStart).getMonth()) + 1)).toLocaleString('ar-SA')} ر.س/شهر`
+                    <div className="flex items-center gap-1">
+                      <CurrencyAmount amount={Math.round(expense.amount / Math.max(1, (new Date(expense.servicePeriodEnd).getFullYear() - new Date(expense.servicePeriodStart).getFullYear()) * 12 + (new Date(expense.servicePeriodEnd).getMonth() - new Date(expense.servicePeriodStart).getMonth()) + 1))} />
+                      <span className="text-xs font-normal">/شهر</span>
+                    </div>
                   ) : (
-                    `${expense.amount.toLocaleString('ar-SA')} ر.س`
+                    <CurrencyAmount amount={expense.amount} />
                   )}
-                </strong>
+                </div>
               </div>
             </div>
           </div>
@@ -296,8 +300,10 @@ export const ExpenseDetailsModal: React.FC<Props> = ({
                 {expense.distributionShares.map(s => (
                   <div key={s.unitId} className="bg-[#FAF8F5] p-2 rounded-xl border border-[#E3DCCD]">
                     <span className="font-bold text-[#282824] block">شقة #{s.unitNumber}</span>
-                    <span className="text-emerald-900 font-mono font-bold block">{s.amount.toLocaleString('ar-SA')} ر.س</span>
-                    {s.percentage && <span className="text-[#68675F] text-[9px]">({s.percentage}%)</span>}
+                    <div className="text-emerald-900 font-mono font-bold block">
+                      <CurrencyAmount amount={s.amount} />
+                    </div>
+                    {s.percentage && <span className="text-[#68675F] text-[9px]">({formatNumber(s.percentage)}%)</span>}
                   </div>
                 ))}
               </div>
@@ -407,9 +413,11 @@ export const ExpenseDetailsModal: React.FC<Props> = ({
                   <tbody className="divide-y divide-[#E3DCCD]">
                     {expense.paymentsList.map(p => (
                       <tr key={p.id}>
-                        <td className="p-2 font-mono text-[#68675F]">{p.paymentDate}</td>
-                        <td className="p-2 font-bold text-emerald-800 tabular-nums font-mono">
-                          {p.amount.toLocaleString('ar-SA')} ر.س
+                        <td className="p-2 font-mono text-[#68675F]">
+                          <bdi dir="ltr">{formatDate(p.paymentDate)}</bdi>
+                        </td>
+                        <td className="p-2 font-bold text-emerald-800">
+                          <CurrencyAmount amount={p.amount} />
                         </td>
                         <td className="p-2 text-[#282824]">
                           {p.paymentMethod === 'bank_transfer' ? 'حوالة بنكية' : p.paymentMethod === 'company_card' ? 'بطاقة الشركة' : 'نقداً'}
@@ -436,10 +444,15 @@ export const ExpenseDetailsModal: React.FC<Props> = ({
               <div className="space-y-1.5 text-[11px]">
                 {expense.modificationAudit.map((m, idx) => (
                   <div key={idx} className="bg-white p-2.5 rounded-xl border border-[#E3DCCD]">
-                    <span className="text-[#68675F] text-[10px] block font-mono">{m.modifiedAt.slice(0, 16).replace('T', ' ')} · بواسطة {m.modifiedBy}</span>
+                    <span className="text-[#68675F] text-[10px] block font-mono">
+                      <bdi dir="ltr">{formatDate(m.modifiedAt, 'short')}</bdi> · بواسطة {m.modifiedBy}
+                    </span>
                     <span className="text-[#282824] font-medium block mt-0.5">سبب التعديل: {m.reason}</span>
                     {m.previousAmount && (
-                      <span className="text-amber-800 text-[10px] block mt-0.5 font-mono">المبلغ السابق قبل التعديل: {m.previousAmount.toLocaleString('ar-SA')} ر.س</span>
+                      <div className="text-amber-800 text-[10px] flex items-center gap-1 mt-0.5 font-mono">
+                        <span>المبلغ السابق قبل التعديل:</span>
+                        <CurrencyAmount amount={m.previousAmount} />
+                      </div>
                     )}
                   </div>
                 ))}

@@ -25,6 +25,7 @@ interface HeaderProps {
   onScrollToSection: (sectionId: string) => void;
   isMobileDrawerOpen: boolean;
   setIsMobileDrawerOpen: (open: boolean) => void;
+  className?: string;
 }
 
 const iconMap: Record<string, React.FC<{ className?: string }>> = {
@@ -43,7 +44,8 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenStaffPwa,
   onScrollToSection,
   isMobileDrawerOpen,
-  setIsMobileDrawerOpen
+  setIsMobileDrawerOpen,
+  className
 }) => {
   const { state } = useAppStore();
   const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
@@ -98,12 +100,14 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <>
       <header 
-        className={`sticky top-0 z-40 w-full transition-all duration-300 border-b border-[#E3DCCD]/80 ${
-          isScrolled 
-            ? 'bg-[#FFFCF6]/95 backdrop-blur-md shadow-sm' 
-            : 'bg-[#FFFCF6]/85 backdrop-blur-xs'
-        }`}
-        style={{ height: `${navConfig?.headerHeightPx || 80}px` }}
+        className={`site-header transition-shadow duration-300 ${
+          isScrolled ? 'shadow-md' : 'shadow-xs'
+        } ${className || ''}`}
+        style={
+          navConfig?.headerHeightPx && navConfig.headerHeightPx !== 80
+            ? ({ '--site-header-height': `${navConfig.headerHeightPx}px` } as React.CSSProperties)
+            : undefined
+        }
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-full flex items-center justify-between gap-4">
           

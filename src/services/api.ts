@@ -118,6 +118,30 @@ export const authService = {
     return res;
   },
 
+  async changePassword(currentPassword: string, newPassword: string) {
+    const res = await apiFetch('/api/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword })
+    });
+    if (res.token) {
+      setAuthToken(res.token);
+      setAuthUser(res.user);
+    }
+    return res;
+  },
+
+  async changeProfile(data: { currentPassword: string; username?: string; name?: string; email?: string; phone?: string }) {
+    const res = await apiFetch('/api/auth/change-profile', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+    if (res.token) {
+      setAuthToken(res.token);
+      setAuthUser(res.user);
+    }
+    return res;
+  },
+
   async getCurrentUser() {
     return apiFetch('/api/auth/me');
   },
@@ -131,6 +155,52 @@ export const authService = {
       setAuthToken(null);
       setAuthUser(null);
     }
+  }
+};
+
+// Users & Permissions Management Service (SUPER_ADMIN)
+export const userService = {
+  async getUsers() {
+    return apiFetch('/api/users');
+  },
+  async createUser(data: {
+    username: string;
+    password: string;
+    name: string;
+    email?: string;
+    phone?: string;
+    role: string;
+    allowedProperties?: string[];
+    mustChangePassword?: boolean;
+  }) {
+    return apiFetch('/api/users', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  },
+  async updateUser(id: string, data: {
+    name?: string;
+    email?: string;
+    phone?: string;
+    role?: string;
+    allowedProperties?: string[];
+    isActive?: boolean;
+  }) {
+    return apiFetch(`/api/users/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data)
+    });
+  },
+  async resetPassword(id: string, customTemporaryPassword?: string) {
+    return apiFetch(`/api/users/${id}/reset-password`, {
+      method: 'POST',
+      body: JSON.stringify({ customTemporaryPassword })
+    });
+  },
+  async deleteUser(id: string) {
+    return apiFetch(`/api/users/${id}`, {
+      method: 'DELETE'
+    });
   }
 };
 
@@ -313,3 +383,4 @@ export const parkingService = {
     });
   }
 };
+

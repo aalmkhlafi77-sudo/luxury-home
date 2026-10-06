@@ -18,6 +18,7 @@ import {
 import { ExpenseRegistrationModal } from './ExpenseRegistrationModal';
 import { ExpenseDetailsModal } from './ExpenseDetailsModal';
 import { OperationalExpense } from '../../../types';
+import { formatNumber, CurrencyAmount, formatDate } from '../../../utils/formatters';
 
 export const NOIProfitabilityView: React.FC = () => {
   const { state } = useAppStore();
@@ -26,12 +27,20 @@ export const NOIProfitabilityView: React.FC = () => {
   const [periodPreset, setPeriodPreset] = useState<'this_month' | 'this_quarter' | 'full_year' | 'custom'>('full_year');
   const [periodStart, setPeriodStart] = useState<string>(`${currentYear}-01-01`);
   const [periodEnd, setPeriodEnd] = useState<string>(`${currentYear}-12-31`);
+  const [selectedCityId, setSelectedCityId] = useState<string>('all');
   const [selectedPropertyId, setSelectedPropertyId] = useState<string>('all');
   const [costAllocationMode, setCostAllocationMode] = useState<'direct_only' | 'fully_allocated'>('fully_allocated');
   
   // Modals
   const [showAddExpenseModal, setShowAddExpenseModal] = useState<boolean>(false);
   const [viewingExpense, setViewingExpense] = useState<OperationalExpense | null>(null);
+
+  const filteredProperties = state.properties.filter(p => {
+    if (selectedCityId !== 'all' && p.cityId !== selectedCityId && p.city !== selectedCityId) {
+      return false;
+    }
+    return true;
+  });
 
   const handlePresetChange = (preset: 'this_month' | 'this_quarter' | 'full_year' | 'custom') => {
     setPeriodPreset(preset);
@@ -108,14 +117,29 @@ export const NOIProfitabilityView: React.FC = () => {
             </button>
           </div>
 
+          {/* City Filter */}
+          <select
+            value={selectedCityId}
+            onChange={(e) => {
+              setSelectedCityId(e.target.value);
+              setSelectedPropertyId('all');
+            }}
+            className="bg-white border border-[#E3DCCD] rounded-xl px-3 py-2 text-xs font-bold text-[#282824] cursor-pointer"
+          >
+            <option value="all">جميع المدن ({state.cities.length})</option>
+            {state.cities.map(c => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+
           {/* Property Filter */}
           <select
             value={selectedPropertyId}
             onChange={(e) => setSelectedPropertyId(e.target.value)}
             className="bg-white border border-[#E3DCCD] rounded-xl px-3 py-2 text-xs font-bold text-[#282824] cursor-pointer"
           >
-            <option value="all">جميع مجمعات منزل الفخامة</option>
-            {state.properties.map(p => (
+            <option value="all">جميع مجمعات منزل الفخامة ({filteredProperties.length})</option>
+            {filteredProperties.map(p => (
               <option key={p.id} value={p.id}>{p.name}</option>
             ))}
           </select>
@@ -175,19 +199,19 @@ export const NOIProfitabilityView: React.FC = () => {
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 select-none">
         <div className="p-4 bg-white rounded-3xl border border-[#E3DCCD] shadow-xs">
           <span className="block text-[11px] font-bold text-[#68675F] mb-1">إيرادات الفترة المكتسبة</span>
-          <span className="text-xl font-black text-emerald-900 tabular-nums">
-            {report.companyTotalRevenue.toLocaleString('ar-SA')} ر.س
-          </span>
+          <div className="text-xl font-black text-emerald-900">
+            <CurrencyAmount amount={report.companyTotalRevenue} />
+          </div>
           <span className="text-[10px] text-[#68675F] block mt-0.5 font-mono">
-            {periodStart} إلى {periodEnd}
+            <bdi dir="ltr">{formatDate(periodStart)}</bdi> إلى <bdi dir="ltr">{formatDate(periodEnd)}</bdi>
           </span>
         </div>
 
         <div className="p-4 bg-white rounded-3xl border border-[#E3DCCD] shadow-xs">
           <span className="block text-[11px] font-bold text-[#68675F] mb-1">تكاليف التشغيل المستحقة (OPEX)</span>
-          <span className="text-xl font-black text-rose-800 tabular-nums">
-            {report.companyTotalOpex.toLocaleString('ar-SA')} ر.س
-          </span>
+          <div className="text-xl font-black text-rose-800">
+            <CurrencyAmount amount={report.companyTotalOpex} />
+          </div>
           <span className="text-[10px] text-[#68675F] block mt-0.5">
             {costAllocationMode === 'fully_allocated' ? 'مباشرة + موزعة' : 'مباشرة فقط'}
           </span>
@@ -195,25 +219,25 @@ export const NOIProfitabilityView: React.FC = () => {
 
         <div className="p-4 bg-stone-900 text-white rounded-3xl shadow-xs">
           <span className="block text-[11px] font-bold text-stone-300 mb-1">صافي ربح التشغيل (NOI)</span>
-          <span className="text-2xl font-black text-[#E8D7B0] tabular-nums">
-            {report.companyTotalNOI.toLocaleString('ar-SA')} ر.س
-          </span>
+          <div className="text-2xl font-black text-[#E8D7B0]">
+            <CurrencyAmount amount={report.companyTotalNOI} />
+          </div>
           <span className="text-[10px] text-stone-400 block mt-0.5">مؤشر الربحية الفعلي للمنشأة</span>
         </div>
 
         <div className="p-4 bg-white rounded-3xl border border-[#E3DCCD] shadow-xs">
           <span className="block text-[11px] font-bold text-[#68675F] mb-1">هامش ربح التشغيل الكلي</span>
           <span className="text-xl font-black text-[#282824] tabular-nums">
-            {report.companyMarginPercent}%
+            <bdi dir="ltr">{formatNumber(report.companyMarginPercent)}%</bdi>
           </span>
           <span className="text-[10px] text-[#68675F] block mt-0.5">كفاءة استغلال الأصول المؤجرة</span>
         </div>
 
         <div className="p-4 bg-purple-50 rounded-3xl border border-purple-200 shadow-xs">
           <span className="block text-[11px] font-bold text-purple-900 mb-1">أصول وأثاث رأسمالي (FF&E)</span>
-          <span className="text-xl font-black text-purple-950 tabular-nums">
-            {report.companyFfeCapital.toLocaleString('ar-SA')} ر.س
-          </span>
+          <div className="text-xl font-black text-purple-950">
+            <CurrencyAmount amount={report.companyFfeCapital} />
+          </div>
           <span className="text-[10px] text-purple-800 block mt-0.5">مستثناة من حساب NOI</span>
         </div>
       </div>
@@ -234,15 +258,22 @@ export const NOIProfitabilityView: React.FC = () => {
               <div className="flex items-center gap-4 text-xs select-none">
                 <div>
                   <span className="text-[#68675F] block text-[10px]">إيراد الفترة:</span>
-                  <span className="font-bold text-emerald-800 tabular-nums">{prop.periodRevenue.toLocaleString('ar-SA')} ر.س</span>
+                  <div className="font-bold text-emerald-800">
+                    <CurrencyAmount amount={prop.periodRevenue} />
+                  </div>
                 </div>
                 <div>
                   <span className="text-[#68675F] block text-[10px]">تكاليف التشغيل المحملة:</span>
-                  <span className="font-bold text-rose-800 tabular-nums">{prop.totalOperatingExpense.toLocaleString('ar-SA')} ر.س</span>
+                  <div className="font-bold text-rose-800">
+                    <CurrencyAmount amount={prop.totalOperatingExpense} />
+                  </div>
                 </div>
                 <div className="bg-[#FAF8F5] px-3 py-1.5 rounded-xl border border-[#E3DCCD]">
                   <span className="text-[#68675F] block text-[10px]">صافي ربح المجمع (NOI)</span>
-                  <span className="font-black text-[#282824] tabular-nums">{prop.noi.toLocaleString('ar-SA')} ر.س ({prop.operatingMarginPercent}%)</span>
+                  <div className="font-black text-[#282824] flex items-center gap-1">
+                    <CurrencyAmount amount={prop.noi} />
+                    <span className="text-xs font-normal">({formatNumber(prop.operatingMarginPercent)}%)</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -274,31 +305,33 @@ export const NOIProfitabilityView: React.FC = () => {
                       <td className="p-3 font-bold text-[#282824]">
                         شقة #{u.unitNumber}
                       </td>
-                      <td className="p-3 text-[#68675F] tabular-nums font-mono">{u.areaSqm} م²</td>
-                      <td className="p-3 font-bold text-emerald-700 tabular-nums">
-                        {u.periodRevenue > 0 ? `${u.periodRevenue.toLocaleString('ar-SA')} ر.س` : '-'}
+                      <td className="p-3 text-[#68675F] tabular-nums font-mono">
+                        <bdi dir="ltr">{formatNumber(u.areaSqm)} م²</bdi>
                       </td>
-                      <td className="p-3 text-[#68675F] tabular-nums">
-                        {u.directOperatingExpense > 0 ? `${u.directOperatingExpense.toLocaleString('ar-SA')} ر.س` : '-'}
+                      <td className="p-3 font-bold text-emerald-700">
+                        {u.periodRevenue > 0 ? <CurrencyAmount amount={u.periodRevenue} /> : '-'}
+                      </td>
+                      <td className="p-3 text-[#68675F]">
+                        {u.directOperatingExpense > 0 ? <CurrencyAmount amount={u.directOperatingExpense} /> : '-'}
                       </td>
                       {costAllocationMode === 'fully_allocated' && (
                         <>
-                          <td className="p-3 text-[#68675F] tabular-nums">
-                            {u.allocatedBuildingExpense > 0 ? `${u.allocatedBuildingExpense.toLocaleString('ar-SA')} ر.س` : '-'}
+                          <td className="p-3 text-[#68675F]">
+                            {u.allocatedBuildingExpense > 0 ? <CurrencyAmount amount={u.allocatedBuildingExpense} /> : '-'}
                           </td>
-                          <td className="p-3 text-[#68675F] tabular-nums">
-                            {u.allocatedCompanyExpense > 0 ? `${u.allocatedCompanyExpense.toLocaleString('ar-SA')} ر.س` : '-'}
+                          <td className="p-3 text-[#68675F]">
+                            {u.allocatedCompanyExpense > 0 ? <CurrencyAmount amount={u.allocatedCompanyExpense} /> : '-'}
                           </td>
                         </>
                       )}
-                      <td className="p-3 font-bold text-rose-700 tabular-nums">
-                        {u.effectiveOperatingExpense > 0 ? `${u.effectiveOperatingExpense.toLocaleString('ar-SA')} ر.س` : '-'}
+                      <td className="p-3 font-bold text-rose-700">
+                        {u.effectiveOperatingExpense > 0 ? <CurrencyAmount amount={u.effectiveOperatingExpense} /> : '-'}
                       </td>
-                      <td className="p-3 font-bold text-purple-900 tabular-nums">
-                        {u.ffeCapitalExpense > 0 ? `${u.ffeCapitalExpense.toLocaleString('ar-SA')} ر.س` : '-'}
+                      <td className="p-3 font-bold text-purple-900">
+                        {u.ffeCapitalExpense > 0 ? <CurrencyAmount amount={u.ffeCapitalExpense} /> : '-'}
                       </td>
-                      <td className="p-3 font-black text-[#282824] tabular-nums">
-                        {u.noi.toLocaleString('ar-SA')} ر.س
+                      <td className="p-3 font-black text-[#282824]">
+                        <CurrencyAmount amount={u.noi} />
                       </td>
                       <td className="p-3">
                         <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
@@ -308,7 +341,7 @@ export const NOIProfitabilityView: React.FC = () => {
                             ? 'bg-amber-100 text-amber-800'
                             : 'bg-rose-100 text-rose-800'
                         }`}>
-                          {u.operatingMarginPercent}%
+                          <bdi dir="ltr">{formatNumber(u.operatingMarginPercent)}%</bdi>
                         </span>
                       </td>
                     </tr>
@@ -338,9 +371,9 @@ export const NOIProfitabilityView: React.FC = () => {
               }`}
             >
               <span className="text-[10px] font-bold block opacity-75">{c.categoryLabel}</span>
-              <span className="text-base font-black block mt-0.5 tabular-nums">
-                {c.totalAccruedAmount.toLocaleString('ar-SA')} ر.س
-              </span>
+              <div className="text-base font-black block mt-0.5">
+                <CurrencyAmount amount={c.totalAccruedAmount} />
+              </div>
               <span className="text-[9px] opacity-60 block mt-0.5">
                 {c.count} قيد مستحق {c.isCapitalFfe ? '(رأسمالي FF&E)' : ''}
               </span>

@@ -35,7 +35,8 @@ import {
   ExpenseCategoryConfig,
   RecurringExpenseSchedule,
   ExpensePaymentEntry,
-  ExpenseRecordStatus
+  ExpenseRecordStatus,
+  City
 } from '../types';
 import {
   initialCompanySettings,
@@ -57,7 +58,9 @@ import {
   initialAdjustments,
   initialExpenseCategories,
   initialRecurringExpenses,
-  initialNavigationSettings
+  initialNavigationSettings,
+  initialCities,
+  initialCustomTypography
 } from '../data/initialData';
 import {
   generateInstallmentSchedule,
@@ -72,6 +75,7 @@ const OLD_STORAGE_KEY = 'ivoire_platform_data_v5';
 
 export interface AppState {
   settings: CompanySettings;
+  cities: City[];
   properties: Property[];
   floors: Floor[];
   units: Unit[];
@@ -148,6 +152,42 @@ function getStoredState(): AppState {
         if (!parsed.settings.navigation) {
           parsed.settings.navigation = initialNavigationSettings;
         }
+        if (!parsed.settings.typography) {
+          parsed.settings.typography = JSON.parse(JSON.stringify(initialCustomTypography));
+        }
+        if (!parsed.settings.currencyDisplayMode) {
+          parsed.settings.currencyDisplayMode = 'symbol';
+        }
+      }
+      if (!Array.isArray(parsed.cities) || parsed.cities.length === 0) {
+        parsed.cities = JSON.parse(JSON.stringify(initialCities));
+      } else {
+        for (const defCity of initialCities) {
+          if (!parsed.cities.some((c: City) => c.id === defCity.id || c.name.trim() === defCity.name)) {
+            parsed.cities.push({ ...defCity });
+          }
+        }
+      }
+      if (Array.isArray(parsed.properties)) {
+        for (const p of parsed.properties) {
+          const cName = String(p.city || 'الرياض').trim() || 'الرياض';
+          let matched = p.cityId ? parsed.cities.find((c: City) => c.id === p.cityId) : null;
+          if (!matched) {
+            matched = parsed.cities.find((c: City) => c.name.trim() === cName);
+          }
+          if (!matched) {
+            matched = {
+              id: `city-migrated-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              name: cName,
+              country: 'المملكة العربية السعودية',
+              status: 'active',
+              displayOrder: parsed.cities.length + 1
+            };
+            parsed.cities.push(matched);
+          }
+          p.cityId = matched.id;
+          p.city = matched.name;
+        }
       }
       if (parsed.parkingSpots === undefined) {
         parsed.parkingSpots = initialParkingSpots;
@@ -175,6 +215,7 @@ function getStoredState(): AppState {
 
   return {
     settings: initialCompanySettings,
+    cities: initialCities,
     properties: initialProperties,
     floors: initialFloors,
     units: initialUnits,
@@ -217,6 +258,7 @@ export function normalizePropertyFromServer(p: any): Property {
     description: p.description || '',
     address: p.address || '',
     city: p.city || 'الرياض',
+    cityId: p.cityId || undefined,
     district: p.district || '',
     latitude: p.latitude || 24.7136,
     longitude: p.longitude || 46.6753,
@@ -386,6 +428,7 @@ export async function loadAuthoritativeServerState(force: boolean = false) {
         globalState = {
           ...globalState,
           settings: s.settings ? { ...globalState.settings, ...s.settings } : globalState.settings,
+          cities: Array.isArray(s.cities) && s.cities.length > 0 ? s.cities : globalState.cities,
           properties: Array.isArray(s.properties) ? s.properties.map(normalizePropertyFromServer) : globalState.properties,
           floors: Array.isArray(s.floors) ? s.floors.map(normalizeFloorFromServer) : globalState.floors,
           units: Array.isArray(s.units) ? s.units.map(normalizeUnitFromServer) : globalState.units,
@@ -404,8 +447,9 @@ export async function loadAuthoritativeServerState(force: boolean = false) {
     }
 
     // Public state fallback
-    const [settingsRes, propsRes, unitsRes] = await Promise.all([
+    const [settingsRes, citiesRes, propsRes, unitsRes] = await Promise.all([
       fetch('/api/public/settings').then(r => r.json()).catch(() => null),
+      fetch('/api/cities').then(r => r.json()).catch(() => null),
       fetch('/api/public/properties').then(r => r.json()).catch(() => null),
       fetch('/api/public/units').then(r => r.json()).catch(() => null),
     ]);
@@ -413,6 +457,10 @@ export async function loadAuthoritativeServerState(force: boolean = false) {
     let changed = false;
     if (settingsRes?.success && settingsRes.settings) {
       globalState = { ...globalState, settings: { ...globalState.settings, ...settingsRes.settings } };
+      changed = true;
+    }
+    if (citiesRes?.success && Array.isArray(citiesRes.cities) && citiesRes.cities.length > 0) {
+      globalState = { ...globalState, cities: citiesRes.cities };
       changed = true;
     }
     if (propsRes?.success && Array.isArray(propsRes.properties)) {
@@ -521,6 +569,7 @@ export function useAppStore() {
    * Search for units matching criteria with strict availability filter
    */
   const searchAvailableUnits = useCallback((params: {
+    cityId?: string;
     propertyId?: string;
     rentalType: 'daily' | 'monthly' | 'yearly';
     startDate: string;
@@ -528,6 +577,13 @@ export function useAppStore() {
     guestsCount?: number;
   }) => {
     return globalState.units.filter(unit => {
+      // Filter by city if specified
+      if (params.cityId && params.cityId !== 'all') {
+        const prop = globalState.properties.find(p => p.id === unit.propertyId);
+        if (!prop || (prop.cityId !== params.cityId && prop.city !== params.cityId)) {
+          return false;
+        }
+      }
       // Filter by property if specified
       if (params.propertyId && params.propertyId !== 'all' && unit.propertyId !== params.propertyId) {
         return false;
@@ -1523,11 +1579,19 @@ export function useAppStore() {
    * Content & Settings customization
    */
   const updateCompanySettings = useCallback((newSettings: Partial<CompanySettings>) => {
+    const mergedTypography = newSettings.typography
+      ? {
+          ...(globalState.settings.typography || initialCustomTypography),
+          ...newSettings.typography
+        }
+      : (globalState.settings.typography || initialCustomTypography);
+
     globalState = {
       ...globalState,
       settings: {
         ...globalState.settings,
         ...newSettings,
+        typography: mergedTypography,
         theme: {
           ...globalState.settings.theme,
           ...(newSettings.theme || {})
@@ -1536,12 +1600,12 @@ export function useAppStore() {
       auditLogs: [
         {
           id: `log-${Date.now()}`,
-          action: 'تحديث تفاصيل إعدادات الشركة الرقمية',
+          action: 'تحديث تفاصيل إعدادات وهوية الشركة الرقمية',
           entity: 'CompanySettings',
           entityId: 'global',
-          performedBy: 'المدير المالي التنفيذي',
-          role: 'Admin',
-          details: 'تم إجراء تعديل يدوياً على السجل الضريبي، رقم الهاتف، أو اسم وشعار شركة منزل الفخامة الفندقية.',
+          performedBy: 'المسؤول الإداري',
+          role: 'SUPER_ADMIN',
+          details: 'تم إجراء تعديل على بيانات وهوية المنشأة، النصوص المخصصة، أو مظهر الموقع العام.',
           timestamp: new Date().toISOString(),
         },
         ...globalState.auditLogs
@@ -1579,6 +1643,84 @@ export function useAppStore() {
   }, []);
 
   /**
+   * --- 0. City Management ---
+   */
+  const createCity = useCallback(async (payload: {
+    name: string;
+    nameEn?: string;
+    region?: string;
+    country?: string;
+    status?: 'active' | 'inactive';
+    displayOrder?: number;
+  }): Promise<City> => {
+    if (!payload.name || !payload.name.trim()) {
+      throw new Error('يرجى إدخال اسم المدينة.');
+    }
+    const res = await apiCall('/api/cities', 'POST', payload);
+    if (!res || !res.success || !res.city) {
+      throw new Error(res?.message || 'فشل إضافة المدينة على الخادم.');
+    }
+    const savedCity: City = res.city;
+    globalState = {
+      ...globalState,
+      cities: [...globalState.cities.filter(c => c.id !== savedCity.id), savedCity].sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0)),
+      auditLogs: [
+        {
+          id: `log-${Date.now()}`,
+          action: 'إضافة مدينة معتمدة جديدة',
+          entity: 'City',
+          entityId: savedCity.id,
+          performedBy: 'مدير النظام',
+          role: 'Admin',
+          details: `تم اعتماد وإضافة مدينة (${savedCity.name}) ضمن (${savedCity.region || 'بدون منطقة'} - ${savedCity.country}).`,
+          timestamp: new Date().toISOString(),
+        },
+        ...globalState.auditLogs
+      ]
+    };
+    saveState(globalState);
+    notify();
+    return savedCity;
+  }, []);
+
+  const updateCity = useCallback(async (cityId: string, updates: Partial<City>): Promise<City> => {
+    const res = await apiCall(`/api/cities/${cityId}`, 'PUT', updates);
+    if (!res || !res.success || !res.city) {
+      throw new Error(res?.message || 'فشل تحديث بيانات المدينة على الخادم.');
+    }
+    const updatedCity: City = res.city;
+    globalState = {
+      ...globalState,
+      cities: globalState.cities
+        .map(c => c.id === cityId ? { ...c, ...updatedCity } : c)
+        .sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0)),
+      properties: globalState.properties.map(p =>
+        p.cityId === cityId ? { ...p, city: updatedCity.name } : p
+      ),
+    };
+    saveState(globalState);
+    notify();
+    return updatedCity;
+  }, []);
+
+  const deleteCity = useCallback(async (cityId: string): Promise<void> => {
+    const linkedPropsCount = globalState.properties.filter(p => p.cityId === cityId).length;
+    if (linkedPropsCount > 0) {
+      throw new Error('لا يمكن حذف المدينة نظراً لوجود مبانٍ مرتبطة بها. يرجى نقل المباني أو تعطيل المدينة بدلاً من الحذف.');
+    }
+    const res = await apiCall(`/api/cities/${cityId}`, 'DELETE');
+    if (!res || !res.success) {
+      throw new Error(res?.message || 'فشل حذف المدينة على الخادم.');
+    }
+    globalState = {
+      ...globalState,
+      cities: globalState.cities.filter(c => c.id !== cityId),
+    };
+    saveState(globalState);
+    notify();
+  }, []);
+
+  /**
    * --- 1. Property Management ---
    */
   const createProperty = useCallback(async (payload: Omit<Property, 'id'>): Promise<Property> => {
@@ -1587,12 +1729,24 @@ export function useAppStore() {
       throw new Error(`كود تصنيف المبنى (${payload.identifierCode}) مكرر ومسجل لمبنى آخر سلفاً!`);
     }
 
+    const resolvedCity = payload.cityId
+      ? globalState.cities.find(c => c.id === payload.cityId)
+      : globalState.cities.find(c => c.name.trim() === (payload.city || '').trim());
+
+    if (!resolvedCity) {
+      throw new Error('يرجى اختيار مدينة معتمدة وصالحة للمبنى من سجل المدن.');
+    }
+    if (resolvedCity.status === 'inactive') {
+      throw new Error('المدينة المختارة غير نشطة حالياً؛ يرجى اختيار مدينة نشطة أو تفعيل المدينة أولاً.');
+    }
+
     // Push to backend API and wait for authoritative DB record
     const res = await apiCall('/api/properties', 'POST', {
       name: payload.name,
       code: payload.identifierCode,
       address: payload.address,
-      city: payload.city,
+      city: resolvedCity.name,
+      cityId: resolvedCity.id,
       district: payload.district,
       floorsCount: payload.totalFloors,
       unitsCount: (payload as any).totalUnits || 0,
@@ -1615,7 +1769,8 @@ export function useAppStore() {
       identifierCode: serverProp.code || payload.identifierCode,
       name: serverProp.name || payload.name,
       address: serverProp.address || payload.address,
-      city: serverProp.city || payload.city,
+      city: serverProp.city || resolvedCity.name,
+      cityId: serverProp.cityId || resolvedCity.id,
       district: serverProp.district || payload.district,
       totalFloors: serverProp.floorsCount || payload.totalFloors,
       status: serverProp.isActive === false ? 'unlisted' : (payload.status || 'published'),
@@ -1657,11 +1812,28 @@ export function useAppStore() {
   }, []);
 
   const updateProperty = useCallback(async (propertyId: string, updates: Partial<Property>) => {
+    let resolvedCityId = updates.cityId;
+    let resolvedCityName = updates.city;
+    if (updates.cityId) {
+      const cObj = globalState.cities.find(c => c.id === updates.cityId);
+      if (!cObj) {
+        throw new Error('يرجى اختيار مدينة معتمدة وصالحة من سجل المدن.');
+      }
+      resolvedCityName = cObj.name;
+    } else if (updates.city) {
+      const cObj = globalState.cities.find(c => c.name.trim() === updates.city?.trim());
+      if (cObj) {
+        resolvedCityId = cObj.id;
+        resolvedCityName = cObj.name;
+      }
+    }
+
     const res = await apiCall(`/api/properties/${propertyId}`, 'PUT', {
       name: updates.name,
       code: updates.identifierCode,
       address: updates.address,
-      city: updates.city,
+      city: resolvedCityName,
+      cityId: resolvedCityId,
       district: updates.district,
       floorsCount: updates.totalFloors,
       unitsCount: (updates as any).totalUnits,
@@ -1683,6 +1855,8 @@ export function useAppStore() {
         id: serverProp?.id || p.id,
         name: serverProp?.name || updates.name || p.name,
         identifierCode: serverProp?.code || updates.identifierCode || p.identifierCode,
+        city: serverProp?.city || resolvedCityName || p.city,
+        cityId: serverProp?.cityId || resolvedCityId || p.cityId,
       } : p),
       auditLogs: [
         {
@@ -3167,6 +3341,7 @@ export function useAppStore() {
   const resetToFactoryDefaults = useCallback(() => {
     globalState = {
       settings: initialCompanySettings,
+      cities: initialCities,
       properties: initialProperties,
       floors: initialFloors,
       units: initialUnits,
@@ -3216,7 +3391,10 @@ export function useAppStore() {
     updateCompanySettings,
     updateContentSections,
     resetToFactoryDefaults,
-    // Building & Floor Management
+    // City, Building & Floor Management
+    createCity,
+    updateCity,
+    deleteCity,
     createProperty,
     updateProperty,
     archiveProperty,

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { Booking } from '../../types';
+import { CurrencyAmount, formatDate } from '../../utils/formatters';
 import {
   X,
   KeyRound,
@@ -216,17 +217,17 @@ export const ClientPortalModal: React.FC<ClientPortalModalProps> = ({
                     تم الاستلام والتحصيل بالكامل
                   </span>
                 </div>
-                <div className="flex justify-between">
+                <div className="flex justify-between items-center">
                   <span>قيمة الإقامة الشاملة والخدمات</span>
-                  <span className="tabular-nums font-medium text-[#282824]">{((activeBooking?.totalAmount || 0) - (activeBooking?.securityDeposit || 0)).toLocaleString('ar-SA')} ر.س</span>
+                  <CurrencyAmount amount={(activeBooking?.totalAmount || 0) - (activeBooking?.securityDeposit || 0)} />
                 </div>
-                <div className="flex justify-between text-amber-800">
+                <div className="flex justify-between items-center text-amber-800">
                   <span>تأمين الأثاث المسترد (تفويض معلق)</span>
-                  <span className="tabular-nums font-semibold">{(activeBooking?.securityDeposit || 0).toLocaleString('ar-SA')} ر.س</span>
+                  <CurrencyAmount amount={activeBooking?.securityDeposit || 0} />
                 </div>
-                <div className="flex justify-between pt-2 border-t border-[#E3DCCD] font-black text-[#282824] text-sm">
+                <div className="flex justify-between items-center pt-2 border-t border-[#E3DCCD] font-black text-[#282824] text-sm">
                   <span>إجمالي الحساب المالي الكلي</span>
-                  <span className="tabular-nums">{(activeBooking?.totalAmount || 0).toLocaleString('ar-SA')} ر.س</span>
+                  <CurrencyAmount amount={activeBooking?.totalAmount || 0} />
                 </div>
               </div>
 

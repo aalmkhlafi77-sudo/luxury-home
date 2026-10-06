@@ -18,8 +18,195 @@ import {
   ParkingSpot,
   ExpenseCategoryConfig,
   RecurringExpenseSchedule,
-  NavigationSettings
+  NavigationSettings,
+  City,
+  CustomizableTypographyConfig
 } from '../types';
+
+export const initialCustomTypography: CustomizableTypographyConfig = {
+  hero: {
+    badge: {
+      id: 'hero_badge',
+      label: 'شارة الهيدر الترحيبية',
+      text: 'بوابة السكن المترف والضيافة الراقية بالمملكة',
+      style: { color: '#FFFCF6', fontSizeRem: 0.875, fontWeight: 'medium', alignment: 'center' },
+      defaultText: 'بوابة السكن المترف والضيافة الراقية بالمملكة',
+      defaultStyle: { color: '#FFFCF6', fontSizeRem: 0.875, fontWeight: 'medium', alignment: 'center' }
+    },
+    title: {
+      id: 'hero_title',
+      label: 'العنوان الرئيسي الترحيبي',
+      text: 'اكتشف أرقى مستويات المعيشة الفندقية الفاخرة في قلب مدن المملكة',
+      style: { color: '#FFFFFF', fontSizeRem: 3.5, fontWeight: 'bold', alignment: 'center' },
+      defaultText: 'اكتشف أرقى مستويات المعيشة الفندقية الفاخرة في قلب مدن المملكة',
+      defaultStyle: { color: '#FFFFFF', fontSizeRem: 3.5, fontWeight: 'bold', alignment: 'center' }
+    },
+    subtitle: {
+      id: 'hero_subtitle',
+      label: 'الوصف والفقرة الترحيبية',
+      text: 'شقق وأجنحة سكنية مفروشة بالكامل تدمج بسلاسة تامة بين دفء وخصوصية المنزل وخدمات الضيافة الفندقية المتكاملة الراقية، في أكثر الأحياء جاذبية في العاصمة وكبرى المدن.',
+      style: { color: '#EFE9DF', fontSizeRem: 1.125, fontWeight: 'normal', alignment: 'center' },
+      defaultText: 'شقق وأجنحة سكنية مفروشة بالكامل تدمج بسلاسة تامة بين دفء وخصوصية المنزل وخدمات الضيافة الفندقية المتكاملة الراقية، في أكثر الأحياء جاذبية في العاصمة وكبرى المدن.',
+      defaultStyle: { color: '#EFE9DF', fontSizeRem: 1.125, fontWeight: 'normal', alignment: 'center' }
+    },
+    cta_primary: {
+      id: 'hero_cta_primary',
+      label: 'زر الإجراء الرئيسي (استعراض الشقق)',
+      text: 'استعرض الشقق المتاحة',
+      style: { color: '#282824', fontSizeRem: 1, fontWeight: 'semibold', alignment: 'center' },
+      defaultText: 'استعرض الشقق المتاحة',
+      defaultStyle: { color: '#282824', fontSizeRem: 1, fontWeight: 'semibold', alignment: 'center' }
+    },
+    cta_secondary: {
+      id: 'hero_cta_secondary',
+      label: 'زر الإجراء الثانوي (المشروعات)',
+      text: 'مشروعاتنا وأبراجنا الفندقية',
+      style: { color: '#FFFFFF', fontSizeRem: 1, fontWeight: 'medium', alignment: 'center' },
+      defaultText: 'مشروعاتنا وأبراجنا الفندقية',
+      defaultStyle: { color: '#FFFFFF', fontSizeRem: 1, fontWeight: 'medium', alignment: 'center' }
+    },
+    stat_1: {
+      id: 'hero_stat_1',
+      label: 'الإحصائية الأولى (المدن والوجهات)',
+      text: '3 مدن ووجهات فاخرة بالمملكة',
+      style: { color: '#FFFFFF', fontSizeRem: 0.875, fontWeight: 'medium', alignment: 'center' },
+      defaultText: '3 مدن ووجهات فاخرة بالمملكة',
+      defaultStyle: { color: '#FFFFFF', fontSizeRem: 0.875, fontWeight: 'medium', alignment: 'center' }
+    },
+    stat_2: {
+      id: 'hero_stat_2',
+      label: 'الإحصائية الثانية (الرضا والإشغال)',
+      text: '100% نسبة رضا وضيافة استثنائية',
+      style: { color: '#FFFFFF', fontSizeRem: 0.875, fontWeight: 'medium', alignment: 'center' },
+      defaultText: '100% نسبة رضا وضيافة استثنائية',
+      defaultStyle: { color: '#FFFFFF', fontSizeRem: 0.875, fontWeight: 'medium', alignment: 'center' }
+    },
+    stat_3: {
+      id: 'hero_stat_3',
+      label: 'الإحصائية الثالثة (الكونسيرج)',
+      text: '24/7 كونسيرج وخدمة غرف خاصة',
+      style: { color: '#FFFFFF', fontSizeRem: 0.875, fontWeight: 'medium', alignment: 'center' },
+      defaultText: '24/7 كونسيرج وخدمة غرف خاصة',
+      defaultStyle: { color: '#FFFFFF', fontSizeRem: 0.875, fontWeight: 'medium', alignment: 'center' }
+    }
+  },
+  search_bar: {
+    heading: {
+      id: 'search_heading',
+      label: 'عنوان محرك الحجز والبحث',
+      text: 'ابحث عن إقامتك الفاخرة وحجزك القادم',
+      style: { color: '#282824', fontSizeRem: 1, fontWeight: 'bold', alignment: 'right' },
+      defaultText: 'ابحث عن إقامتك الفاخرة وحجزك القادم',
+      defaultStyle: { color: '#282824', fontSizeRem: 1, fontWeight: 'bold', alignment: 'right' }
+    },
+    search_btn: {
+      id: 'search_btn',
+      label: 'نص زر البحث المباشر',
+      text: 'بحث وتأكيد الإتاحة',
+      style: { color: '#FFFFFF', fontSizeRem: 0.875, fontWeight: 'bold', alignment: 'center' },
+      defaultText: 'بحث وتأكيد الإتاحة',
+      defaultStyle: { color: '#FFFFFF', fontSizeRem: 0.875, fontWeight: 'bold', alignment: 'center' }
+    }
+  },
+  buildings: {
+    title: {
+      id: 'buildings_title',
+      label: 'عنوان قسم المجمعات والأبراج',
+      text: 'مجمعاتنا وعقاراتنا السكنية المتميزة',
+      style: { color: '#282824', fontSizeRem: 2, fontWeight: 'bold', alignment: 'right' },
+      defaultText: 'مجمعاتنا وعقاراتنا السكنية المتميزة',
+      defaultStyle: { color: '#282824', fontSizeRem: 2, fontWeight: 'bold', alignment: 'right' }
+    },
+    subtitle: {
+      id: 'buildings_subtitle',
+      label: 'وصف قسم المجمعات',
+      text: 'مبانٍ فندقية مصممة بأعلى معايير المعمار الحديث ومجهزة بكافة وسائل الراحة والمرافق الحصرية.',
+      style: { color: '#68675F', fontSizeRem: 1, fontWeight: 'normal', alignment: 'right' },
+      defaultText: 'مبانٍ فندقية مصممة بأعلى معايير المعمار الحديث ومجهزة بكافة وسائل الراحة والمرافق الحصرية.',
+      defaultStyle: { color: '#68675F', fontSizeRem: 1, fontWeight: 'normal', alignment: 'right' }
+    }
+  },
+  units: {
+    title: {
+      id: 'units_title',
+      label: 'عنوان قسم الوحدات الفاخرة',
+      text: 'أحدث الشقق والأجنحة المتاحة للإقامة',
+      style: { color: '#282824', fontSizeRem: 2, fontWeight: 'bold', alignment: 'right' },
+      defaultText: 'أحدث الشقق والأجنحة المتاحة للإقامة',
+      defaultStyle: { color: '#282824', fontSizeRem: 2, fontWeight: 'bold', alignment: 'right' }
+    },
+    subtitle: {
+      id: 'units_subtitle',
+      label: 'وصف قسم الوحدات الفاخرة',
+      text: 'خيارات متعددة تناسب الإقامة اليومية الفندقية والإيجار الشهري والسنوي بعقود إلكترونية موثقة.',
+      style: { color: '#68675F', fontSizeRem: 1, fontWeight: 'normal', alignment: 'right' },
+      defaultText: 'خيارات متعددة تناسب الإقامة اليومية الفندقية والإيجار الشهري والسنوي بعقود إلكترونية موثقة.',
+      defaultStyle: { color: '#68675F', fontSizeRem: 1, fontWeight: 'normal', alignment: 'right' }
+    }
+  },
+  amenities: {
+    title: {
+      id: 'amenities_title',
+      label: 'عنوان قسم الخدمات الفندقية',
+      text: 'خدمات فندقية استثنائية متكاملة',
+      style: { color: '#282824', fontSizeRem: 2, fontWeight: 'bold', alignment: 'right' },
+      defaultText: 'خدمات فندقية استثنائية متكاملة',
+      defaultStyle: { color: '#282824', fontSizeRem: 2, fontWeight: 'bold', alignment: 'right' }
+    },
+    subtitle: {
+      id: 'amenities_subtitle',
+      label: 'وصف قسم الخدمات الفندقية',
+      text: 'نعتني بأدق التفاصيل لتنعم بتجربة ضيافة مترفة ترقى لتطلعاتك وتلبي كافة احتياجاتك اليومية.',
+      style: { color: '#68675F', fontSizeRem: 1, fontWeight: 'normal', alignment: 'right' },
+      defaultText: 'نعتني بأدق التفاصيل لتنعم بتجربة ضيافة مترفة ترقى لتطلعاتك وتلبي كافة احتياجاتك اليومية.',
+      defaultStyle: { color: '#68675F', fontSizeRem: 1, fontWeight: 'normal', alignment: 'right' }
+    }
+  },
+  faq: {
+    title: {
+      id: 'faq_title',
+      label: 'عنوان الأسئلة الشائعة',
+      text: 'الأسئلة الأكثر شيوعاً حول الإقامة والحجز',
+      style: { color: '#282824', fontSizeRem: 2, fontWeight: 'bold', alignment: 'right' },
+      defaultText: 'الأسئلة الأكثر شيوعاً حول الإقامة والحجز',
+      defaultStyle: { color: '#282824', fontSizeRem: 2, fontWeight: 'bold', alignment: 'right' }
+    },
+    subtitle: {
+      id: 'faq_subtitle',
+      label: 'وصف الأسئلة الشائعة',
+      text: 'كل ما تحتاج لمعرفته حول سياسات الحجز والإلغاء وتأمين الدخول الذكي وتوثيق العقود.',
+      style: { color: '#68675F', fontSizeRem: 1, fontWeight: 'normal', alignment: 'right' },
+      defaultText: 'كل ما تحتاج لمعرفته حول سياسات الحجز والإلغاء وتأمين الدخول الذكي وتوثيق العقود.',
+      defaultStyle: { color: '#68675F', fontSizeRem: 1, fontWeight: 'normal', alignment: 'right' }
+    }
+  },
+  contact: {
+    title: {
+      id: 'contact_title',
+      label: 'عنوان قسم التواصل وخدمة العملاء',
+      text: 'تواصل مع فريق الكونسيرج وخدمة الضيوف',
+      style: { color: '#282824', fontSizeRem: 2, fontWeight: 'bold', alignment: 'right' },
+      defaultText: 'تواصل مع فريق الكونسيرج وخدمة الضيوف',
+      defaultStyle: { color: '#282824', fontSizeRem: 2, fontWeight: 'bold', alignment: 'right' }
+    },
+    subtitle: {
+      id: 'contact_subtitle',
+      label: 'وصف قسم التواصل',
+      text: 'فريقنا متاح على مدار الساعة للإجابة على كافة استفساراتك وتقديم المساعدة في حجز وحدتك الفاخرة.',
+      style: { color: '#68675F', fontSizeRem: 1, fontWeight: 'normal', alignment: 'right' },
+      defaultText: 'فريقنا متاح على مدار الساعة للإجابة على كافة استفساراتك وتقديم المساعدة في حجز وحدتك الفاخرة.',
+      defaultStyle: { color: '#68675F', fontSizeRem: 1, fontWeight: 'normal', alignment: 'right' }
+    },
+    whatsapp_cta: {
+      id: 'contact_whatsapp_cta',
+      label: 'نص زر التواصل عبر الواتساب',
+      text: 'محادثة مباشرة عبر الواتساب',
+      style: { color: '#FFFFFF', fontSizeRem: 1, fontWeight: 'bold', alignment: 'center' },
+      defaultText: 'محادثة مباشرة عبر الواتساب',
+      defaultStyle: { color: '#FFFFFF', fontSizeRem: 1, fontWeight: 'bold', alignment: 'center' }
+    }
+  }
+};
 
 export const initialNavigationSettings: NavigationSettings = {
   enableBottomNav: true,
@@ -58,7 +245,9 @@ export const initialCompanySettings: CompanySettings = {
   address: 'الرياض، المملكة العربية السعودية',
   currency: 'SAR',
   currencySymbol: 'ر.س',
+  currencyDisplayMode: 'symbol',
   timezone: 'Asia/Riyadh',
+  typography: initialCustomTypography,
   navigation: initialNavigationSettings,
   theme: {
     primaryColor: '#B69A68',
@@ -82,15 +271,21 @@ export const initialAmenities: Amenity[] = [
   { id: 'smart_lock', name: 'دخول ذكي بدون مفتاح', nameEn: 'Smart Keyless Access', icon: 'KeyRound', category: 'technology' },
   { id: 'wifi', name: 'إنترنت فايبر عالي السرعة', nameEn: 'High-speed Fiber WiFi', icon: 'Wifi', category: 'technology' },
   { id: 'cleaning', name: 'خدمة تدبير منزلي فندقية', nameEn: 'Hotel Housekeeping', icon: 'Sparkles', category: 'general' },
-  { id: 'concierge', name: 'خدمات الكونسيرج ٢٤/٧', nameEn: '24/7 Concierge', icon: 'Clock', category: 'general' },
+  { id: 'concierge', name: 'خدمات الكونسيرج 24/7', nameEn: '24/7 Concierge', icon: 'Clock', category: 'general' },
   { id: 'ev_parking', name: 'مواقف خاصة مع شاحن كهربائي', nameEn: 'EV Charger Parking', icon: 'Car', category: 'comfort' },
   { id: 'full_kitchen', name: 'مطبخ متكامل التجهيز', nameEn: 'Fully Equipped Kitchen', icon: 'Utensils', category: 'kitchen' },
   { id: 'coffee', name: 'ركن قهوة مختصة متكامل', nameEn: 'Specialty Coffee Bar', icon: 'Coffee', category: 'kitchen' },
   { id: 'washer_dryer', name: 'غسالة ومجففة ملابس ذكية', nameEn: 'Washer & Dryer', icon: 'Shirt', category: 'comfort' },
   { id: 'gym', name: 'نادي صحي ورياضي خاص بـ منزل الفخامة', nameEn: 'Private Wellness Gym', icon: 'Dumbbell', category: 'wellness' },
   { id: 'balcony_view', name: 'شرفة بإطلالة بانورامية', nameEn: 'Panoramic Balcony', icon: 'Eye', category: 'comfort' },
-  { id: 'smart_tv', name: 'تلفزيون ذكي ٦٥ بوصة ٤كيه', nameEn: '65" 4K Smart TV', icon: 'Tv', category: 'technology' },
+  { id: 'smart_tv', name: 'تلفزيون ذكي 65 بوصة 4K', nameEn: '65" 4K Smart TV', icon: 'Tv', category: 'technology' },
   { id: 'work_desk', name: 'مكتب عمل تنفيذي مريح', nameEn: 'Executive Workspace', icon: 'Briefcase', category: 'comfort' },
+];
+
+export const initialCities: City[] = [
+  { id: 'city-riyadh', name: 'الرياض', nameEn: 'Riyadh', region: 'منطقة الرياض', country: 'المملكة العربية السعودية', status: 'active', displayOrder: 1 },
+  { id: 'city-dammam', name: 'الدمام', nameEn: 'Dammam', region: 'المنطقة الشرقية', country: 'المملكة العربية السعودية', status: 'active', displayOrder: 2 },
+  { id: 'city-jeddah', name: 'جدة', nameEn: 'Jeddah', region: 'منطقة مكة المكرمة', country: 'المملكة العربية السعودية', status: 'active', displayOrder: 3 },
 ];
 
 export const initialProperties: Property[] = [
@@ -103,6 +298,7 @@ export const initialProperties: Property[] = [
     description: 'يقع Luxury home منزل الفخامة في حي النخيل الراقي، ويقدم شققاً سكنية فاخرة ومفروشة بالكامل للباحثين عن تجربة إقامة استثنائية وطويلة المدى، مع صالة رياضية مشتركة، بهو مخصص للكونسيرج، ومواقف سيارات مجهزة بشواحن كهربائية.',
     address: 'طريق الأمير تركي بن عبد العزيز الأول، حي النخيل، الرياض',
     city: 'الرياض',
+    cityId: 'city-riyadh',
     district: 'حي النخيل',
     latitude: 24.7391,
     longitude: 46.6432,
@@ -156,6 +352,7 @@ export const initialProperties: Property[] = [
     description: 'يقدم منزل الفخامة بارك العليا تجربة عصرية متفردة في قلب المركز المالي والتجاري للرياض، مجاوراً لأبرز المعالم الاقتصادية والترفيهية، بلمسات فندقية راقية ومساحات مخصصة لرجال الأعمال والمقيمين الباحثين عن سهولة التنقل والعمل الفاخر.',
     address: 'طريق الملك فهد، حي العليا، الرياض',
     city: 'الرياض',
+    cityId: 'city-riyadh',
     district: 'حي العليا',
     latitude: 24.7082,
     longitude: 46.6789,

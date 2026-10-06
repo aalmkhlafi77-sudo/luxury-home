@@ -1,7 +1,8 @@
 import { startServer } from '../server.js';
 import http from 'http';
 import { availableDeposit } from '../src/server/depositRefundService.js';
-import { Decimal } from 'decimal.js';
+import { Prisma } from '@prisma/client';
+const { Decimal } = Prisma;
 
 function makeRequest(options: http.RequestOptions, body?: any): Promise<{ status: number; data: any }> {
   return new Promise((resolve, reject) => {

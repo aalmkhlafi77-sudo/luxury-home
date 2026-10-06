@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useAppStore } from '../../../store/useAppStore';
 import { X, CreditCard, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { CurrencyAmount, formatNumber } from '../../../utils/formatters';
 
 interface Props {
   initialTenantNationalId?: string;
@@ -293,10 +294,16 @@ export const PaymentAllocationModal: React.FC<Props> = ({
             {/* Allocation Totals Summary */}
             <div className="p-3 bg-[#F7F3EB] rounded-2xl border border-[#E3DCCD] flex items-center justify-between text-xs">
               <div className="space-y-0.5 text-right">
-                <div>إجمالي المبلغ الموزع والمخصص: <strong className="text-[#282824]">{totalAllocated.toLocaleString('ar-SA')} ر.س</strong></div>
+                <div className="flex items-center gap-1">
+                  <span>إجمالي المبلغ الموزع والمخصص:</span>
+                  <div className="text-[#282824] font-bold">
+                    <CurrencyAmount amount={totalAllocated} />
+                  </div>
+                </div>
                 {unallocatedCredit > 0 && (
-                  <div className="text-indigo-800 text-[11px] font-bold">
-                    الرصيد الدائن الفائض (المحفوظ كائتمان): {unallocatedCredit.toLocaleString('ar-SA')} ر.س
+                  <div className="text-indigo-800 text-[11px] font-bold flex items-center gap-1">
+                    <span>الرصيد الدائن الفائض (المحفوظ كائتمان):</span>
+                    <CurrencyAmount amount={unallocatedCredit} />
                   </div>
                 )}
               </div>

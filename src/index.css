@@ -2,20 +2,26 @@
 
 @layer base {
   :root {
+    --site-header-height: 80px;
     --font-heading: 'Tajawal', -apple-system, BlinkMacSystemFont, sans-serif;
     --font-display: 'Noto Kufi Arabic', 'Tajawal', sans-serif;
     --font-body: 'Tajawal', 'Plus Jakarta Sans', -apple-system, sans-serif;
     --color-ivory-bg: #F7F3EB;
     --color-ivory-surface: #FFFCF6;
     --color-text-main: #282824;
-    --color-text-[#282824]: #282824;
     --color-text-muted: #68675F;
     --color-accent: #B69A68;
     --color-border: #E3DCCD;
   }
 
+  @media (max-width: 768px) {
+    :root {
+      --site-header-height: 68px;
+    }
+  }
+
   html, body {
-    overflow-x: hidden;
+    overflow-x: clip;
     max-width: 100vw;
     font-family: var(--font-body);
     background-color: var(--color-ivory-bg);
@@ -29,6 +35,22 @@
   * {
     box-sizing: border-box;
   }
+}
+
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  width: 100%;
+  height: var(--site-header-height);
+  min-height: var(--site-header-height);
+  box-sizing: border-box;
+  margin: 0;
+  padding-block: 0;
+  background: rgba(247, 243, 235, 0.96);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(80, 70, 55, 0.12);
 }
 
 /* Glassmorphism surfaces */

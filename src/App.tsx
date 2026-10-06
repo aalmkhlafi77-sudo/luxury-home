@@ -60,6 +60,7 @@ export default function App() {
   nextWeek.setDate(nextWeek.getDate() + 3);
   const defaultEnd = nextWeek.toISOString().slice(0, 10);
 
+  const [selectedCityId, setSelectedCityId] = useState<string>('all');
   const [selectedPropertyId, setSelectedPropertyId] = useState<string>('all');
   const [rentalType, setRentalType] = useState<'daily' | 'monthly' | 'yearly'>('daily');
   const [annualPaymentTerms, setAnnualPaymentTerms] = useState<'single' | 'semi_annual'>('single');
@@ -131,6 +132,7 @@ export default function App() {
     }
 
     const available = searchAvailableUnits({
+      cityId: selectedCityId !== 'all' ? selectedCityId : undefined,
       propertyId: selectedPropertyId,
       rentalType,
       startDate,
@@ -211,6 +213,7 @@ export default function App() {
       
       {/* 1. Glass Header */}
       <Header
+        className="sticky top-0 z-50 bg-[#F7F3EB] shadow-sm"
         activeSection={activeSection}
         onOpenClientPortal={() => setIsClientPortalOpen(true)}
         onOpenAdmin={() => setViewMode('admin')}
@@ -221,7 +224,7 @@ export default function App() {
       />
 
       {/* Main Public Website Sections */}
-      <main className="flex-1">
+      <main className="flex-1" style={{ paddingTop: 'var(--site-header-height)' }}>
         
         {/* 2. Hero Section */}
         <HeroSection
@@ -231,6 +234,8 @@ export default function App() {
 
         {/* 3. Floating Wide Booking Bar */}
         <FloatingBookingBar
+          selectedCityId={selectedCityId}
+          onCityChange={(cId) => setSelectedCityId(cId)}
           selectedPropertyId={selectedPropertyId}
           onPropertyChange={(id) => setSelectedPropertyId(id)}
           rentalType={rentalType}

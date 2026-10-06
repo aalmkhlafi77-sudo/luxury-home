@@ -1,8 +1,10 @@
 import React from 'react';
 import { useAppStore } from '../../store/useAppStore';
-import { Building2, Calendar, Users, Search, MoonStar, CalendarRange, ShieldCheck, CreditCard } from 'lucide-react';
+import { Building2, Calendar, Users, Search, MoonStar, CalendarRange, ShieldCheck, CreditCard, MapPin } from 'lucide-react';
 
 interface FloatingBookingBarProps {
+  selectedCityId?: string;
+  onCityChange?: (cityId: string) => void;
   selectedPropertyId: string;
   onPropertyChange: (propId: string) => void;
   rentalType: 'daily' | 'monthly' | 'yearly';
@@ -22,6 +24,8 @@ interface FloatingBookingBarProps {
 }
 
 export const FloatingBookingBar: React.FC<FloatingBookingBarProps> = ({
+  selectedCityId = 'all',
+  onCityChange,
   selectedPropertyId,
   onPropertyChange,
   rentalType,
@@ -40,6 +44,13 @@ export const FloatingBookingBar: React.FC<FloatingBookingBarProps> = ({
   availableCount,
 }) => {
   const { state } = useAppStore();
+
+  const filteredProperties = state.properties.filter(p => {
+    if (selectedCityId && selectedCityId !== 'all') {
+      return p.cityId === selectedCityId || p.city === selectedCityId;
+    }
+    return true;
+  });
 
   return (
     <div id="search_bar" className="relative z-30 max-w-6xl mx-auto px-3 sm:px-6 -mt-14 mb-16">
@@ -121,8 +132,33 @@ export const FloatingBookingBar: React.FC<FloatingBookingBarProps> = ({
         </div>
 
         {/* Input Matrix */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
           
+          {/* 0. City Selector */}
+          <div className="bg-[#FFFCF6] p-3 rounded-xl border border-[#E3DCCD]/80 hover:border-[#B69A68] transition-colors min-w-0">
+            <label className="text-xs font-semibold text-[#68675F] block mb-1">
+              المدينة
+            </label>
+            <div className="flex items-center gap-2">
+              <MapPin className="w-4 h-4 text-[#B69A68] shrink-0" />
+              <select
+                value={selectedCityId}
+                onChange={(e) => {
+                  if (onCityChange) onCityChange(e.target.value);
+                  onPropertyChange('all');
+                }}
+                className="w-full bg-transparent text-xs sm:text-sm font-medium text-[#282824] focus:outline-none cursor-pointer truncate"
+              >
+                <option value="all">جميع المدن ({state.cities?.length || 0})</option>
+                {state.cities.map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} {c.region ? `(${c.region.replace('منطقة ', '')})` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
           {/* 1. Property Selector */}
           <div className="bg-[#FFFCF6] p-3 rounded-xl border border-[#E3DCCD]/80 hover:border-[#B69A68] transition-colors min-w-0">
             <label className="text-xs font-semibold text-[#68675F] block mb-1">
@@ -135,9 +171,9 @@ export const FloatingBookingBar: React.FC<FloatingBookingBarProps> = ({
                 onChange={(e) => onPropertyChange(e.target.value)}
                 className="w-full bg-transparent text-xs sm:text-sm font-medium text-[#282824] focus:outline-none cursor-pointer truncate"
               >
-                <option value="all">كل المجمعات السكنية</option>
-                {state.properties.map(p => (
-                  <option key={p.id} value={p.id}>{p.name} ({p.district})</option>
+                <option value="all">كل المجمعات ({filteredProperties.length})</option>
+                {filteredProperties.map(p => (
+                  <option key={p.id} value={p.id}>{p.name.split(' - ')[1] || p.name} ({p.district})</option>
                 ))}
               </select>
             </div>
@@ -192,8 +228,8 @@ export const FloatingBookingBar: React.FC<FloatingBookingBarProps> = ({
                   >
                     <option value={1}>شهر واحد (إيجار عادي)</option>
                     <option value={2}>شهرين (سعر ميسر)</option>
-                    <option value={3}>٣ أشهر (شامل كافة الخدمات)</option>
-                    <option value={6}>٦ أشهر (خصم مالي ١٠٪)</option>
+                    <option value={3}>3 أشهر (شامل كافة الخدمات)</option>
+                    <option value={6}>6 أشهر (خصم مالي 10%)</option>
                   </select>
                 </div>
               </>
@@ -211,8 +247,8 @@ export const FloatingBookingBar: React.FC<FloatingBookingBarProps> = ({
                     onChange={(e) => onAnnualPaymentTermsChange && onAnnualPaymentTermsChange(e.target.value as any)}
                     className="w-full bg-transparent text-xs sm:text-sm font-medium text-[#282824] focus:outline-none cursor-pointer"
                   >
-                    <option value="single">دفعة سنوية واحدة (١٠٠٪ مقدم)</option>
-                    <option value="semi_annual">دفعتان (كل ٦ أشهر)</option>
+                    <option value="single">دفعة سنوية واحدة (100% مقدم)</option>
+                    <option value="semi_annual">دفعتان (كل 6 أشهر)</option>
                   </select>
                 </div>
               </>
@@ -234,9 +270,9 @@ export const FloatingBookingBar: React.FC<FloatingBookingBarProps> = ({
                 >
                   <option value={1}>نزيل واحد</option>
                   <option value={2}>نزيلين اثنين</option>
-                  <option value={3}>٣ ضيوف عوائل</option>
-                  <option value={4}>٤ ضيوف معاً</option>
-                  <option value={6}>٦ أشخاص كبار</option>
+                  <option value={3}>3 ضيوف عوائل</option>
+                  <option value={4}>4 ضيوف معاً</option>
+                  <option value={6}>6 أشخاص كبار</option>
                 </select>
               </div>
             </div>
@@ -247,7 +283,7 @@ export const FloatingBookingBar: React.FC<FloatingBookingBarProps> = ({
               className="h-full px-5 py-3.5 bg-[#B69A68] hover:bg-[#a68a58] text-[#FFFCF6] font-semibold text-xs sm:text-sm rounded-xl shadow-md transition-all duration-200 flex items-center justify-center gap-2 whitespace-nowrap shrink-0 cursor-pointer active:scale-95"
             >
               <Search className="w-4 h-4" />
-              <span>بحث سريع</span>
+              <span>{state.settings.typography?.search_bar?.search_btn?.text || 'بحث وتأكيد الإتاحة'}</span>
             </button>
           </div>
 

@@ -13,6 +13,7 @@ import {
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from './db.js';
 import crypto from 'crypto';
+import { initialCustomTypography } from '../data/initialData.js';
 
 // Safe serialization helper for Decimals & Dates in JSON API responses
 export function serializeDecimals<T>(obj: T): T {
@@ -30,9 +31,10 @@ export function serializeDecimals<T>(obj: T): T {
   return obj;
 }
 
-// User representation whitelist
+// User representation whitelist (Never exposes passwordHash)
 export function sanitizeUserOutput(user: any) {
   if (!user) return null;
+  const props = user.allowedProperties || user.assignedPropertyIds || ['all'];
   return {
     id: user.id,
     username: user.username,
@@ -40,15 +42,274 @@ export function sanitizeUserOutput(user: any) {
     name: user.name,
     phone: user.phone || null,
     role: user.role,
-    allowedProperties: user.allowedProperties || ['all'],
+    allowedProperties: props,
+    assignedPropertyIds: props,
     isActive: Boolean(user.isActive),
-    createdAt: user.createdAt instanceof Date ? user.createdAt.toISOString() : user.createdAt
+    mustChangePassword: Boolean(user.mustChangePassword),
+    createdAt: user.createdAt instanceof Date ? user.createdAt.toISOString() : user.createdAt,
+    updatedAt: user.updatedAt instanceof Date ? user.updatedAt.toISOString() : user.updatedAt
   };
+}
+
+// --- In-Memory Fallback State (when DATABASE_URL is not present) ---
+const memoryUsersMap = new Map<string, any>();
+const memoryCitiesMap = new Map<string, any>();
+let memoryCompanySettings: any = null;
+
+// Initialize default in-memory cities
+const defaultCities = [
+  { id: 'city-riyadh', name: 'الرياض', nameEn: 'Riyadh', region: 'منطقة الرياض', country: 'المملكة العربية السعودية', status: 'active', displayOrder: 1 },
+  { id: 'city-dammam', name: 'الدمام', nameEn: 'Dammam', region: 'المنطقة الشرقية', country: 'المملكة العربية السعودية', status: 'active', displayOrder: 2 },
+  { id: 'city-jeddah', name: 'جدة', nameEn: 'Jeddah', region: 'منطقة مكة المكرمة', country: 'المملكة العربية السعودية', status: 'active', displayOrder: 3 },
+];
+for (const c of defaultCities) {
+  memoryCitiesMap.set(c.id, { ...c });
+}
+
+// Initialize default in-memory super admin
+const defaultAdmin = {
+  id: 'user-super-admin',
+  username: 'admin',
+  email: 'admin@luxuryhome.sa',
+  passwordHash: '$2a$10$w09v91xK...mock',
+  name: 'مدير النظام الرئيسي',
+  phone: '0501112233',
+  role: 'SUPER_ADMIN',
+  allowedProperties: ['all'],
+  isActive: true,
+  mustChangePassword: false,
+  tokenVersion: 1,
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString()
+};
+memoryUsersMap.set(defaultAdmin.id, defaultAdmin);
+
+// --- User & RBAC Management Repository ---
+export async function getAllUsersFromDb() {
+  if (!process.env.DATABASE_URL) {
+    return Array.from(memoryUsersMap.values()).map(sanitizeUserOutput);
+  }
+  try {
+    const users = await prisma.user.findMany({
+      orderBy: { createdAt: 'desc' }
+    });
+    return users.map(sanitizeUserOutput);
+  } catch (e) {
+    return Array.from(memoryUsersMap.values()).map(sanitizeUserOutput);
+  }
+}
+
+export async function getUserByIdFromDb(id: string) {
+  if (!process.env.DATABASE_URL) {
+    const u = memoryUsersMap.get(id);
+    return u || null;
+  }
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id }
+    });
+    return user || memoryUsersMap.get(id) || null;
+  } catch (e) {
+    return memoryUsersMap.get(id) || null;
+  }
+}
+
+export async function countActiveSuperAdminsInDb(): Promise<number> {
+  if (!process.env.DATABASE_URL) {
+    return Array.from(memoryUsersMap.values()).filter(u => u.role === 'SUPER_ADMIN' && u.isActive).length;
+  }
+  try {
+    return await prisma.user.count({
+      where: {
+        role: 'SUPER_ADMIN',
+        isActive: true
+      }
+    });
+  } catch (e) {
+    return Array.from(memoryUsersMap.values()).filter(u => u.role === 'SUPER_ADMIN' && u.isActive).length;
+  }
+}
+
+import bcrypt from 'bcryptjs';
+
+export async function createUserInDb(data: {
+  username: string;
+  email: string;
+  passwordHash?: string;
+  password?: string;
+  name: string;
+  phone?: string;
+  role: Role;
+  allowedProperties?: string[];
+  assignedPropertyIds?: string[];
+  isActive?: boolean;
+  mustChangePassword?: boolean;
+}) {
+  const allowedProps = data.allowedProperties || data.assignedPropertyIds || ['all'];
+  const passHash = data.passwordHash || (data.password ? bcrypt.hashSync(data.password, 10) : '');
+
+  if (!process.env.DATABASE_URL) {
+    const newUser = {
+      id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      username: data.username,
+      email: data.email,
+      passwordHash: passHash,
+      name: data.name,
+      phone: data.phone || null,
+      role: data.role || 'PROPERTY_MANAGER',
+      allowedProperties: allowedProps,
+      isActive: data.isActive !== undefined ? Boolean(data.isActive) : true,
+      mustChangePassword: Boolean(data.mustChangePassword),
+      tokenVersion: 1,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    memoryUsersMap.set(newUser.id, newUser);
+    return {
+      ...sanitizeUserOutput(newUser),
+      passwordHash: passHash
+    };
+  }
+  const created = await prisma.user.create({
+    data: {
+      username: data.username,
+      email: data.email,
+      passwordHash: passHash,
+      name: data.name,
+      phone: data.phone || null,
+      role: data.role || 'PROPERTY_MANAGER',
+      allowedProperties: allowedProps,
+      isActive: data.isActive !== undefined ? Boolean(data.isActive) : true,
+      mustChangePassword: Boolean(data.mustChangePassword)
+    }
+  });
+  return {
+    ...sanitizeUserOutput(created),
+    passwordHash: passHash
+  };
+}
+
+export async function updateUserInDb(id: string, data: {
+  name?: string;
+  email?: string;
+  phone?: string;
+  role?: Role;
+  allowedProperties?: string[];
+  assignedPropertyIds?: string[];
+  isActive?: boolean;
+  mustChangePassword?: boolean;
+}) {
+  const allowedProps = data.allowedProperties || data.assignedPropertyIds;
+  if (!process.env.DATABASE_URL) {
+    const u = memoryUsersMap.get(id);
+    if (!u) return null;
+    const updated = {
+      ...u,
+      ...(data.name !== undefined ? { name: data.name } : {}),
+      ...(data.email !== undefined ? { email: data.email } : {}),
+      ...(data.phone !== undefined ? { phone: data.phone } : {}),
+      ...(data.role !== undefined ? { role: data.role } : {}),
+      ...(allowedProps !== undefined ? { allowedProperties: allowedProps } : {}),
+      ...(data.isActive !== undefined ? { isActive: Boolean(data.isActive) } : {}),
+      ...(data.mustChangePassword !== undefined ? { mustChangePassword: Boolean(data.mustChangePassword) } : {}),
+      updatedAt: new Date().toISOString()
+    };
+    memoryUsersMap.set(id, updated);
+    return sanitizeUserOutput(updated);
+  }
+  const updated = await prisma.user.update({
+    where: { id },
+    data: {
+      ...(data.name !== undefined ? { name: data.name } : {}),
+      ...(data.email !== undefined ? { email: data.email } : {}),
+      ...(data.phone !== undefined ? { phone: data.phone } : {}),
+      ...(data.role !== undefined ? { role: data.role } : {}),
+      ...(allowedProps !== undefined ? { allowedProperties: allowedProps } : {}),
+      ...(data.isActive !== undefined ? { isActive: Boolean(data.isActive) } : {}),
+      ...(data.mustChangePassword !== undefined ? { mustChangePassword: Boolean(data.mustChangePassword) } : {})
+    }
+  });
+  return sanitizeUserOutput(updated);
+}
+
+export async function resetUserPasswordInDb(id: string, newPasswordHash: string) {
+  if (!process.env.DATABASE_URL) {
+    const u = memoryUsersMap.get(id);
+    if (!u) return null;
+    u.passwordHash = newPasswordHash;
+    u.mustChangePassword = true;
+    u.tokenVersion = (u.tokenVersion || 1) + 1;
+    u.updatedAt = new Date().toISOString();
+    return sanitizeUserOutput(u);
+  }
+  const updated = await prisma.user.update({
+    where: { id },
+    data: {
+      passwordHash: newPasswordHash,
+      mustChangePassword: true,
+      tokenVersion: { increment: 1 }
+    }
+  });
+  return sanitizeUserOutput(updated);
+}
+
+export async function changeUserPasswordInDb(id: string, newPasswordHash: string) {
+  if (!process.env.DATABASE_URL) {
+    const u = memoryUsersMap.get(id);
+    if (!u) return null;
+    u.passwordHash = newPasswordHash;
+    u.mustChangePassword = false;
+    u.tokenVersion = (u.tokenVersion || 1) + 1;
+    u.updatedAt = new Date().toISOString();
+    return sanitizeUserOutput(u);
+  }
+  const updated = await prisma.user.update({
+    where: { id },
+    data: {
+      passwordHash: newPasswordHash,
+      mustChangePassword: false,
+      tokenVersion: { increment: 1 }
+    }
+  });
+  return sanitizeUserOutput(updated);
+}
+
+export async function deleteUserInDb(id: string) {
+  if (!process.env.DATABASE_URL) {
+    return memoryUsersMap.delete(id);
+  }
+  try {
+    await prisma.user.delete({
+      where: { id }
+    });
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 // --- Company Settings Repository ---
 export async function getCompanySettingsFromDb() {
-  if (!process.env.DATABASE_URL) return null;
+  if (!process.env.DATABASE_URL) {
+    if (!memoryCompanySettings) {
+      memoryCompanySettings = {
+        id: 'default',
+        companyName: 'Luxury home منزل الفخامة',
+        companyNameEn: 'Luxury Home',
+        tagline: 'تجربة سكنية فاخرة تدمج بين خصوصية المنزل وخدمات الضيافة الراقية',
+        phone: '+966 11 000 0000',
+        whatsapp: '+966 50 000 0000',
+        email: 'vip@luxuryhome.sa',
+        crNumber: '1010000000',
+        taxNumber: '300000000000003',
+        nationalAddress: 'الرياض - المملكة العربية السعودية',
+        checkInTime: '15:00',
+        checkOutTime: '12:00',
+        typography: JSON.parse(JSON.stringify(initialCustomTypography))
+      };
+    }
+    return memoryCompanySettings;
+  }
   try {
     let settings = await prisma.companySettings.findUnique({
       where: { id: 'default' }
@@ -73,12 +334,19 @@ export async function getCompanySettingsFromDb() {
     }
     return serializeDecimals(settings);
   } catch (e) {
-    return null;
+    return memoryCompanySettings;
   }
 }
 
 export async function updateCompanySettingsInDb(data: any) {
-  if (!process.env.DATABASE_URL) return null;
+  if (!process.env.DATABASE_URL) {
+    memoryCompanySettings = {
+      ...(memoryCompanySettings || {}),
+      ...data,
+      id: 'default'
+    };
+    return memoryCompanySettings;
+  }
   const updated = await prisma.companySettings.upsert({
     where: { id: 'default' },
     update: {
@@ -96,7 +364,8 @@ export async function updateCompanySettingsInDb(data: any) {
       checkInTime: data.checkInTime,
       checkOutTime: data.checkOutTime,
       navigation: data.navigation,
-      themeConfig: data.themeConfig
+      themeConfig: data.themeConfig,
+      typography: data.typography
     },
     create: {
       id: 'default',
@@ -127,6 +396,7 @@ export async function createPropertyInDb(data: {
   code: string;
   address: string;
   city?: string;
+  cityId?: string;
   district: string;
   floorsCount?: number;
   unitsCount?: number;
@@ -144,6 +414,7 @@ export async function createPropertyInDb(data: {
       code: data.code,
       address: data.address,
       city: data.city || 'الرياض',
+      cityId: data.cityId || null,
       district: data.district,
       floorsCount: fCount,
       unitsCount: Number(data.unitsCount) || 0,
@@ -206,6 +477,7 @@ export async function updatePropertyInDb(id: string, data: any) {
   if (data.code !== undefined) updateData.code = data.code;
   if (data.address !== undefined) updateData.address = data.address;
   if (data.city !== undefined) updateData.city = data.city;
+  if (data.cityId !== undefined) updateData.cityId = data.cityId || null;
   if (data.district !== undefined) updateData.district = data.district;
   if (data.floorsCount !== undefined) updateData.floorsCount = Number(data.floorsCount);
   if (data.unitsCount !== undefined) updateData.unitsCount = Number(data.unitsCount);
@@ -1252,6 +1524,38 @@ export async function importDataIntoDb(payload: any) {
       });
     }
 
+    // 1.5 Cities (Ensure default & imported cities exist before Properties)
+    const defaultSeedCities = [
+      { id: 'city-riyadh', name: 'الرياض', nameEn: 'Riyadh', region: 'منطقة الرياض', country: 'المملكة العربية السعودية', status: 'active', displayOrder: 1 },
+      { id: 'city-dammam', name: 'الدمام', nameEn: 'Dammam', region: 'المنطقة الشرقية', country: 'المملكة العربية السعودية', status: 'active', displayOrder: 2 },
+      { id: 'city-jeddah', name: 'جدة', nameEn: 'Jeddah', region: 'منطقة مكة المكرمة', country: 'المملكة العربية السعودية', status: 'active', displayOrder: 3 },
+    ];
+    const incomingCities = Array.isArray(payload.cities) && payload.cities.length > 0 ? payload.cities : defaultSeedCities;
+    for (const c of incomingCities) {
+      if (!c?.name) continue;
+      const existingCity = await tx.city.findFirst({
+        where: {
+          OR: [
+            ...(c.id ? [{ id: c.id }] : []),
+            { name: String(c.name).trim(), country: c.country || 'المملكة العربية السعودية' }
+          ]
+        }
+      });
+      if (!existingCity) {
+        await tx.city.create({
+          data: {
+            id: c.id || `city_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            name: String(c.name).trim(),
+            nameEn: c.nameEn || null,
+            region: c.region || null,
+            country: c.country || 'المملكة العربية السعودية',
+            status: c.status || 'active',
+            displayOrder: Number(c.displayOrder) || 0
+          }
+        });
+      }
+    }
+
     // 2. Properties
     for (const prop of properties) {
       const existing = await tx.property.findFirst({
@@ -1261,13 +1565,29 @@ export async function importDataIntoDb(payload: any) {
         results.properties.duplicatesSkipped++;
         continue;
       }
+      const propCityName = String(prop.city || 'الرياض').trim();
+      let cityRec = prop.cityId ? await tx.city.findUnique({ where: { id: prop.cityId } }) : null;
+      if (!cityRec) {
+        cityRec = await tx.city.findFirst({ where: { name: propCityName } });
+      }
+      if (!cityRec) {
+        cityRec = await tx.city.create({
+          data: {
+            name: propCityName,
+            country: 'المملكة العربية السعودية',
+            status: 'active',
+            displayOrder: 10
+          }
+        });
+      }
       await tx.property.create({
         data: {
           id: prop.id,
           name: prop.name || 'مبنى سكني',
           code: prop.code || prop.id || `P-${Date.now()}`,
           address: prop.address || 'الرياض',
-          city: prop.city || 'الرياض',
+          city: cityRec.name,
+          cityId: cityRec.id,
           district: prop.district || 'حي النرجس',
           floorsCount: Number(prop.floorsCount) || 1,
           unitsCount: Number(prop.unitsCount) || 0,
@@ -1517,7 +1837,8 @@ export async function exportFullDatabase() {
     contentSections,
     documentRecords,
     idempotencyRecords,
-    auditLogs
+    auditLogs,
+    cities
   ] = await Promise.all([
     prisma.user.findMany(),
     prisma.companySettings.findUnique({ where: { id: 'default' } }),
@@ -1542,7 +1863,8 @@ export async function exportFullDatabase() {
     prisma.contentSection.findMany(),
     prisma.documentRecord.findMany(),
     prisma.idempotencyRecord.findMany(),
-    prisma.auditLog.findMany({ orderBy: { createdAt: 'desc' } }) // Complete audit logs (no take limit)
+    prisma.auditLog.findMany({ orderBy: { createdAt: 'desc' } }), // Complete audit logs (no take limit)
+    prisma.city.findMany({ orderBy: { displayOrder: 'asc' } })
   ]);
 
   return serializeDecimals({
@@ -1553,6 +1875,7 @@ export async function exportFullDatabase() {
     },
     users,
     settings,
+    cities,
     properties,
     floors,
     amenities,
@@ -1937,6 +2260,7 @@ export async function restoreFullDatabaseInDb(backupData: any) {
     await tx.unit.deleteMany();
     await tx.floor.deleteMany();
     await tx.property.deleteMany();
+    await tx.city.deleteMany();
     await tx.amenity.deleteMany();
     await tx.contentSection.deleteMany();
     await tx.auditLog.deleteMany();
@@ -2007,16 +2331,61 @@ export async function restoreFullDatabaseInDb(backupData: any) {
       });
     }
 
+    // 2.25 Cities (Restored before Properties to satisfy FK relation)
+    const restoredCitiesMap = new Map<string, { id: string; name: string }>();
+    const defaultRestoreCities = [
+      { id: 'city-riyadh', name: 'الرياض', nameEn: 'Riyadh', region: 'منطقة الرياض', country: 'المملكة العربية السعودية', status: 'active', displayOrder: 1 },
+      { id: 'city-dammam', name: 'الدمام', nameEn: 'Dammam', region: 'المنطقة الشرقية', country: 'المملكة العربية السعودية', status: 'active', displayOrder: 2 },
+      { id: 'city-jeddah', name: 'جدة', nameEn: 'Jeddah', region: 'منطقة مكة المكرمة', country: 'المملكة العربية السعودية', status: 'active', displayOrder: 3 },
+    ];
+    const citiesToRestore = Array.isArray(backupData.cities) && backupData.cities.length > 0
+      ? backupData.cities
+      : defaultRestoreCities;
+
+    for (const c of citiesToRestore) {
+      const createdCity = await tx.city.create({
+        data: {
+          id: c.id,
+          name: c.name,
+          nameEn: c.nameEn ?? null,
+          region: c.region ?? null,
+          country: c.country || "المملكة العربية السعودية",
+          status: c.status || "active",
+          displayOrder: Number(c.displayOrder) || 0,
+          createdAt: c.createdAt ? new Date(c.createdAt) : new Date()
+        }
+      });
+      restoredCitiesMap.set(createdCity.id, { id: createdCity.id, name: createdCity.name });
+      restoredCitiesMap.set(createdCity.name.trim(), { id: createdCity.id, name: createdCity.name });
+    }
+
     // 2.3 Properties
     if (Array.isArray(backupData.properties)) {
       for (const p of backupData.properties) {
+        const propCityText = String(p.city || 'الرياض').trim();
+        let matchedCity = (p.cityId && restoredCitiesMap.get(p.cityId)) || restoredCitiesMap.get(propCityText);
+        if (!matchedCity) {
+          const newCity = await tx.city.create({
+            data: {
+              id: p.cityId || `city_migrated_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              name: propCityText,
+              country: "المملكة العربية السعودية",
+              status: "active",
+              displayOrder: 10
+            }
+          });
+          matchedCity = { id: newCity.id, name: newCity.name };
+          restoredCitiesMap.set(newCity.id, matchedCity);
+          restoredCitiesMap.set(newCity.name.trim(), matchedCity);
+        }
         await tx.property.create({
           data: {
             id: p.id,
             name: p.name,
             code: p.code,
             address: p.address,
-            city: p.city || 'الرياض',
+            city: matchedCity.name,
+            cityId: matchedCity.id,
             district: p.district,
             floorsCount: p.floorsCount !== undefined ? Number(p.floorsCount) : 1,
             unitsCount: p.unitsCount !== undefined ? Number(p.unitsCount) : 0,
@@ -2528,7 +2897,127 @@ export async function restoreFullDatabaseInDb(backupData: any) {
       expensePaymentsRestored: backupData.expensePayments?.length || 0,
       documentRecordsRestored: backupData.documentRecords?.length || 0,
       idempotencyRecordsRestored: backupData.idempotencyRecords?.length || 0,
-      auditLogsRestored: backupData.auditLogs?.length || 0
+      auditLogsRestored: backupData.auditLogs?.length || 0,
+      citiesRestored: citiesToRestore.length
     };
   });
+}
+
+// --- Cities Repository ---
+export async function getCitiesFromDb() {
+  if (!process.env.DATABASE_URL) {
+    return Array.from(memoryCitiesMap.values());
+  }
+  try {
+    let cities = await prisma.city.findMany({
+      orderBy: { displayOrder: 'asc' }
+    });
+    if (cities.length === 0) {
+      const defaults = [
+        { id: 'city-riyadh', name: 'الرياض', nameEn: 'Riyadh', region: 'منطقة الرياض', country: 'المملكة العربية السعودية', status: 'active', displayOrder: 1 },
+        { id: 'city-dammam', name: 'الدمام', nameEn: 'Dammam', region: 'المنطقة الشرقية', country: 'المملكة العربية السعودية', status: 'active', displayOrder: 2 },
+        { id: 'city-jeddah', name: 'جدة', nameEn: 'Jeddah', region: 'منطقة مكة المكرمة', country: 'المملكة العربية السعودية', status: 'active', displayOrder: 3 },
+      ];
+      for (const d of defaults) {
+        await prisma.city.upsert({
+          where: { id: d.id },
+          update: {},
+          create: d
+        });
+      }
+      cities = await prisma.city.findMany({ orderBy: { displayOrder: 'asc' } });
+    }
+    return serializeDecimals(cities);
+  } catch (e) {
+    return Array.from(memoryCitiesMap.values());
+  }
+}
+
+export async function createCityInDb(data: {
+  name: string;
+  nameEn?: string;
+  region?: string;
+  country?: string;
+  status?: string;
+  displayOrder?: number;
+}) {
+  if (!process.env.DATABASE_URL) {
+    const newCity = {
+      id: `city-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      name: data.name,
+      nameEn: data.nameEn || null,
+      region: data.region || null,
+      country: data.country || 'المملكة العربية السعودية',
+      status: data.status || 'active',
+      displayOrder: Number(data.displayOrder) || 0
+    };
+    memoryCitiesMap.set(newCity.id, newCity);
+    return newCity;
+  }
+  const created = await prisma.city.create({
+    data: {
+      name: data.name,
+      nameEn: data.nameEn || null,
+      region: data.region || null,
+      country: data.country || "المملكة العربية السعودية",
+      status: data.status || "active",
+      displayOrder: Number(data.displayOrder) || 0
+    }
+  });
+  return serializeDecimals(created);
+}
+
+export async function updateCityInDb(id: string, data: {
+  name?: string;
+  nameEn?: string;
+  region?: string;
+  country?: string;
+  status?: string;
+  displayOrder?: number;
+}) {
+  if (!process.env.DATABASE_URL) {
+    const c = memoryCitiesMap.get(id);
+    if (!c) return null;
+    const updated = {
+      ...c,
+      ...(data.name !== undefined ? { name: data.name } : {}),
+      ...(data.nameEn !== undefined ? { nameEn: data.nameEn } : {}),
+      ...(data.region !== undefined ? { region: data.region } : {}),
+      ...(data.country !== undefined ? { country: data.country } : {}),
+      ...(data.status !== undefined ? { status: data.status } : {}),
+      ...(data.displayOrder !== undefined ? { displayOrder: Number(data.displayOrder) } : {})
+    };
+    memoryCitiesMap.set(id, updated);
+    return updated;
+  }
+  const updateData: any = {};
+  if (data.name !== undefined) updateData.name = data.name;
+  if (data.nameEn !== undefined) updateData.nameEn = data.nameEn;
+  if (data.region !== undefined) updateData.region = data.region;
+  if (data.country !== undefined) updateData.country = data.country;
+  if (data.status !== undefined) updateData.status = data.status;
+  if (data.displayOrder !== undefined) updateData.displayOrder = Number(data.displayOrder);
+
+  const updated = await prisma.city.update({
+    where: { id },
+    data: updateData
+  });
+  return serializeDecimals(updated);
+}
+
+export async function deleteCityInDb(id: string) {
+  if (!process.env.DATABASE_URL) {
+    return memoryCitiesMap.delete(id);
+  }
+  const propertiesCount = await prisma.property.count({
+    where: { cityId: id }
+  });
+  if (propertiesCount > 0) {
+    throw new Error('لا يمكن حذف المدينة نظراً لوجود مبانٍ مرتبطة بها. يرجى نقل المباني أو تعطيل المدينة بدلاً من الحذف.');
+  }
+
+  await prisma.city.delete({
+    where: { id }
+  });
+  return true;
 }

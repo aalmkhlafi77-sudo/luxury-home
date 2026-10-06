@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { Unit } from '../../types';
 import { ImageWithFallback } from '../common/ImageWithFallback';
+import { formatNumber, CurrencyAmount } from '../../utils/formatters';
 import {
   Users,
   Maximize2,
@@ -9,7 +10,8 @@ import {
   Bath,
   KeyRound,
   CalendarCheck,
-  Sparkles
+  Sparkles,
+  MapPin
 } from 'lucide-react';
 
 interface FeaturedUnitsCarouselProps {
@@ -112,6 +114,7 @@ export const FeaturedUnitsCarousel: React.FC<FeaturedUnitsCarouselProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
           {displayList.map((unit) => {
             const prop = state.properties.find(p => p.id === unit.propertyId);
+            const cityName = state.cities.find(c => c.id === prop?.cityId)?.name || prop?.city || 'الرياض';
             const coverMedia = unit.media.find(m => m.isCover)?.url || unit.media[0]?.url;
             return (
               <div
@@ -129,7 +132,10 @@ export const FeaturedUnitsCarousel: React.FC<FeaturedUnitsCarouselProps> = ({
                   <div className="absolute inset-0 bg-gradient-to-t from-[#282824]/60 via-transparent to-transparent" />
                   
                   {/* Property & Type Badges (unboxed, clean typography) */}
-                  <div className="absolute top-3 right-3 flex items-center gap-1.5">
+                  <div className="absolute top-3 right-3 flex items-center gap-1.5 flex-wrap">
+                    <span className="px-2.5 py-1 rounded bg-[#B69A68] backdrop-blur-md text-[11px] font-bold text-white shadow-xs">
+                      {cityName || 'الرياض'}
+                    </span>
                     <span className="px-2.5 py-1 rounded bg-[#282824]/80 backdrop-blur-md text-[11px] font-medium text-white">
                       {prop?.name.split(' - ')[1] || 'منزل الفخامة'}
                     </span>
@@ -139,7 +145,7 @@ export const FeaturedUnitsCarousel: React.FC<FeaturedUnitsCarouselProps> = ({
                   </div>
                   {/* Unit Number Badge */}
                   <div className="absolute bottom-3 right-3">
-                    <span className="px-2.5 py-0.5 rounded bg-[#B69A68] text-white text-xs font-bold tracking-wider">
+                    <span className="px-2.5 py-0.5 rounded bg-[#282824] text-white text-xs font-bold tracking-wider border border-white/20">
                       شقة #{unit.unitNumber}
                     </span>
                   </div>
@@ -148,6 +154,10 @@ export const FeaturedUnitsCarousel: React.FC<FeaturedUnitsCarouselProps> = ({
                 {/* Body Content */}
                 <div className="p-5 flex-1 flex flex-col justify-between space-y-4">
                   <div>
+                    <div className="flex items-center gap-1 text-xs text-[#B69A68] font-semibold mb-1">
+                      <MapPin className="w-3.5 h-3.5 shrink-0" />
+                      <span>{cityName} · {prop?.district}</span>
+                    </div>
                     <h3 className="text-lg font-bold text-[#282824] leading-snug line-clamp-1 group-hover:text-[#B69A68] transition-colors">
                       {unit.title}
                     </h3>
@@ -177,36 +187,36 @@ export const FeaturedUnitsCarousel: React.FC<FeaturedUnitsCarouselProps> = ({
                     <div className="flex items-baseline justify-between mb-4">
                       <div>
                         {rentalType === 'daily' && (
-                          <>
-                            <span className="text-xl font-bold text-[#282824] tabular-nums">
-                              {unit.dailyRate}
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xl font-bold text-[#282824]">
+                              <CurrencyAmount amount={unit.dailyRate} />
                             </span>
-                            <span className="text-xs font-normal text-[#68675F] mr-1">
-                              {state.settings.currencySymbol} / الليلة
+                            <span className="text-xs font-normal text-[#68675F]">
+                              / الليلة
                             </span>
-                          </>
+                          </div>
                         )}
 
                         {rentalType === 'monthly' && (
-                          <>
-                            <span className="text-xl font-bold text-[#282824] tabular-nums">
-                              {unit.monthlyRate.toLocaleString('ar-SA')}
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xl font-bold text-[#282824]">
+                              <CurrencyAmount amount={unit.monthlyRate} />
                             </span>
-                            <span className="text-xs font-normal text-[#68675F] mr-1">
-                              {state.settings.currencySymbol} / الشهر
+                            <span className="text-xs font-normal text-[#68675F]">
+                              / الشهر
                             </span>
-                          </>
+                          </div>
                         )}
 
                         {rentalType === 'yearly' && (
-                          <>
-                            <span className="text-xl font-bold text-[#282824] tabular-nums">
-                              {(unit.yearlyRate || (unit.monthlyRate * 10)).toLocaleString('ar-SA')}
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xl font-bold text-[#282824]">
+                              <CurrencyAmount amount={unit.yearlyRate || (unit.monthlyRate * 10)} />
                             </span>
-                            <span className="text-xs font-normal text-[#68675F] mr-1">
-                              {state.settings.currencySymbol} / السنة
+                            <span className="text-xs font-normal text-[#68675F]">
+                              / السنة
                             </span>
-                          </>
+                          </div>
                         )}
                       </div>
                       <span className="text-[11px] text-[#68675F]">

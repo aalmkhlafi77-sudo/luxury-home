@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAppStore } from '../../store/useAppStore';
-import { Property, Unit, ParkingSpot } from '../../types';
+import { Property, Unit, ParkingSpot, City } from '../../types';
 import { UnitEditorModal } from './UnitEditorModal';
 import { ImageWithFallback } from '../common/ImageWithFallback';
 import {
@@ -21,7 +21,10 @@ import {
   Bath,
   ArrowRight,
   SlidersHorizontal,
-  X
+  X,
+  Globe,
+  Check,
+  Power
 } from 'lucide-react';
 
 export const BuildingManager: React.FC = () => {
@@ -36,11 +39,15 @@ export const BuildingManager: React.FC = () => {
     archiveUnit,
     createParkingSpot,
     deleteParkingSpot,
-    unassignParking
+    unassignParking,
+    createCity,
+    updateCity,
+    deleteCity
   } = useAppStore();
 
+  const [selectedCityFilter, setSelectedCityFilter] = useState<string>('all');
   const [selectedPropertyId, setSelectedPropertyId] = useState<string>(state.properties[0]?.id || '');
-  const [activeTab, setActiveTab] = useState<'general' | 'floors_units' | 'parking' | 'facilities' | 'media'>('floors_units');
+  const [activeTab, setActiveTab] = useState<'general' | 'floors_units' | 'parking' | 'facilities' | 'media' | 'cities'>('floors_units');
 
   // Modal triggers
   const [isCreatingBuilding, setIsCreatingBuilding] = useState(false);
@@ -51,12 +58,30 @@ export const BuildingManager: React.FC = () => {
   const [isAddingParking, setIsAddingParking] = useState(false);
   const [isAddingFloor, setIsAddingFloor] = useState(false);
 
+  // City Management Modals & Forms State
+  const [isAddingCity, setIsAddingCity] = useState(false);
+  const [editingCity, setEditingCity] = useState<City | null>(null);
+  const [newCityForm, setNewCityForm] = useState({
+    name: '',
+    nameEn: '',
+    region: '',
+    country: 'المملكة العربية السعودية',
+    status: 'active' as const,
+    displayOrder: 1,
+  });
+
   // Feedback
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
+  // Filtered properties based on selected city
+  const filteredProperties = state.properties.filter(p => {
+    if (selectedCityFilter === 'all') return true;
+    return p.cityId === selectedCityFilter || p.city === selectedCityFilter;
+  });
+
   // Selected building object
-  const currentProperty = state.properties.find(p => p.id === selectedPropertyId) || state.properties[0];
+  const currentProperty = state.properties.find(p => p.id === selectedPropertyId) || filteredProperties[0] || state.properties[0];
 
   // Dynamically calculated metrics (NOT hardcoded)
   const actualUnits = state.units.filter(u => u.propertyId === currentProperty?.id && u.publicationStatus !== 'archived');
@@ -70,7 +95,8 @@ export const BuildingManager: React.FC = () => {
     identifierCode: '',
     description: '',
     address: '',
-    city: 'الرياض',
+    cityId: state.cities[0]?.id || '',
+    city: state.cities[0]?.name || 'الرياض',
     district: '',
     latitude: 24.7136,
     longitude: 46.6753,
@@ -82,6 +108,115 @@ export const BuildingManager: React.FC = () => {
     stairsCount: 1,
     status: 'published' as const,
   });
+
+  // City Management Handlers
+  const handleCreateCitySubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg(null);
+    if (!newCityForm.name.trim()) {
+      setErrorMsg('يرجى إدخال اسم المدينة باللغة العربية.');
+      return;
+    }
+
+    // Client-side duplicate check
+    const isDuplicate = state.cities.some(
+      c => c.name.trim().toLowerCase() === newCityForm.name.trim().toLowerCase() &&
+           (c.region || '').trim().toLowerCase() === (newCityForm.region || '').trim().toLowerCase() &&
+           c.country.trim().toLowerCase() === (newCityForm.country || 'المملكة العربية السعودية').trim().toLowerCase()
+    );
+
+    if (isDuplicate) {
+      setErrorMsg(`المدينة "${newCityForm.name}" مسجلة مسبقاً ضمن نفس المنطقة الإدارية والدولة.`);
+      return;
+    }
+
+    try {
+      const created = await createCity({
+        name: newCityForm.name.trim(),
+        nameEn: newCityForm.nameEn.trim() || undefined,
+        region: newCityForm.region.trim() || undefined,
+        country: newCityForm.country.trim() || 'المملكة العربية السعودية',
+        status: newCityForm.status,
+        displayOrder: Number(newCityForm.displayOrder) || (state.cities.length + 1),
+      });
+
+      setIsAddingCity(false);
+      setNewCityForm({
+        name: '',
+        nameEn: '',
+        region: '',
+        country: 'المملكة العربية السعودية',
+        status: 'active',
+        displayOrder: state.cities.length + 2,
+      });
+      setSuccessMsg(`تم اعتماد وإضافة مدينة ${created.name} إلى سجل المدن المعتمدة بنجاح.`);
+      setTimeout(() => setSuccessMsg(null), 3500);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'فشل حفظ بيانات المدينة.');
+    }
+  };
+
+  const handleUpdateCitySubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingCity) return;
+    setErrorMsg(null);
+
+    try {
+      const updated = await updateCity(editingCity.id, {
+        name: editingCity.name.trim(),
+        nameEn: editingCity.nameEn?.trim() || undefined,
+        region: editingCity.region?.trim() || undefined,
+        country: editingCity.country?.trim() || 'المملكة العربية السعودية',
+        status: editingCity.status,
+        displayOrder: Number(editingCity.displayOrder) || 0,
+      });
+
+      setEditingCity(null);
+      setSuccessMsg(`تم تحديث بيانات مدينة ${updated.name} بنجاح.`);
+      setTimeout(() => setSuccessMsg(null), 3500);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'فشل تحديث بيانات المدينة.');
+    }
+  };
+
+  const handleToggleCityStatus = async (city: City) => {
+    setErrorMsg(null);
+    const newStatus = city.status === 'active' ? 'inactive' : 'active';
+    try {
+      await updateCity(city.id, { status: newStatus });
+      setSuccessMsg(`تم تغيير حالة مدينة ${city.name} إلى ${newStatus === 'active' ? 'نشطة معتمدة' : 'معطلة'} بنجاح.`);
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'فشل تغيير حالة المدينة.');
+    }
+  };
+
+  const handleDeleteCity = async (city: City) => {
+    setErrorMsg(null);
+    // Strict Validation: Prevent deletion of a city linked to properties
+    const linkedProperties = state.properties.filter(
+      p => p.cityId === city.id || p.city === city.name
+    );
+
+    if (linkedProperties.length > 0) {
+      setErrorMsg(
+        `لا يمكن حذف مدينة "${city.name}" لأنها مرتبطة بـ (${linkedProperties.length}) مبانٍ سكنية نشطة (${linkedProperties.map(p => p.name).slice(0, 2).join('، ')}). يمكنك تعطيل المدينة بدلاً من حذفها أو إعادة تعيين المباني لمدينة أخرى أولاً.`
+      );
+      return;
+    }
+
+    if (!confirm(`هل أنت متأكد من حذف مدينة "${city.name}" من سجل النظام؟`)) {
+      return;
+    }
+
+    try {
+      await deleteCity(city.id);
+      setSuccessMsg(`تم حذف مدينة "${city.name}" بنجاح.`);
+      setTimeout(() => setSuccessMsg(null), 3000);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'فشل حذف المدينة.');
+    }
+  };
 
   // Batch Units Form State
   const [batchForm, setBatchForm] = useState({
@@ -262,11 +397,42 @@ export const BuildingManager: React.FC = () => {
     <div className="space-y-6 text-right">
       
       {/* Top Selector & Actions */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 sm:p-5 bg-white rounded-3xl border border-[#E3DCCD] shadow-xs min-w-0">
-        <div className="flex items-center gap-3 min-w-0 max-w-full">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 p-4 sm:p-5 bg-white rounded-3xl border border-[#E3DCCD] shadow-xs min-w-0">
+        <div className="flex flex-wrap items-center gap-4 min-w-0 flex-1">
           <div className="p-3 bg-[#282824] text-white rounded-2xl shrink-0">
             <Building2 className="w-6 h-6 text-[#B69A68]" />
           </div>
+
+          {/* City Filter */}
+          <div className="min-w-[160px]">
+            <span className="text-xs font-semibold text-[#68675F] block">تصفية حسب المدينة</span>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <MapPin className="w-4 h-4 text-[#B69A68] shrink-0" />
+              <select
+                value={selectedCityFilter}
+                onChange={(e) => {
+                  const newCity = e.target.value;
+                  setSelectedCityFilter(newCity);
+                  const matchingProps = state.properties.filter(p => newCity === 'all' || p.cityId === newCity || p.city === newCity);
+                  if (matchingProps.length > 0 && !matchingProps.some(p => p.id === selectedPropertyId)) {
+                    setSelectedPropertyId(matchingProps[0].id);
+                  }
+                }}
+                className="font-bold text-xs sm:text-sm text-[#282824] bg-transparent focus:outline-none cursor-pointer"
+              >
+                <option value="all">جميع المدن ({state.cities?.length || 0})</option>
+                {state.cities.map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} {c.status === 'inactive' ? '(معطلة)' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="h-8 w-px bg-[#E3DCCD] hidden sm:block" />
+
+          {/* Building Selector */}
           <div className="min-w-0 flex-1">
             <span className="text-xs font-semibold text-[#68675F] block">المشروع النشط للتجهيز والمطابقة</span>
             <div className="flex items-center gap-2 mt-0.5 min-w-0">
@@ -275,9 +441,12 @@ export const BuildingManager: React.FC = () => {
                 onChange={(e) => setSelectedPropertyId(e.target.value)}
                 className="font-bold text-sm sm:text-base text-[#282824] bg-transparent focus:outline-none cursor-pointer truncate max-w-[200px] sm:max-w-xs md:max-w-md"
               >
-                {state.properties.map(p => (
-                  <option key={p.id} value={p.id}>{p.name} ({p.identifierCode})</option>
-                ))}
+                {filteredProperties.map(p => {
+                  const cityName = state.cities.find(c => c.id === p.cityId)?.name || p.city;
+                  return (
+                    <option key={p.id} value={p.id}>{p.name} ({p.identifierCode}) — {cityName}</option>
+                  );
+                })}
               </select>
               <span className="px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-bold bg-[#F7F3EB] text-[#B69A68] shrink-0 select-none">
                 {currentProperty?.status === 'published' ? 'نشط معروض' : currentProperty?.status === 'draft' ? 'مسودة تجهيز' : 'غير مدرج للبيع'}
@@ -286,14 +455,23 @@ export const BuildingManager: React.FC = () => {
           </div>
         </div>
         
-        {/* Global Action: Add New Building */}
-        <button
-          onClick={() => setIsCreatingBuilding(true)}
-          className="w-full sm:w-auto px-4 py-2.5 bg-[#282824] hover:bg-[#1a1a18] text-white text-xs sm:text-sm font-bold rounded-xl transition-colors flex items-center justify-center gap-2 shadow-xs cursor-pointer shrink-0"
-        >
-          <Plus className="w-4 h-4 text-[#B69A68] shrink-0" />
-          <span>إضافة مشروع ومجمع سكني جديد</span>
-        </button>
+        {/* Global Actions */}
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => setActiveTab('cities')}
+            className="px-3.5 py-2.5 bg-[#F7F3EB] hover:bg-[#EFE9DF] text-[#282824] border border-[#E3DCCD] text-xs sm:text-sm font-bold rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer"
+          >
+            <MapPin className="w-4 h-4 text-[#B69A68] shrink-0" />
+            <span>سجل المدن ({state.cities?.length || 0})</span>
+          </button>
+          <button
+            onClick={() => setIsCreatingBuilding(true)}
+            className="px-4 py-2.5 bg-[#282824] hover:bg-[#1a1a18] text-white text-xs sm:text-sm font-bold rounded-xl transition-colors flex items-center justify-center gap-2 shadow-xs cursor-pointer"
+          >
+            <Plus className="w-4 h-4 text-[#B69A68] shrink-0" />
+            <span>إضافة مشروع ومجمع جديد</span>
+          </button>
+        </div>
       </div>
 
       {/* Counter Banner */}
@@ -365,6 +543,15 @@ export const BuildingManager: React.FC = () => {
           >
             <Building2 className="w-4 h-4 text-[#B69A68]" />
             <span>بيانات المبنى والموقع</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('cities')}
+            className={`px-5 py-3.5 border-b-2 whitespace-nowrap transition-colors flex items-center gap-2 cursor-pointer ${
+              activeTab === 'cities' ? 'border-[#B69A68] text-[#282824] bg-white shadow-xs' : 'border-transparent text-[#68675F] hover:text-[#282824]'
+            }`}
+          >
+            <MapPin className="w-4 h-4 text-[#B69A68]" />
+            <span>إدارة المدن والمناطق ({state.cities?.length || 0})</span>
           </button>
           <button
             onClick={() => setActiveTab('facilities')}
@@ -934,6 +1121,52 @@ export const BuildingManager: React.FC = () => {
                   />
                 </div>
               </div>
+
+              {/* City Selection */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="font-semibold text-[#68675F] block mb-1">المدينة المعتمدة التابع لها المبنى *</label>
+                  <select
+                    value={currentProperty.cityId || state.cities.find(c => c.name === currentProperty.city)?.id || ''}
+                    onChange={(e) => {
+                      const selectedCity = state.cities.find(c => c.id === e.target.value);
+                      if (selectedCity) {
+                        updateProperty(currentProperty.id, {
+                          cityId: selectedCity.id,
+                          city: selectedCity.name
+                        });
+                      }
+                    }}
+                    className="w-full p-2.5 bg-[#F7F3EB]/40 border border-[#E3DCCD] rounded-xl font-bold cursor-pointer"
+                  >
+                    {state.cities.map(c => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.region || 'المنطقة الإدارية'}) — {c.country}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="font-semibold text-[#68675F] block mb-1">الحي السكني *</label>
+                  <input
+                    type="text"
+                    value={currentProperty.district}
+                    onChange={(e) => updateProperty(currentProperty.id, { district: e.target.value })}
+                    className="w-full p-2.5 bg-[#F7F3EB]/40 border border-[#E3DCCD] rounded-xl text-right focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="font-semibold text-[#68675F] block mb-1">العنوان الميداني ووصف الوصول</label>
+                <input
+                  type="text"
+                  value={currentProperty.address}
+                  onChange={(e) => updateProperty(currentProperty.id, { address: e.target.value })}
+                  className="w-full p-2.5 bg-[#F7F3EB]/40 border border-[#E3DCCD] rounded-xl text-right focus:outline-none"
+                />
+              </div>
+
               <div>
                 <label className="font-semibold text-[#68675F] block mb-1">الوصف التفصيلي والخطط التسويقية للمبنى</label>
                 <textarea
@@ -974,6 +1207,126 @@ export const BuildingManager: React.FC = () => {
                     <option value="unlisted">غير مدرج حالياً</option>
                   </select>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB: CITIES MANAGEMENT */}
+          {activeTab === 'cities' && (
+            <div className="space-y-6 text-xs text-right">
+              {/* Hierarchy Info Box */}
+              <div className="p-4 bg-[#FFFCF6] rounded-2xl border border-[#E3DCCD] space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Globe className="w-5 h-5 text-[#B69A68]" />
+                    <h4 className="font-bold text-sm text-[#282824]">الهيكل التنظيمي للمواقع (منزل الفخامة)</h4>
+                  </div>
+                  <button
+                    onClick={() => setIsAddingCity(true)}
+                    className="px-3.5 py-1.5 bg-[#282824] hover:bg-[#1a1a18] text-white rounded-xl font-bold flex items-center gap-1.5 cursor-pointer shadow-xs"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-[#B69A68]" />
+                    <span>إضافة مدينة جديدة</span>
+                  </button>
+                </div>
+                <p className="text-[#68675F] leading-relaxed">
+                  نموذج المواقع الموحد للمنصة:
+                  <strong className="text-[#282824] font-semibold mr-1">
+                    شركة منزل الفخامة ← الدولة ← المنطقة الإدارية (اختيارية) ← المدينة ← المبنى ← الطابق ← الوحدة السكنية
+                  </strong>
+                </p>
+                <div className="flex flex-wrap gap-2 pt-1 text-[11px]">
+                  <span className="px-2.5 py-1 bg-emerald-50 text-emerald-800 rounded-lg border border-emerald-200">
+                    المدن النشطة: {state.cities.filter(c => c.status === 'active').length}
+                  </span>
+                  <span className="px-2.5 py-1 bg-[#F7F3EB] text-[#68675F] rounded-lg border border-[#E3DCCD]">
+                    إجمالي المدن: {state.cities.length}
+                  </span>
+                  <span className="px-2.5 py-1 bg-blue-50 text-blue-800 rounded-lg border border-blue-200">
+                    إجمالي المباني الموزعة: {state.properties.length}
+                  </span>
+                </div>
+              </div>
+
+              {/* Cities Table */}
+              <div className="bg-white rounded-2xl border border-[#E3DCCD] overflow-hidden">
+                <table className="w-full text-right border-collapse">
+                  <thead className="bg-[#F7F3EB]">
+                    <tr>
+                      <th className="p-3 font-bold text-[#282824]">الترتيب</th>
+                      <th className="p-3 font-bold text-[#282824]">اسم المدينة (عربي)</th>
+                      <th className="p-3 font-bold text-[#282824]">الاسم بالإنجليزية</th>
+                      <th className="p-3 font-bold text-[#282824]">المنطقة الإدارية</th>
+                      <th className="p-3 font-bold text-[#282824]">الدولة</th>
+                      <th className="p-3 font-bold text-[#282824]">المباني المرتبطة</th>
+                      <th className="p-3 font-bold text-[#282824]">الحالة</th>
+                      <th className="p-3 font-bold text-[#282824] text-left">التحكم</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#E3DCCD]">
+                    {state.cities
+                      .slice()
+                      .sort((a, b) => a.displayOrder - b.displayOrder)
+                      .map(city => {
+                        const linkedBuildings = state.properties.filter(
+                          p => p.cityId === city.id || p.city === city.name
+                        );
+                        return (
+                          <tr key={city.id} className="hover:bg-[#FFFCF6] transition-colors">
+                            <td className="p-3 font-mono font-bold text-[#68675F]">{city.displayOrder}</td>
+                            <td className="p-3 font-bold text-[#282824] flex items-center gap-1.5">
+                              <MapPin className="w-3.5 h-3.5 text-[#B69A68] shrink-0" />
+                              <span>{city.name}</span>
+                            </td>
+                            <td className="p-3 text-[#68675F] font-mono dir-ltr text-right">{city.nameEn || '—'}</td>
+                            <td className="p-3 text-[#68675F]">{city.region || '—'}</td>
+                            <td className="p-3 text-[#68675F]">{city.country}</td>
+                            <td className="p-3">
+                              <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                                linkedBuildings.length > 0 ? 'bg-amber-100 text-amber-900' : 'bg-slate-100 text-slate-600'
+                              }`}>
+                                {linkedBuildings.length} مبنى
+                              </span>
+                            </td>
+                            <td className="p-3">
+                              <button
+                                onClick={() => handleToggleCityStatus(city)}
+                                className={`px-2.5 py-0.5 rounded text-[11px] font-bold cursor-pointer transition-colors ${
+                                  city.status === 'active'
+                                    ? 'bg-emerald-100 text-emerald-900 hover:bg-emerald-200'
+                                    : 'bg-rose-100 text-rose-900 hover:bg-rose-200'
+                                }`}
+                              >
+                                {city.status === 'active' ? 'نشطة معتمدة' : 'معطلة مؤقتاً'}
+                              </button>
+                            </td>
+                            <td className="p-3 text-left">
+                              <div className="flex items-center justify-end gap-2">
+                                <button
+                                  onClick={() => setEditingCity(city)}
+                                  className="p-1.5 text-[#282824] hover:bg-[#F7F3EB] rounded transition-colors cursor-pointer"
+                                  title="تعديل بيانات المدينة"
+                                >
+                                  <Edit3 className="w-4 h-4 text-[#B69A68]" />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteCity(city)}
+                                  className={`p-1.5 rounded transition-colors cursor-pointer ${
+                                    linkedBuildings.length > 0
+                                      ? 'text-slate-300 hover:text-slate-400 cursor-not-allowed'
+                                      : 'text-rose-600 hover:bg-rose-50'
+                                  }`}
+                                  title={linkedBuildings.length > 0 ? 'لا يمكن حذف مدينة مرتبطة بمبانٍ (قم بتعطيلها أو نقل المباني أولاً)' : 'حذف المدينة'}
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
@@ -1059,7 +1412,32 @@ export const BuildingManager: React.FC = () => {
                 </div>
               </div>
 
+              {/* City & District Selection */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="font-semibold text-[#68675F] block mb-1">المدينة المعتمدة *</label>
+                  <select
+                    required
+                    value={newBuildingForm.cityId || state.cities[0]?.id || ''}
+                    onChange={(e) => {
+                      const selectedCity = state.cities.find(c => c.id === e.target.value);
+                      if (selectedCity) {
+                        setNewBuildingForm(prev => ({
+                          ...prev,
+                          cityId: selectedCity.id,
+                          city: selectedCity.name,
+                        }));
+                      }
+                    }}
+                    className="w-full p-2.5 bg-white border border-[#E3DCCD] rounded-xl font-bold cursor-pointer"
+                  >
+                    {state.cities.map(c => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.region || 'المنطقة الإدارية'}) {c.status === 'inactive' ? '(معطلة)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <div>
                   <label className="font-semibold text-[#68675F] block mb-1">الحي السكني *</label>
                   <input
@@ -1071,16 +1449,17 @@ export const BuildingManager: React.FC = () => {
                     className="w-full p-2.5 bg-white border border-[#E3DCCD] rounded-xl text-right focus:outline-none"
                   />
                 </div>
-                <div>
-                  <label className="font-semibold text-[#68675F] block mb-1">العنوان ووصف الوصول</label>
-                  <input
-                    type="text"
-                    placeholder="مثال: طريق الملك سلمان بن عبد العزيز الفرعي"
-                    value={newBuildingForm.address}
-                    onChange={(e) => setNewBuildingForm(prev => ({ ...prev, address: e.target.value }))}
-                    className="w-full p-2.5 bg-white border border-[#E3DCCD] rounded-xl text-right focus:outline-none"
-                  />
-                </div>
+              </div>
+
+              <div>
+                <label className="font-semibold text-[#68675F] block mb-1">العنوان ووصف الوصول</label>
+                <input
+                  type="text"
+                  placeholder="مثال: طريق الملك سلمان بن عبد العزيز الفرعي"
+                  value={newBuildingForm.address}
+                  onChange={(e) => setNewBuildingForm(prev => ({ ...prev, address: e.target.value }))}
+                  className="w-full p-2.5 bg-white border border-[#E3DCCD] rounded-xl text-right focus:outline-none"
+                />
               </div>
 
               <div>
@@ -1183,6 +1562,195 @@ export const BuildingManager: React.FC = () => {
             if (updated) setEditingUnit(updated);
           }}
         />
+      )}
+
+      {/* ADD CITY MODAL */}
+      {isAddingCity && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-[#FFFCF6] w-full max-w-lg rounded-3xl overflow-hidden shadow-2xl border border-[#E3DCCD] text-right">
+            <div className="p-4 border-b border-[#E3DCCD] flex items-center justify-between bg-[#F7F3EB]">
+              <div className="flex items-center gap-2">
+                <MapPin className="w-5 h-5 text-[#B69A68]" />
+                <h4 className="font-bold text-sm text-[#282824]">إضافة واعتماد مدينة جديدة للمنصة</h4>
+              </div>
+              <button onClick={() => setIsAddingCity(false)} className="cursor-pointer text-[#68675F]">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <form onSubmit={handleCreateCitySubmit} className="p-5 space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-semibold text-[#68675F] block mb-1">اسم المدينة (عربي) *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="مثال: الخبر، مكة، أبها"
+                    value={newCityForm.name}
+                    onChange={(e) => setNewCityForm(prev => ({ ...prev, name: e.target.value }))}
+                    className="w-full p-2.5 bg-white border border-[#E3DCCD] rounded-xl font-bold text-right focus:outline-none focus:border-[#B69A68]"
+                  />
+                </div>
+                <div>
+                  <label className="font-semibold text-[#68675F] block mb-1">الاسم بالإنجليزية</label>
+                  <input
+                    type="text"
+                    placeholder="مثال: Khobar, Mecca, Abha"
+                    value={newCityForm.nameEn}
+                    onChange={(e) => setNewCityForm(prev => ({ ...prev, nameEn: e.target.value }))}
+                    className="w-full p-2.5 bg-white border border-[#E3DCCD] rounded-xl text-left font-mono focus:outline-none focus:border-[#B69A68]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-semibold text-[#68675F] block mb-1">المنطقة الإدارية (اختيارية)</label>
+                  <input
+                    type="text"
+                    placeholder="مثال: المنطقة الشرقية، منطقة مكة المكرمة"
+                    value={newCityForm.region}
+                    onChange={(e) => setNewCityForm(prev => ({ ...prev, region: e.target.value }))}
+                    className="w-full p-2.5 bg-white border border-[#E3DCCD] rounded-xl text-right focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="font-semibold text-[#68675F] block mb-1">الدولة *</label>
+                  <input
+                    type="text"
+                    required
+                    value={newCityForm.country}
+                    onChange={(e) => setNewCityForm(prev => ({ ...prev, country: e.target.value }))}
+                    className="w-full p-2.5 bg-white border border-[#E3DCCD] rounded-xl text-right focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-semibold text-[#68675F] block mb-1">ترتيب العرض الرقمي</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={newCityForm.displayOrder}
+                    onChange={(e) => setNewCityForm(prev => ({ ...prev, displayOrder: Number(e.target.value) }))}
+                    className="w-full p-2.5 bg-white border border-[#E3DCCD] rounded-xl text-right font-mono focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="font-semibold text-[#68675F] block mb-1">الحالة التشغيلية</label>
+                  <select
+                    value={newCityForm.status}
+                    onChange={(e) => setNewCityForm(prev => ({ ...prev, status: e.target.value as any }))}
+                    className="w-full p-2.5 bg-white border border-[#E3DCCD] rounded-xl font-bold cursor-pointer"
+                  >
+                    <option value="active">نشطة ومعتمدة للإدراج</option>
+                    <option value="inactive">معطلة مؤقتاً</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-amber-900 text-[11px] leading-relaxed select-none">
+                المدن المعتمدة ستظهر تلقائياً في قوائم إنشاء المباني، وفلاتر لوحة التحكم، ومحرك بحث النزلاء العام.
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-[#E3DCCD]/60">
+                <button type="button" onClick={() => setIsAddingCity(false)} className="px-3 py-1.5 border border-[#E3DCCD] rounded-xl cursor-pointer">إلغاء</button>
+                <button type="submit" className="px-4 py-2 bg-[#282824] text-white font-bold rounded-xl shadow-xs cursor-pointer">حفظ واعتماد المدينة</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* EDIT CITY MODAL */}
+      {editingCity && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-[#FFFCF6] w-full max-w-lg rounded-3xl overflow-hidden shadow-2xl border border-[#E3DCCD] text-right">
+            <div className="p-4 border-b border-[#E3DCCD] flex items-center justify-between bg-[#F7F3EB]">
+              <div className="flex items-center gap-2">
+                <Edit3 className="w-5 h-5 text-[#B69A68]" />
+                <h4 className="font-bold text-sm text-[#282824]">تعديل بيانات مدينة: {editingCity.name}</h4>
+              </div>
+              <button onClick={() => setEditingCity(null)} className="cursor-pointer text-[#68675F]">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <form onSubmit={handleUpdateCitySubmit} className="p-5 space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-semibold text-[#68675F] block mb-1">اسم المدينة (عربي) *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editingCity.name}
+                    onChange={(e) => setEditingCity(prev => prev ? ({ ...prev, name: e.target.value }) : null)}
+                    className="w-full p-2.5 bg-white border border-[#E3DCCD] rounded-xl font-bold text-right focus:outline-none focus:border-[#B69A68]"
+                  />
+                </div>
+                <div>
+                  <label className="font-semibold text-[#68675F] block mb-1">الاسم بالإنجليزية</label>
+                  <input
+                    type="text"
+                    value={editingCity.nameEn || ''}
+                    onChange={(e) => setEditingCity(prev => prev ? ({ ...prev, nameEn: e.target.value }) : null)}
+                    className="w-full p-2.5 bg-white border border-[#E3DCCD] rounded-xl text-left font-mono focus:outline-none focus:border-[#B69A68]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-semibold text-[#68675F] block mb-1">المنطقة الإدارية</label>
+                  <input
+                    type="text"
+                    value={editingCity.region || ''}
+                    onChange={(e) => setEditingCity(prev => prev ? ({ ...prev, region: e.target.value }) : null)}
+                    className="w-full p-2.5 bg-white border border-[#E3DCCD] rounded-xl text-right focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="font-semibold text-[#68675F] block mb-1">الدولة *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editingCity.country}
+                    onChange={(e) => setEditingCity(prev => prev ? ({ ...prev, country: e.target.value }) : null)}
+                    className="w-full p-2.5 bg-white border border-[#E3DCCD] rounded-xl text-right focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-semibold text-[#68675F] block mb-1">ترتيب العرض</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={editingCity.displayOrder}
+                    onChange={(e) => setEditingCity(prev => prev ? ({ ...prev, displayOrder: Number(e.target.value) }) : null)}
+                    className="w-full p-2.5 bg-white border border-[#E3DCCD] rounded-xl text-right font-mono focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="font-semibold text-[#68675F] block mb-1">الحالة</label>
+                  <select
+                    value={editingCity.status}
+                    onChange={(e) => setEditingCity(prev => prev ? ({ ...prev, status: e.target.value as any }) : null)}
+                    className="w-full p-2.5 bg-white border border-[#E3DCCD] rounded-xl font-bold cursor-pointer"
+                  >
+                    <option value="active">نشطة ومعتمدة</option>
+                    <option value="inactive">معطلة مؤقتاً</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-[#E3DCCD]/60">
+                <button type="button" onClick={() => setEditingCity(null)} className="px-3 py-1.5 border border-[#E3DCCD] rounded-xl cursor-pointer">إلغاء</button>
+                <button type="submit" className="px-4 py-2 bg-[#282824] text-white font-bold rounded-xl shadow-xs cursor-pointer">حفظ التعديلات</button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
 
     </div>

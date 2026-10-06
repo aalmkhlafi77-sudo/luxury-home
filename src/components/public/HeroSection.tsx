@@ -14,9 +14,18 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
 }) => {
   const { state } = useAppStore();
   const heroSection = state.contentSections.find(s => s.sectionKey === 'hero');
+  const heroTypo = state.settings.typography?.hero;
 
-  const title = heroSection?.title || 'اكتشف أرقى مستويات المعيشة الفندقية الفاخرة في قلب الرياض';
-  const subtitle = heroSection?.subtitle || 'شقق وأجنحة سكنية مفروشة بالكامل تدمج بسلاسة تامة بين دفء وخصوصية المنزل وخدمات الضيافة الفندقية المتكاملة الراقية، في أكثر الأحياء جاذبية في العاصمة.';
+  const title = heroTypo?.title?.text || heroSection?.title || 'اكتشف أرقى مستويات المعيشة الفندقية الفاخرة في قلب مدن المملكة';
+  const subtitle = heroTypo?.subtitle?.text || heroSection?.subtitle || 'شقق وأجنحة سكنية مفروشة بالكامل تدمج بسلاسة تامة بين دفء وخصوصية المنزل وخدمات الضيافة الفندقية المتكاملة الراقية، في أكثر الأحياء جاذبية في العاصمة وكبرى المدن.';
+  const badgeText = heroTypo?.badge?.text || 'بوابة السكن المترف والضيافة الراقية بالمملكة';
+  const ctaPrimaryText = heroTypo?.cta_primary?.text || 'استعرض الشقق المتاحة';
+  const ctaSecondaryText = heroTypo?.cta_secondary?.text || 'مشروعاتنا وأبراجنا الفندقية';
+
+  const stat1Text = heroTypo?.stat_1?.text || `${state.cities.length || 3} مدن ووجهات فاخرة بالمملكة`;
+  const stat2Text = heroTypo?.stat_2?.text || '100% نسبة رضا وضيافة استثنائية';
+  const stat3Text = heroTypo?.stat_3?.text || '24/7 كونسيرج وخدمة غرف خاصة';
+
   const bgImage = heroSection?.mediaUrl || 'https://images.unsplash.com/photo-1545324418-cc1a3fa10c00?auto=format&fit=crop&w=1920&q=85';
 
   return (
@@ -38,16 +47,27 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
         {/* Quiet Subtitle Marker */}
         <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-xs sm:text-sm font-medium text-[#FFFCF6] mb-6 select-none">
           <Sparkles className="w-3.5 h-3.5 text-[#B69A68]" />
-          <span>بوابة السكن المترف والضيافة الراقية بالمملكة</span>
+          <span>{badgeText}</span>
         </div>
 
         {/* Display Headline with Balance Wrapping */}
-        <h1 className="text-3xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-white mb-6 leading-tight max-w-4xl mx-auto" style={{ textWrap: 'balance' }}>
+        <h1
+          className="text-3xl sm:text-5xl lg:text-6xl font-bold tracking-tight mb-6 leading-tight max-w-4xl mx-auto"
+          style={{
+            textWrap: 'balance',
+            color: heroTypo?.title?.style?.color || '#FFFFFF',
+          }}
+        >
           {title}
         </h1>
 
         {/* Lead Paragraph */}
-        <p className="text-base sm:text-xl text-[#FFFCF6]/85 max-w-2xl mx-auto mb-10 leading-relaxed font-normal">
+        <p
+          className="text-base sm:text-xl max-w-2xl mx-auto mb-10 leading-relaxed font-normal"
+          style={{
+            color: heroTypo?.subtitle?.style?.color || '#EFE9DF',
+          }}
+        >
           {subtitle}
         </p>
 
@@ -57,7 +77,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
             onClick={onExploreClick}
             className="w-full sm:w-auto px-8 py-3.5 text-sm sm:text-base font-semibold text-[#282824] bg-[#FFFCF6] hover:bg-[#EFE9DF] rounded-xl shadow-lg transition-all duration-200 hover:scale-[1.02] flex items-center justify-center gap-2 whitespace-nowrap cursor-pointer"
           >
-            <span>استعرض الشقق المتاحة</span>
+            <span>{ctaPrimaryText}</span>
             <ChevronDown className="w-4 h-4 text-[#B69A68]" />
           </button>
           
@@ -66,23 +86,29 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
             className="w-full sm:w-auto px-6 py-3.5 text-sm sm:text-base font-medium text-white bg-white/15 hover:bg-white/25 backdrop-blur-md border border-white/25 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 whitespace-nowrap cursor-pointer"
           >
             <Building className="w-4 h-4 text-[#B69A68]" />
-            <span>مشروعاتنا وأبراجنا الفندقية</span>
+            <span>{ctaSecondaryText}</span>
           </button>
         </div>
 
-        {/* Trust Markers */}
+        {/* Trust Markers with Unified ASCII Latin Digits and BDI isolation */}
         <div className="mt-14 pt-8 border-t border-white/15 grid grid-cols-3 gap-4 max-w-xl mx-auto text-xs text-white/80">
           <div>
-            <span className="block text-xl sm:text-2xl font-bold text-white tabular-nums">٢</span>
-            <span>وجهة متميزة في الرياض</span>
+            <span className="block text-xl sm:text-2xl font-bold text-white font-mono tabular-nums">
+              <bdi dir="ltr">{state.cities.length || 3}</bdi>
+            </span>
+            <span className="text-[11px] text-white/80 mt-0.5 block">{stat1Text}</span>
           </div>
           <div>
-            <span className="block text-xl sm:text-2xl font-bold text-white tabular-nums">١٠٠٪</span>
-            <span>نسبة إشغال وخدمة ممتازة</span>
+            <span className="block text-xl sm:text-2xl font-bold text-white font-mono tabular-nums">
+              <bdi dir="ltr">100%</bdi>
+            </span>
+            <span className="text-[11px] text-white/80 mt-0.5 block">{stat2Text}</span>
           </div>
           <div>
-            <span className="block text-xl sm:text-2xl font-bold text-white tabular-nums">٢٤/٧</span>
-            <span>خدمة غرف وكونسيرج رقمي</span>
+            <span className="block text-xl sm:text-2xl font-bold text-white font-mono tabular-nums">
+              <bdi dir="ltr">24/7</bdi>
+            </span>
+            <span className="text-[11px] text-white/80 mt-0.5 block">{stat3Text}</span>
           </div>
         </div>
 
@@ -90,3 +116,4 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
     </section>
   );
 };
+

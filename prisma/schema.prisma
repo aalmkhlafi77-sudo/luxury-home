@@ -90,19 +90,21 @@ enum CostAllocationMethod {
 }
 
 model User {
-  id                String      @id @default(uuid())
-  username          String      @unique
-  email             String      @unique
-  passwordHash      String
-  name              String
-  phone             String?
-  role              Role        @default(TENANT)
-  allowedProperties String[]    @default(["all"])
-  isActive          Boolean     @default(true)
-  createdAt         DateTime    @default(now())
-  updatedAt         DateTime    @updatedAt
+  id                 String      @id @default(uuid())
+  username           String      @unique
+  email              String      @unique
+  passwordHash       String
+  name               String
+  phone              String?
+  role               Role        @default(TENANT)
+  allowedProperties  String[]    @default(["all"])
+  isActive           Boolean     @default(true)
+  mustChangePassword Boolean     @default(false)
+  tokenVersion       Int         @default(1)
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
 
-  auditLogs         AuditLog[]
+  auditLogs          AuditLog[]
 }
 
 model CompanySettings {
@@ -125,12 +127,30 @@ model CompanySettings {
   updatedAt       DateTime @updatedAt
 }
 
+model City {
+  id           String     @id @default(uuid())
+  name         String
+  nameEn       String?
+  region       String?
+  country      String     @default("المملكة العربية السعودية")
+  status       String     @default("active")
+  displayOrder Int        @default(0)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  properties   Property[]
+
+  @@unique([name, region, country])
+}
+
 model Property {
   id              String      @id @default(uuid())
   name            String
   code            String      @unique
   address         String
   city            String      @default("الرياض")
+  cityId          String?
+  cityRelation    City?       @relation(fields: [cityId], references: [id], onDelete: Restrict)
   district        String
   floorsCount     Int         @default(1)
   unitsCount      Int         @default(0)
