@@ -7,6 +7,7 @@ import { BookingsLeasesManager } from './BookingsLeasesManager';
 import { FinancialsManager } from './FinancialsManager';
 import { ContentCustomizer } from './ContentCustomizer';
 import { UserManager } from './UserManager';
+import { FooterPagesFaqManager } from './FooterPagesFaqManager';
 import { UnitControlModal } from './UnitControlModal';
 import { Unit } from '../../types';
 import { formatDate } from '../../utils/formatters';
@@ -80,7 +81,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToSite }) 
   const [forcedPasswordCurrent, setForcedPasswordCurrent] = useState('');
   const [forcedPasswordError, setForcedPasswordError] = useState<string | null>(null);
 
-  const [activeModule, setActiveModule] = useState<'grid' | 'buildings' | 'timeline' | 'bookings' | 'finance' | 'content' | 'theme' | 'users' | 'audit'>('grid');
+  const [activeModule, setActiveModule] = useState<'grid' | 'buildings' | 'timeline' | 'bookings' | 'finance' | 'content' | 'theme' | 'users' | 'audit' | 'footer_faq'>('grid');
   const [selectedUnitForControl, setSelectedUnitForControl] = useState<Unit | null>(null);
 
   // Verify token on mount and check if system has an admin initialized
@@ -466,6 +467,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToSite }) 
             <Palette className="w-4 h-4 text-[#B69A68]" />
             <span>إعدادات المظهر</span>
           </button>
+          <button
+            onClick={() => setActiveModule('footer_faq')}
+            className={`px-3 py-2 rounded-xl transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+              activeModule === 'footer_faq' ? 'bg-[#FFFCF6] text-[#282824] font-bold shadow-xs' : 'text-[#EFE9DF]/80 hover:text-white'
+            }`}
+          >
+            <FileText className="w-4 h-4 text-[#B69A68]" />
+            <span>الصفحات والأسئلة الشائعة</span>
+          </button>
 
           {currentUser?.role === 'SUPER_ADMIN' && (
             <button
@@ -514,6 +524,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToSite }) 
         )}
         {activeModule === 'theme' && (
           <ContentCustomizer initialTab="theme" />
+        )}
+        {activeModule === 'footer_faq' && (
+          <FooterPagesFaqManager />
         )}
         {activeModule === 'users' && currentUser?.role === 'SUPER_ADMIN' && (
           <UserManager />
