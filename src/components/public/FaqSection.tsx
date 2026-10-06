@@ -1,24 +1,28 @@
 import React, { useState } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { ChevronDown, Sparkles } from 'lucide-react';
+import { formatNumber } from '../../utils/formatters';
 
 interface FaqItem {
+  id?: string;
   question: string;
   answer: string;
+  active?: boolean;
+  displayOrder?: number;
 }
 
-const faqs: FaqItem[] = [
+const defaultFaqs: FaqItem[] = [
   {
     question: 'ما هي مواعيد تسجيل الدخول والمغادرة في مباني منزل الفخامة؟',
-    answer: 'موعد تسجيل الدخول المعياري في مجمعاتنا هو الساعة ٣:٠٠ مساءً، وتوقيت المغادرة وتسليم الشقة هو الساعة ١٢:٠٠ ظهراً، وذلك لضمان منح طواقم التنظيف ٣ ساعات كاملة لتطهير وتجهيز الشقة فندقيًا للنزيل التالي.'
+    answer: 'موعد تسجيل الدخول المعياري في مجمعاتنا هو الساعة 15:00، وتوقيت المغادرة وتسليم الشقة هو الساعة 12:00، وذلك لضمان منح طواقم التنظيف 3 ساعات كاملة لتطهير وتجهيز الشقة فندقيًا للنزيل التالي.'
   },
   {
     question: 'كيف يمكنني الدخول إلى الشقة؟ وهل أحتاج لمقابلة المالك؟',
-    answer: 'جميع شقق منزل الفخامة مجهزة بنظام قفل رقمي ذكي ومتصل بالشبكة الأمنية. لن تحتاج لمقابلة أي شخص؛ حيث سيصلك كود سري فريد وخاص بك فور إتمام التحقق من هويتك وسداد الحجز، ليمكنك فتح الباب الذكي بمجرد لمسه وإدخال الكود.'
+    answer: 'جميع شقق منزل الفخامة مجهزة بنظام قفل رقمي ذكي ومتصل بالشبكة الأمنية. لن تحتاج لمقابلة أي شخص؛ حيث سيصلك كود سري فريد وخاص بك فور إتمام التحقق من هويتك وسداد الحجز، ليمكنك فتح الباب الذكي بمجرد لمسه وإدخال الرمز متبوعاً بعلامة (#).'
   },
   {
     question: 'كيف يتم التعامل مع مبلغ تأمين الإقامة وتأمين الأثاث؟',
-    answer: 'مبلغ تأمين السكن هو وديعة يتم تعليقها كحجز تفويض مؤقت على بطاقة الفيزا الخاصة بك للرحلات الفندقية، أو تحصيلها نقدًا/تحويل في العقود الشهرية. يتم إرجاع وتصفية مبلغ التأمين بالكامل فور خروجك وفحص الشقة ومطابقتها بمحضر استلام الأثاث في غضون ٢٤ ساعة.'
+    answer: 'مبلغ تأمين السكن هو وديعة يتم تعليقها كحجز تفويض مؤقت على بطاقة الفيزا الخاصة بك للرحلات الفندقية، أو تحصيلها نقدًا/تحويل في العقود الشهرية. يتم إرجاع وتصفية مبلغ التأمين بالكامل فور خروجك وفحص الشقة ومطابقتها بمحضر استلام الأثاث في غضون 24 ساعة.'
   },
   {
     question: 'هل تتوفر خدمات التدبير المنزلي وتنظيف الشقق؟',
@@ -26,11 +30,11 @@ const faqs: FaqItem[] = [
   },
   {
     question: 'هل تتوفر مواقف خاصة وشواحن للسيارات الكهربائية؟',
-    answer: 'نعم بالتأكيد، كل شقة في منزل الفخامة تمتلك موقف سيارات خاص بها ومظلل مسجل برقم الشقة في قبو أو فناء المبنى. كما نوفر مواقف مجهزة بالكامل بشواحن سيارات كهربائية EV بقوة ٢٢ كيلو واط سريعة وآمنة.'
+    answer: 'نعم بالتأكيد، كل شقة في منزل الفخامة تمتلك موقف سيارات خاص بها ومظلل مسجل برقم الشقة في قبو أو فناء المبنى. كما نوفر مواقف مجهزة بالكامل بشواحن سيارات كهربائية EV بقوة 22 كيلو واط سريعة وآمنة.'
   },
   {
     question: 'ما هي سياسة الإلغاء وتعديل مواعيد الحجز؟',
-    answer: 'نحن نتبع سياسة إلغاء فندقية مرنة؛ حيث يمكنك إلغاء الحجز الفندقي القصير واسترداد المبلغ كاملًا بدون رسوم قبل موعد الدخول بـ ٤٨ ساعة على الأقل. وفي عقود الإيجار الطويلة والشهرية يتم الرجوع لشروط الفسخ والإنهاء المبكر الموثقة بالعقد.'
+    answer: 'نحن نتبع سياسة إلغاء فندقية مرنة؛ حيث يمكنك إلغاء الحجز الفندقي القصير واسترداد المبلغ كاملًا بدون رسوم قبل موعد الدخول بـ 48 ساعة على الأقل. وفي عقود الإيجار الطويلة والشهرية يتم الرجوع لشروط الفسخ والإنهاء المبكر الموثقة بالعقد.'
   }
 ];
 
@@ -40,6 +44,14 @@ export const FaqSection: React.FC = () => {
   const sectionMeta = state.contentSections.find(s => s.sectionKey === 'faq');
 
   if (sectionMeta && !sectionMeta.visible) return null;
+
+  // Use dynamic FAQs from database if available and active, ordered by displayOrder
+  const dynamicFaqs = state.settings.faqs;
+  const activeFaqs = dynamicFaqs && dynamicFaqs.length > 0
+    ? dynamicFaqs
+        .filter(f => f.active)
+        .sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0))
+    : defaultFaqs;
 
   return (
     <section id="faq" className="py-16 max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -57,23 +69,23 @@ export const FaqSection: React.FC = () => {
       </div>
 
       <div className="space-y-3">
-        {faqs.map((faq, idx) => {
+        {activeFaqs.map((faq, idx) => {
           const isOpen = openIndex === idx;
           return (
             <div
-              key={idx}
+              key={faq.id || idx}
               className="glass-ivory-card rounded-xl border border-[#E3DCCD] overflow-hidden transition-all duration-200"
             >
               <button
                 onClick={() => setOpenIndex(isOpen ? null : idx)}
                 className="w-full p-4 sm:p-5 text-right flex items-center justify-between gap-4 font-semibold text-sm sm:text-base text-[#282824] hover:text-[#B69A68] transition-colors cursor-pointer"
               >
-                <span>{faq.question}</span>
+                <span>{formatNumber(faq.question)}</span>
                 <ChevronDown className={`w-5 h-5 text-[#B69A68] shrink-0 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
               </button>
               {isOpen && (
                 <div className="px-5 pb-5 pt-1 text-sm text-[#68675F] leading-relaxed border-t border-[#E3DCCD]/40 animate-in fade-in duration-200">
-                  {faq.answer}
+                  {formatNumber(faq.answer)}
                 </div>
               )}
             </div>

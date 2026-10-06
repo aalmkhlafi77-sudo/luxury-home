@@ -6,12 +6,14 @@ interface FooterProps {
   onScrollToSection: (sectionId: string) => void;
   onOpenAdmin: () => void;
   onOpenStaffPwa: () => void;
+  onOpenPage: (pageKey: 'terms' | 'privacy' | 'regulations' | 'about') => void;
 }
 
 export const Footer: React.FC<FooterProps> = ({
   onScrollToSection,
   onOpenAdmin,
   onOpenStaffPwa,
+  onOpenPage,
 }) => {
   const { state } = useAppStore();
   const customFooterBg = state.settings.theme?.footerBg || '#282824';
@@ -164,10 +166,11 @@ export const Footer: React.FC<FooterProps> = ({
             </a>
           </div>
 
-          <div className="flex items-center gap-6">
-            <span>الشروط والأحكام</span>
-            <span>سياسة الخصوصية والأمن</span>
-            <span>لوائح الإقامة الفندقية</span>
+          <div className="flex flex-wrap items-center gap-6 select-none justify-center sm:justify-end">
+            <button onClick={() => onOpenPage('about')} className="hover:text-white transition-colors cursor-pointer text-xs sm:text-sm font-medium">من نحن</button>
+            <button onClick={() => onOpenPage('terms')} className="hover:text-white transition-colors cursor-pointer text-xs sm:text-sm font-medium">الشروط والأحكام</button>
+            <button onClick={() => onOpenPage('privacy')} className="hover:text-white transition-colors cursor-pointer text-xs sm:text-sm font-medium">سياسة الخصوصية والأمن</button>
+            <button onClick={() => onOpenPage('regulations')} className="hover:text-white transition-colors cursor-pointer text-xs sm:text-sm font-medium">لوائح الإقامة الفندقية</button>
           </div>
         </div>
       </div>

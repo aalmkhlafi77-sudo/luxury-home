@@ -19,6 +19,7 @@ import { BookingCheckoutModal } from './components/checkout/BookingCheckoutModal
 import { AdminDashboard } from './components/admin/AdminDashboard';
 import { StaffPwaApp } from './components/pwa/StaffPwaApp';
 import { ClientPortalModal } from './components/client/ClientPortalModal';
+import { FooterPageModal } from './components/footer/FooterPageModal';
 import { Property, Unit, Booking } from './types';
 
 export default function App() {
@@ -89,6 +90,7 @@ export default function App() {
 
   const [isClientPortalOpen, setIsClientPortalOpen] = useState(false);
   const [clientPortalBookingNumber, setClientPortalBookingNumber] = useState<string | undefined>(undefined);
+  const [activeFooterPage, setActiveFooterPage] = useState<'terms' | 'privacy' | 'regulations' | 'about' | null>(null);
 
   // IntersectionObserver to observe active section while scrolling
   useEffect(() => {
@@ -294,6 +296,7 @@ export default function App() {
         onScrollToSection={handleScrollTo}
         onOpenAdmin={() => setViewMode('admin')}
         onOpenStaffPwa={() => setViewMode('staff_pwa')}
+        onOpenPage={(key) => setActiveFooterPage(key)}
       />
 
       {/* MODAL 1: Building Detail Modal */}
@@ -342,6 +345,14 @@ export default function App() {
         <ClientPortalModal
           defaultBookingNumber={clientPortalBookingNumber}
           onClose={() => setIsClientPortalOpen(false)}
+        />
+      )}
+
+      {/* MODAL 5: Footer Pages Modal */}
+      {activeFooterPage && (
+        <FooterPageModal
+          pageKey={activeFooterPage}
+          onClose={() => setActiveFooterPage(null)}
         />
       )}
 

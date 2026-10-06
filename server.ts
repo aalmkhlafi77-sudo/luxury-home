@@ -1236,7 +1236,16 @@ export async function startServer(customPort?: number) {
             email: settings.email,
             checkInTime: settings.checkInTime,
             checkOutTime: settings.checkOutTime,
-            navigation: settings.navigation
+            navigation: settings.navigation,
+            themeConfig: settings.themeConfig,
+            theme: settings.theme || (settings.themeConfig ? (settings.themeConfig as any).theme : null),
+            typography: settings.typography || (settings.themeConfig ? (settings.themeConfig as any).typography : null),
+            footerPages: settings.footerPages || (settings.themeConfig ? (settings.themeConfig as any).footerPages : null),
+            faqs: settings.faqs || (settings.themeConfig ? (settings.themeConfig as any).faqs : null),
+            taxNumber: settings.taxNumber,
+            crNumber: settings.crNumber,
+            commercialReg: settings.crNumber,
+            currencyDisplayMode: settings.currencyDisplayMode || 'symbol'
           }
         });
       }
@@ -1255,7 +1264,15 @@ export async function startServer(customPort?: number) {
         email: settings.email || 'vip@luxuryhome.sa',
         checkInTime: settings.checkInTime || '15:00',
         checkOutTime: settings.checkOutTime || '12:00',
-        navigation: settings.navigation || null
+        navigation: settings.navigation || null,
+        theme: settings.theme || null,
+        typography: settings.typography || null,
+        footerPages: settings.footerPages || null,
+        faqs: settings.faqs || null,
+        taxNumber: settings.taxNumber || '310984726100003',
+        crNumber: settings.commercialReg || settings.crNumber || '1010784920',
+        commercialReg: settings.commercialReg || settings.crNumber || '1010784920',
+        currencyDisplayMode: settings.currencyDisplayMode || 'symbol'
       }
     });
   });

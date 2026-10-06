@@ -25,7 +25,7 @@ export const CalendarTimeline: React.FC<CalendarTimelineProps> = ({ onSelectUnit
     const d = new Date(today);
     d.setDate(d.getDate() + dayOffset + i);
     const dateStr = d.toISOString().slice(0, 10);
-    const dayName = d.toLocaleDateString('ar-SA', { weekday: 'short' });
+    const dayName = d.toLocaleDateString('en-GB', { weekday: 'short' });
     const dayNum = d.getDate();
     const isToday = d.getTime() === today.getTime();
     dates.push({ dateStr, dayName, dayNum, isToday });
