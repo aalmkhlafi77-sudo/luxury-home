@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { HeroCarouselCustomizer } from './HeroCarouselCustomizer';
 import { useAppStore } from '../../store/useAppStore';
 import {
   ContentSection,
@@ -65,12 +66,12 @@ const SECTION_OPTIONS = [
 ];
 
 interface ContentCustomizerProps {
-  initialTab?: 'branding' | 'typography' | 'navigation' | 'sections' | 'theme';
+  initialTab?: 'branding' | 'typography' | 'navigation' | 'sections' | 'theme' | 'hero';
 }
 
 export const ContentCustomizer: React.FC<ContentCustomizerProps> = ({ initialTab = 'theme' }) => {
   const { state, updateCompanySettings, updateContentSections, resetToFactoryDefaults } = useAppStore();
-  const [activeTab, setActiveTab] = useState<'branding' | 'typography' | 'navigation' | 'sections' | 'theme'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'branding' | 'typography' | 'navigation' | 'sections' | 'theme' | 'hero'>(initialTab);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   // Selected Section for Typography Customization
@@ -273,6 +274,12 @@ export const ContentCustomizer: React.FC<ContentCustomizerProps> = ({ initialTab
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 bg-white rounded-3xl border border-[#E3DCCD]">
         <div className="flex items-center gap-1.5 p-1 bg-[#F7F3EB] rounded-xl select-none flex-wrap">
           <button
+            onClick={() => setActiveTab('hero')}
+            className={`px-3.5 py-2 rounded-lg font-bold transition-all cursor-pointer flex items-center gap-1.5 ${activeTab === 'hero' ? 'bg-[#282824] text-white shadow-xs' : 'text-[#68675F] hover:text-[#282824]'}`}
+          >
+            <Sparkles className="h-4 w-4 text-[#B69A68]" />الهيرو المتحرك
+          </button>
+          <button
             onClick={() => setActiveTab('typography')}
             className={`px-3.5 py-2 rounded-lg font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
               activeTab === 'typography' ? 'bg-[#282824] text-white shadow-xs' : 'text-[#68675F] hover:text-[#282824]'
@@ -335,6 +342,8 @@ export const ContentCustomizer: React.FC<ContentCustomizerProps> = ({ initialTab
           <span className="font-semibold">{successMsg}</span>
         </div>
       )}
+
+      {activeTab === 'hero' && <HeroCarouselCustomizer />}
 
       {/* TYPOGRAPHY & TEXT CUSTOMIZATION TAB */}
       {activeTab === 'typography' && (
