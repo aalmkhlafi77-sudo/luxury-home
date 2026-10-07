@@ -867,6 +867,22 @@ export interface HeroCarouselConfig {
   slides: HeroCarouselSlide[];
 }
 
+export interface OfferCarouselSlide {
+  id: string;
+  label: string;
+  imageUrl: string;
+  visible: boolean;
+}
+
+export interface OfferCarouselConfig {
+  badge: string;
+  title: string;
+  description: string;
+  buttonLabel: string;
+  autoplayMs: number;
+  slides: OfferCarouselSlide[];
+}
+
 export interface CompanySettings {
   companyName: string;
   companyNameEn: string;
@@ -885,7 +901,7 @@ export interface CompanySettings {
   timezone: string;
   footerPages?: Record<string, FooterPageItem>;
   faqs?: FaqItem[];
-  themeConfig?: Record<string, unknown> & { heroCarousel?: HeroCarouselConfig };
+  themeConfig?: Record<string, unknown> & { heroCarousel?: HeroCarouselConfig; offersCarousel?: OfferCarouselConfig };
   // إعدادات النصوص والتنسيق البصري المتقدم
   typography?: CustomizableTypographyConfig;
   // اعدادات التنقل الهيدر والشريط السفلي
