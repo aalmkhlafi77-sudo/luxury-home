@@ -122,13 +122,12 @@ export const FeaturedUnitsCarousel: React.FC<FeaturedUnitsCarouselProps> = ({
                 className="glass-ivory-card rounded-2xl overflow-hidden border border-[#E3DCCD] hover:border-[#B69A68] transition-all duration-300 hover:shadow-lg flex flex-col group"
               >
                 {/* Image Frame */}
-                <div className="relative h-56 w-full overflow-hidden bg-[#282824]">
+                <div className="relative h-56 w-full overflow-hidden">
                   <ImageWithFallback
                     src={coverMedia}
                     alt={unit.title}
                     fallbackText={unit.title}
-                    fit="fill"
-                    className="w-full h-full"
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-[#282824]/60 via-transparent to-transparent" />
                   
