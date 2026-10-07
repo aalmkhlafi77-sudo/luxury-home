@@ -213,7 +213,15 @@ export const Header: React.FC<HeaderProps> = ({
           {/* ========================================================= */}
           {/* ZONE 2: DESKTOP NAVIGATION LINKS (Middle) */}
           {/* ========================================================= */}
-          <nav ref={desktopNavRef} className="hidden lg:flex relative items-center gap-4 xl:gap-6 text-[13px] font-medium text-[#68675F]">
+          <nav
+            ref={desktopNavRef}
+            className="hidden lg:flex relative items-center gap-4 xl:gap-6 text-[13px] font-medium text-[var(--header-nav-text-color)]"
+            style={{
+              '--header-nav-text-color': navConfig?.headerNavTextColor || '#68675F',
+              '--header-nav-hover-color': navConfig?.headerNavHoverColor || '#282824',
+              '--header-nav-active-text-color': navConfig?.headerNavActiveTextColor || '#282824',
+            } as React.CSSProperties}
+          >
             {navLinks.map(link => {
               const isActive = activeSection === link.targetSectionId;
               return (
@@ -223,7 +231,7 @@ export const Header: React.FC<HeaderProps> = ({
                   data-active={isActive ? "true" : undefined}
                   aria-current={isActive ? "location" : undefined}
                   className={`relative py-1 transition-colors whitespace-nowrap cursor-pointer ${
-                    isActive ? 'text-[#282824] font-bold' : 'hover:text-[#282824]'
+                    isActive ? 'text-[var(--header-nav-active-text-color)] font-bold' : 'hover:text-[var(--header-nav-hover-color)]'
                   }`}
                 >
                   <span>{link.label}</span>
@@ -236,7 +244,7 @@ export const Header: React.FC<HeaderProps> = ({
                 key={activeSection}
                 aria-hidden="true"
                 className="header-nav-indicator"
-                style={{ left: activeIndicator.left, width: activeIndicator.width }}
+                style={{ left: activeIndicator.left, width: activeIndicator.width, backgroundColor: navConfig?.navActiveColor || '#B69A68' }}
               />
             )}
           </nav>
