@@ -12,7 +12,8 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy",
     "clean": "rm -rf dist dist-server",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test:hero-carousel": "tsx scripts/test-hero-carousel.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

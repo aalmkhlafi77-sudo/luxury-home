@@ -229,7 +229,7 @@ export default function App() {
       />
 
       {/* Main Public Website Sections */}
-      <main className="flex-1" style={{ paddingTop: 'var(--site-header-height)' }}>
+      <main className="flex-1">
         
         {/* 2. Hero Section */}
         <HeroSection
