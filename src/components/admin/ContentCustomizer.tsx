@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { HeroCarouselCustomizer } from './HeroCarouselCustomizer';
+import { OfferCarouselCustomizer } from './OfferCarouselCustomizer';
 import { useAppStore } from '../../store/useAppStore';
 import {
   ContentSection,
@@ -66,7 +67,7 @@ const SECTION_OPTIONS = [
 ];
 
 interface ContentCustomizerProps {
-  initialTab?: 'branding' | 'typography' | 'navigation' | 'sections' | 'theme' | 'hero';
+  initialTab?: 'branding' | 'typography' | 'navigation' | 'sections' | 'theme' | 'hero' | 'offers';
 }
 
 export const ContentCustomizer: React.FC<ContentCustomizerProps> = ({ initialTab = 'theme' }) => {
@@ -280,6 +281,12 @@ export const ContentCustomizer: React.FC<ContentCustomizerProps> = ({ initialTab
             <Sparkles className="h-4 w-4 text-[#B69A68]" />الهيرو المتحرك
           </button>
           <button
+            onClick={() => setActiveTab('offers')}
+            className={`px-3.5 py-2 rounded-lg font-bold transition-all cursor-pointer flex items-center gap-1.5 ${activeTab === 'offers' ? 'bg-[#282824] text-white shadow-xs' : 'text-[#68675F] hover:text-[#282824]'}`}
+          >
+            <Sparkles className="h-4 w-4 text-[#B69A68]" />سلايدر العروض
+          </button>
+          <button
             onClick={() => setActiveTab('typography')}
             className={`px-3.5 py-2 rounded-lg font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
               activeTab === 'typography' ? 'bg-[#282824] text-white shadow-xs' : 'text-[#68675F] hover:text-[#282824]'
@@ -344,6 +351,7 @@ export const ContentCustomizer: React.FC<ContentCustomizerProps> = ({ initialTab
       )}
 
       {activeTab === 'hero' && <HeroCarouselCustomizer />}
+      {activeTab === 'offers' && <OfferCarouselCustomizer />}
 
       {/* TYPOGRAPHY & TEXT CUSTOMIZATION TAB */}
       {activeTab === 'typography' && (

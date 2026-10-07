@@ -39,7 +39,8 @@ import {
   City,
   FaqItem,
   FooterPageItem,
-  HeroCarouselConfig
+  HeroCarouselConfig,
+  OfferCarouselConfig
 } from '../types';
 import {
   initialCompanySettings,
@@ -1645,6 +1646,33 @@ export function useAppStore() {
           performedBy: 'المسؤول الإداري',
           role: 'SUPER_ADMIN',
           details: 'تم حفظ إعدادات شرائح الهيرو المتحرك.',
+          timestamp: new Date().toISOString(),
+        },
+        ...globalState.auditLogs
+      ]
+    };
+    notify();
+    return persistedThemeConfig;
+  }, []);
+
+
+  const saveOfferCarousel = useCallback(async (offersCarousel: OfferCarouselConfig) => {
+    const currentThemeConfig = (globalState.settings.themeConfig || {}) as Record<string, unknown>;
+    const themeConfig = { ...currentThemeConfig, offersCarousel };
+    const response = await apiCall('/api/settings', 'PUT', { themeConfig });
+    const persistedThemeConfig = response?.settings?.themeConfig || themeConfig;
+    globalState = {
+      ...globalState,
+      settings: { ...globalState.settings, themeConfig: persistedThemeConfig },
+      auditLogs: [
+        {
+          id: `log-${Date.now()}`,
+          action: 'تحديث سلايدر العروض',
+          entity: 'CompanySettings',
+          entityId: 'offersCarousel',
+          performedBy: 'المسؤول الإداري',
+          role: 'SUPER_ADMIN',
+          details: 'تم حفظ نصوص وصور سلايدر عروض المباني.',
           timestamp: new Date().toISOString(),
         },
         ...globalState.auditLogs
@@ -3424,6 +3452,7 @@ export function useAppStore() {
     logSmartLockPinView,
     updateCompanySettings,
     saveHeroCarousel,
+    saveOfferCarousel,
     updateContentSections,
     resetToFactoryDefaults,
     // City, Building & Floor Management
