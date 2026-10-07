@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { Unit } from '../../types';
+import { CurrencyAmount } from '../../utils/formatters';
 import {
   Building2,
   Sparkles,
@@ -311,8 +312,9 @@ export const OperationsGrid: React.FC<OperationsGridProps> = ({ onSelectUnit }) 
                                 <span className="font-bold text-sm">
                                   شقة #{unit.unitNumber}
                                 </span>
-                                <span className="text-[11px] font-semibold tabular-nums opacity-85">
-                                  {unit.dailyRate} ر.س / الليلة
+                                <span className="text-[11px] font-semibold tabular-nums opacity-85 flex items-center gap-1">
+                                  <CurrencyAmount amount={unit.dailyRate} symbolSize={10} />
+                                  <span>/ الليلة</span>
                                 </span>
                               </div>
 

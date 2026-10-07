@@ -130,7 +130,7 @@ export const ExpenseCategoriesManager: React.FC = () => {
       const created = generateRecurringExpenseAccruals(targetMonth, 'مشرف التكاليف والمالية');
       if (created && created.length > 0) {
         const totalSum = created.reduce((s, e) => s + e.amount, 0);
-        setGeneratedMsg(`تم بنجاح توليد عدد (${formatNumber(created.length)}) قيد استحقاق دوري لشهر ${targetMonth} بإجمالي ${formatNumber(totalSum)} ر.س`);
+        setGeneratedMsg(`تم بنجاح توليد عدد (${formatNumber(created.length)}) قيد استحقاق دوري لشهر ${targetMonth} بإجمالي ${formatNumber(totalSum)} SAR`);
       } else {
         setGeneratedMsg(`تم فحص الجداول: استحقاقات شهر ${targetMonth} مولدة بالفعل مسبقاً لمنع التكرار المحاسبي.`);
       }

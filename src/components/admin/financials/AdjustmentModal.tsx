@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAppStore } from '../../../store/useAppStore';
 import { X, BadgePercent, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { formatNumber } from '../../../utils/formatters';
 
 interface Props {
   initialTenantNationalId?: string;
@@ -126,7 +127,7 @@ export const AdjustmentModal: React.FC<Props> = ({
               <option value="">-- تسوية عامة على كشف الحساب الإجمالي --</option>
               {selectedLease?.installments.filter(i => i.remainingAmount > 0).map(i => (
                 <option key={i.id} value={i.id}>
-                  {i.label || `الدفعة رقم #${i.installmentNumber}`} (المتبقي: {i.remainingAmount} ر.س | الاستحقاق: {i.dueDate})
+                  {i.label || `الدفعة رقم #${i.installmentNumber}`} (المتبقي: {formatNumber(i.remainingAmount)} SAR | الاستحقاق: {i.dueDate})
                 </option>
               ))}
             </select>

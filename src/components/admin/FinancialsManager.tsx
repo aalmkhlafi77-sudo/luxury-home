@@ -21,7 +21,7 @@ import { ExpenseCategoriesManager } from './financials/ExpenseCategoriesManager'
 import { PaymentAllocationModal } from './financials/PaymentAllocationModal';
 import { AdjustmentModal } from './financials/AdjustmentModal';
 import { DepositSettlementModal } from './financials/DepositSettlementModal';
-import { CurrencyAmount, formatDate } from '../../utils/formatters';
+import { CurrencyAmount, formatDate, formatNumber } from '../../utils/formatters';
 
 export const FinancialsManager: React.FC = () => {
   const { state } = useAppStore();
@@ -217,7 +217,7 @@ export const FinancialsManager: React.FC = () => {
       return;
     }
 
-    if (confirm(`هل أنت متأكد من تسوية وإعادة كامل وديعة التأمين وقدرها ${fullAmount} ر.س للعميل؟`)) {
+    if (confirm(`هل أنت متأكد من تسوية وإعادة كامل وديعة التأمين وقدرها ${formatNumber(fullAmount)} SAR للعميل؟`)) {
       await submitDepositOp({
         depositId,
         refundAmount: fullAmount.toFixed(2),
@@ -561,7 +561,7 @@ export const FinancialsManager: React.FC = () => {
                     <span>تنبيه: توجد محاولة معلّقة سابقة لم يتم تأكيد نجاحها!</span>
                   </p>
                   <div className="text-[11px] text-[#68675F] space-y-1 bg-white p-3 rounded-xl border border-[#E3DCCD]">
-                    <div><strong>مبلغ الاقتطاع المطلوب:</strong> {pendingOperation.current.payload.deductedAmount} ر.س</div>
+                    <div><strong>مبلغ الاقتطاع المطلوب:</strong> <CurrencyAmount amount={pendingOperation.current.payload.deductedAmount} /></div>
                     <div><strong>مبرر الاقتطاع:</strong> {pendingOperation.current.payload.deductionReason}</div>
                     <div><strong>المرجع المالي:</strong> {pendingOperation.current.payload.refundReference}</div>
                     <div className="font-mono text-[9px] text-gray-500 mt-1 border-t border-gray-100 pt-1">

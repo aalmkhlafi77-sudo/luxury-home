@@ -238,7 +238,7 @@ export const DepositSettlementModal: React.FC<Props> = ({
     }
     if (amount > availableDeposit) {
       setErrorMsg(
-        `تعذر إتمام التسوية، المبلغ الموزع أكبر من رصيد التأمين المحتجز المتاح وهو (${availableDeposit} ر.س)`
+        `تعذر إتمام التسوية، المبلغ الموزع أكبر من رصيد التأمين المحتجز المتاح وهو (${formatNumber(availableDeposit)} SAR)`
       );
       return;
     }
@@ -323,7 +323,7 @@ export const DepositSettlementModal: React.FC<Props> = ({
                   <span>تنبيه: توجد محاولة تسوية معلّقة سابقة لم يتم تأكيد نجاحها!</span>
                 </p>
                 <div className="text-[11px] text-[#68675F] space-y-1 bg-white p-3 rounded-xl border border-[#E3DCCD]">
-                  <div><strong>مبلغ التسوية المطلوبة:</strong> {pendingSettleOp.payload.amount} ر.س</div>
+                  <div><strong>مبلغ التسوية المطلوبة:</strong> <CurrencyAmount amount={pendingSettleOp.payload.amount} /></div>
                   <div><strong>المبرر والسبب:</strong> {pendingSettleOp.payload.reason}</div>
                   <div><strong>المسؤول المعتمد:</strong> {pendingSettleOp.payload.authorizedBy}</div>
                   <div className="font-mono text-[9px] text-gray-500 mt-1 border-t border-gray-100 pt-1">
@@ -394,7 +394,7 @@ export const DepositSettlementModal: React.FC<Props> = ({
                     .filter(d => d.status === 'held' || d.status === 'partially_refunded')
                     .map(d => (
                       <option key={d.id} value={d.id}>
-                        {d.guestName} - وديعة #{d.id} (المتاح: {d.amount - (d.deductions?.reduce((s: number, x: any) => s + x.amount, 0) || 0)} ر.س)
+                        {d.guestName} - وديعة #{d.id} (المتاح: {formatNumber(d.amount - (d.deductions?.reduce((sum: number, x: any) => sum + x.amount, 0) || 0))} SAR)
                       </option>
                     ))}
                 </select>
@@ -426,7 +426,7 @@ export const DepositSettlementModal: React.FC<Props> = ({
                   <option value="">-- اختر قسط متأخر من القائمة للتغطية --</option>
                   {pendingInstallments.map(i => (
                     <option key={i.id} value={i.id}>
-                      {i.label || `الدفعة رقم #${i.installmentNumber}`} (المستحق: {i.remainingAmount} ر.س | الموعد: {i.dueDate})
+                      {i.label || `الدفعة رقم #${i.installmentNumber}`} (المستحق: {formatNumber(i.remainingAmount)} SAR | الموعد: {i.dueDate})
                     </option>
                   ))}
                 </select>

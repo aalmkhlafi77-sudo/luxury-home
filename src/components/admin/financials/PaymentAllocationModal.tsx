@@ -96,7 +96,7 @@ export const PaymentAllocationModal: React.FC<Props> = ({
       return;
     }
     if (totalAllocated > amount) {
-      setErrorMsg(`تعذر توزيع الرصيد، المبالغ الموزعة المستهدفة للأقساط (${totalAllocated} ر.س) تفوق إجمالي قيمة الدفعة المدفوعة (${amount} ر.س)`);
+      setErrorMsg(`تعذر توزيع الرصيد، المبالغ الموزعة المستهدفة للأقساط (${formatNumber(totalAllocated)} SAR) تفوق إجمالي قيمة الدفعة المدفوعة (${formatNumber(amount)} SAR)`);
       return;
     }
 
@@ -268,9 +268,9 @@ export const PaymentAllocationModal: React.FC<Props> = ({
                         <div className="text-[10px] text-[#68675F] flex items-center gap-2 mt-0.5 justify-start">
                           <span>الاستحقاق: {inst.dueDate}</span>
                           <span>·</span>
-                          <span>القيمة: {inst.amount} ر.س</span>
+                          <span>القيمة: <CurrencyAmount amount={inst.amount} symbolSize={10} /></span>
                           <span>·</span>
-                          <span className="text-rose-700 font-semibold">المتبقي: {inst.remainingAmount} ر.س</span>
+                          <span className="text-rose-700 font-semibold">المتبقي: <CurrencyAmount amount={inst.remainingAmount} symbolSize={10} /></span>
                         </div>
                       </div>
                       <div className="w-32 flex items-center gap-1.5">
@@ -283,7 +283,7 @@ export const PaymentAllocationModal: React.FC<Props> = ({
                           placeholder="0"
                           className="w-full bg-white border border-[#E3DCCD] rounded-lg px-2 py-1 text-xs text-left font-bold"
                         />
-                        <span className="text-[10px] text-[#68675F]">ر.س</span>
+                        <span className="text-[10px] text-[#68675F] font-bold">SAR</span>
                       </div>
                     </div>
                   );

@@ -449,7 +449,7 @@ export const ExpenseRegistrationModal: React.FC<Props> = ({
                 type="text"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder="مثال: إيجار عمارة برج النخيل بالكامل لعام ٢٠٢٦ ومسدد مقدماً..."
+                placeholder="مثال: إيجار عمارة برج النخيل بالكامل لعام 2026 ومسدد مقدماً..."
                 className="w-full bg-white border border-[#E3DCCD] rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-[#B69A68]"
                 required
               />
@@ -760,7 +760,7 @@ export const ExpenseRegistrationModal: React.FC<Props> = ({
                 type="text"
                 value={editReason}
                 onChange={(e) => setEditReason(e.target.value)}
-                placeholder="مثال: تصحيح فترة التغطية لتكون سنة كاملة بدلاً من ٦ أشهر..."
+                placeholder="مثال: تصحيح فترة التغطية لتكون سنة كاملة بدلاً من 6 أشهر..."
                 className="w-full bg-[#FAF8F5] border border-amber-300 rounded-xl px-3 py-2 text-xs focus:outline-none"
                 required
               />
