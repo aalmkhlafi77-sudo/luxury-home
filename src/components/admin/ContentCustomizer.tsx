@@ -48,6 +48,15 @@ const FONT_SIZES = [
   { label: 'عنوان فندقي فخم (56px / 3.5rem)', value: 3.5 },
 ];
 
+const NAV_COLOR_OPTIONS = [
+  { key: 'headerNavTextColor', label: 'لون روابط الهيدر', defaultColor: '#68675F' },
+  { key: 'headerNavHoverColor', label: 'لون الرابط عند التحويم', defaultColor: '#B69A68' },
+  { key: 'headerNavActiveTextColor', label: 'لون الرابط النشط', defaultColor: '#282824' },
+  { key: 'navActiveColor', label: 'لون مؤشر العنصر النشط', defaultColor: '#B69A68' },
+  { key: 'footerNavTextColor', label: 'لون روابط الفوتر', defaultColor: '#B8B5AC' },
+  { key: 'footerNavHoverColor', label: 'لون روابط الفوتر عند التحويم', defaultColor: '#FFFFFF' },
+] as const;
+
 const FONT_WEIGHTS: { label: string; value: FontWeight }[] = [
   { label: 'عادي (Regular 400)', value: 'normal' },
   { label: 'متوسط (Medium 500)', value: 'medium' },
@@ -92,6 +101,11 @@ export const ContentCustomizer: React.FC<ContentCustomizerProps> = ({ initialTab
       logoMaxHeightPx: 44,
       stickyHeader: true,
       navActiveColor: '#B69A68',
+      headerNavTextColor: '#68675F',
+      headerNavHoverColor: '#B69A68',
+      headerNavActiveTextColor: '#282824',
+      footerNavTextColor: '#B8B5AC',
+      footerNavHoverColor: '#FFFFFF',
       navLinks: [
         { id: 'nav_home', label: 'الرئيسية', targetSectionId: 'hero', visible: true, order: 1 },
         { id: 'nav_buildings', label: 'المجمعات', targetSectionId: 'buildings', visible: true, order: 2 },
@@ -240,8 +254,18 @@ export const ContentCustomizer: React.FC<ContentCustomizerProps> = ({ initialTab
 
   const handleSaveNavigation = (e: React.FormEvent) => {
     e.preventDefault();
-    updateCompanySettings({ navigation: navForm });
-    setSuccessMsg('تم حفظ وتحديث إعدادات نظام التنقل الهيدر والشريط السفلي بنجاح.');
+    const savedNavigation: NavigationSettings = {
+      ...navForm,
+      headerNavTextColor: navForm.headerNavTextColor || '#68675F',
+      headerNavHoverColor: navForm.headerNavHoverColor || '#B69A68',
+      headerNavActiveTextColor: navForm.headerNavActiveTextColor || '#282824',
+      navActiveColor: navForm.navActiveColor || '#B69A68',
+      footerNavTextColor: navForm.footerNavTextColor || '#B8B5AC',
+      footerNavHoverColor: navForm.footerNavHoverColor || '#FFFFFF',
+    };
+    setNavForm(savedNavigation);
+    updateCompanySettings({ navigation: savedNavigation });
+    setSuccessMsg('تم حفظ وتحديث ألوان وروابط قوائم الهيدر والفوتر بنجاح.');
     setTimeout(() => setSuccessMsg(null), 3000);
   };
 
@@ -1134,6 +1158,64 @@ export const ContentCustomizer: React.FC<ContentCustomizerProps> = ({ initialTab
                   onChange={(e) => setNavForm(prev => ({ ...prev, stickyHeader: e.target.checked }))}
                   className="w-4 h-4 accent-[#282824] cursor-pointer"
                 />
+              </div>
+            </div>
+          </div>
+
+          {/* Header and Footer Navigation Colors */}
+          <div className="p-4 bg-[#F7F3EB]/60 rounded-2xl border border-[#E3DCCD] space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <div>
+                <h5 className="font-bold text-xs text-[#282824]">🎨 ألوان عناصر قوائم الهيدر والفوتر</h5>
+                <p className="text-[11px] text-[#68675F] mt-1">تتحدث المعاينة فوراً، ثم احفظ لتطبيق الألوان على الموقع.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setNavForm(prev => ({
+                  ...prev,
+                  headerNavTextColor: '#68675F',
+                  headerNavHoverColor: '#B69A68',
+                  headerNavActiveTextColor: '#282824',
+                  navActiveColor: '#B69A68',
+                  footerNavTextColor: '#B8B5AC',
+                  footerNavHoverColor: '#FFFFFF',
+                }))}
+                className="text-[11px] font-semibold text-[#68675F] hover:text-[#282824] px-3 py-2 rounded-lg border border-[#E3DCCD] bg-white"
+              >
+                استعادة ألوان القوائم الافتراضية
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {NAV_COLOR_OPTIONS.map(field => {
+                const color = navForm[field.key] || field.defaultColor;
+                return (
+                  <label key={field.key} className="p-3 bg-white rounded-xl border border-[#E3DCCD] flex items-center justify-between gap-3 cursor-pointer">
+                    <span className="text-xs font-semibold text-[#282824]">{field.label}</span>
+                    <span className="flex items-center gap-2">
+                      <code dir="ltr" className="text-[10px] text-[#68675F]">{color.toUpperCase()}</code>
+                      <input
+                        type="color"
+                        aria-label={field.label}
+                        value={color}
+                        onChange={e => setNavForm(prev => ({ ...prev, [field.key]: e.target.value }))}
+                        className="w-9 h-9 p-1 border border-[#E3DCCD] rounded-lg cursor-pointer"
+                      />
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="rounded-xl border border-[#E3DCCD] px-4 py-3 flex items-center justify-center gap-5 text-sm font-semibold" style={{ backgroundColor: themeForm.headerBg || '#FFFCF6' }}>
+                <span style={{ color: navForm.headerNavTextColor || '#68675F' }}>الرئيسية</span>
+                <span style={{ color: navForm.headerNavHoverColor || '#B69A68' }}>المجمعات</span>
+                <span className="border-b-2 pb-1" style={{ color: navForm.headerNavActiveTextColor || '#282824', borderColor: navForm.navActiveColor || '#B69A68' }}>الوحدات</span>
+              </div>
+              <div className="rounded-xl px-4 py-3 flex items-center justify-center gap-5 text-sm font-semibold" style={{ backgroundColor: themeForm.footerBg || '#282824' }}>
+                <span style={{ color: navForm.footerNavTextColor || '#B8B5AC' }}>روابط سريعة</span>
+                <span style={{ color: navForm.footerNavHoverColor || '#FFFFFF' }}>الشروط والأحكام</span>
               </div>
             </div>
           </div>

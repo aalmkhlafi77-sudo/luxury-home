@@ -17,11 +17,18 @@ export const Footer: React.FC<FooterProps> = ({
 }) => {
   const { state } = useAppStore();
   const customFooterBg = state.settings.theme?.footerBg || '#282824';
+  const navigation = state.settings.navigation;
+  const footerNavTextColor = navigation?.footerNavTextColor || '#B8B5AC';
+  const footerNavHoverColor = navigation?.footerNavHoverColor || '#FFFFFF';
 
   return (
     <footer
       className="text-[#EFE9DF] pt-16 pb-12 border-t border-[#3e3e38] transition-colors duration-200"
-      style={{ backgroundColor: customFooterBg }}
+      style={{
+        backgroundColor: customFooterBg,
+        '--footer-nav-text-color': footerNavTextColor,
+        '--footer-nav-hover-color': footerNavHoverColor,
+      } as React.CSSProperties}
     >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-10 pb-12 border-b border-[#3e3e38]">
@@ -87,24 +94,24 @@ export const Footer: React.FC<FooterProps> = ({
             <h4 className="text-sm font-semibold text-white tracking-wide">
               روابط سريعة
             </h4>
-            <ul className="space-y-2 text-sm text-[#EFE9DF]/75">
+            <ul className="space-y-2 text-sm text-[var(--footer-nav-text-color)]">
               <li>
-                <button onClick={() => onScrollToSection('hero')} className="hover:text-white transition-colors cursor-pointer">
+                <button onClick={() => onScrollToSection('hero')} className="hover:text-[var(--footer-nav-hover-color)] transition-colors cursor-pointer">
                   مقدمة الترحيب
                 </button>
               </li>
               <li>
-                <button onClick={() => onScrollToSection('units')} className="hover:text-white transition-colors cursor-pointer">
+                <button onClick={() => onScrollToSection('units')} className="hover:text-[var(--footer-nav-hover-color)] transition-colors cursor-pointer">
                   أجنحتنا السكنية المتاحة
                 </button>
               </li>
               <li>
-                <button onClick={() => onScrollToSection('amenities')} className="hover:text-white transition-colors cursor-pointer">
+                <button onClick={() => onScrollToSection('amenities')} className="hover:text-[var(--footer-nav-hover-color)] transition-colors cursor-pointer">
                   الخدمات والمرافق
                 </button>
               </li>
               <li>
-                <button onClick={() => onScrollToSection('faq')} className="hover:text-white transition-colors cursor-pointer">
+                <button onClick={() => onScrollToSection('faq')} className="hover:text-[var(--footer-nav-hover-color)] transition-colors cursor-pointer">
                   الأسئلة الشائعة
                 </button>
               </li>
@@ -167,10 +174,10 @@ export const Footer: React.FC<FooterProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-6 select-none justify-center sm:justify-end">
-            <button onClick={() => onOpenPage('about')} className="hover:text-white transition-colors cursor-pointer text-xs sm:text-sm font-medium">من نحن</button>
-            <button onClick={() => onOpenPage('terms')} className="hover:text-white transition-colors cursor-pointer text-xs sm:text-sm font-medium">الشروط والأحكام</button>
-            <button onClick={() => onOpenPage('privacy')} className="hover:text-white transition-colors cursor-pointer text-xs sm:text-sm font-medium">سياسة الخصوصية والأمن</button>
-            <button onClick={() => onOpenPage('regulations')} className="hover:text-white transition-colors cursor-pointer text-xs sm:text-sm font-medium">لوائح الإقامة الفندقية</button>
+            <button onClick={() => onOpenPage('about')} className="text-[var(--footer-nav-text-color)] hover:text-[var(--footer-nav-hover-color)] transition-colors cursor-pointer text-xs sm:text-sm font-medium">من نحن</button>
+            <button onClick={() => onOpenPage('terms')} className="text-[var(--footer-nav-text-color)] hover:text-[var(--footer-nav-hover-color)] transition-colors cursor-pointer text-xs sm:text-sm font-medium">الشروط والأحكام</button>
+            <button onClick={() => onOpenPage('privacy')} className="text-[var(--footer-nav-text-color)] hover:text-[var(--footer-nav-hover-color)] transition-colors cursor-pointer text-xs sm:text-sm font-medium">سياسة الخصوصية والأمن</button>
+            <button onClick={() => onOpenPage('regulations')} className="text-[var(--footer-nav-text-color)] hover:text-[var(--footer-nav-hover-color)] transition-colors cursor-pointer text-xs sm:text-sm font-medium">لوائح الإقامة الفندقية</button>
           </div>
         </div>
       </div>
