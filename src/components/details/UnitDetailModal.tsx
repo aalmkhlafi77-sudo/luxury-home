@@ -123,7 +123,7 @@ export const UnitDetailModal: React.FC<UnitDetailModalProps> = ({
                 src={currentCover}
                 alt={unit.title}
                 fallbackText={unit.title}
-                fit="contain"
+                fit="cover"
                 className="w-full h-full"
               />
               <div className="absolute top-4 right-4 flex items-center gap-2">
@@ -187,7 +187,7 @@ export const UnitDetailModal: React.FC<UnitDetailModalProps> = ({
                     currentCover === m.url ? 'border-[#B69A68] scale-105 shadow-sm' : 'border-transparent opacity-75 hover:opacity-100'
                   }`}
                 >
-                  <ImageWithFallback src={m.url} alt={m.title} fit="contain" className="w-full h-full" />
+                  <ImageWithFallback src={m.url} alt={m.title} fit="cover" className="w-full h-full" />
                 </button>
               ))}
             </div>
