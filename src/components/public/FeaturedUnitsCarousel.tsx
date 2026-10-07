@@ -127,7 +127,7 @@ export const FeaturedUnitsCarousel: React.FC<FeaturedUnitsCarouselProps> = ({
                     src={coverMedia}
                     alt={unit.title}
                     fallbackText={unit.title}
-                    fit="cover"
+                    fit="fill"
                     className="w-full h-full"
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-[#282824]/60 via-transparent to-transparent" />
