@@ -4,7 +4,7 @@ import { Building2 } from 'lucide-react';
 interface ImageWithFallbackProps extends React.ImgHTMLAttributes<HTMLImageElement> {
   fallbackText?: string;
   className?: string;
-  fit?: 'cover' | 'contain';
+  fit?: 'cover' | 'contain' | 'fill';
 }
 
 export const ImageWithFallback: React.FC<ImageWithFallbackProps> = ({
@@ -17,7 +17,7 @@ export const ImageWithFallback: React.FC<ImageWithFallbackProps> = ({
 }) => {
   const [hasError, setHasError] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const imageFitClass = fit === 'contain' ? 'object-contain' : 'object-cover';
+  const imageFitClass = fit === 'contain' ? 'object-contain' : fit === 'fill' ? 'object-fill' : 'object-cover';
 
   if (hasError || !src) {
     return (
