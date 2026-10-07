@@ -188,84 +188,38 @@ async function initializeFallbackState() {
     }
   }
 
-  const initialAdminUsername = process.env.INITIAL_ADMIN_USERNAME || 'admin';
-  const initialAdminPassword = process.env.INITIAL_ADMIN_PASSWORD || 'Admin@2026!';
-  const initialAdminEmail = process.env.INITIAL_ADMIN_EMAIL || 'admin@luxuryhome.sa';
+  const initialAdminUsername = process.env.INITIAL_ADMIN_USERNAME?.trim();
+  const initialAdminPassword = process.env.INITIAL_ADMIN_PASSWORD;
+  const initialAdminEmail = process.env.INITIAL_ADMIN_EMAIL?.trim() || 'admin@luxuryhome.sa';
+  const hasInitialAdminCredentials = Boolean(initialAdminUsername && initialAdminPassword);
+
+  if (Boolean(initialAdminUsername) !== Boolean(initialAdminPassword)) {
+    throw new Error('INITIAL_ADMIN_USERNAME و INITIAL_ADMIN_PASSWORD يجب ضبطهما معاً.');
+  }
+  if (initialAdminPassword && initialAdminPassword.length < 12) {
+    throw new Error('INITIAL_ADMIN_PASSWORD يجب ألا يقل عن 12 حرفاً.');
+  }
+
+  const createInitialAdminUser = async () => {
+    if (!hasInitialAdminCredentials) return null;
+    return {
+      id: `usr-${crypto.randomUUID()}`,
+      username: initialAdminUsername!,
+      name: 'مدير النظام الرئيسي',
+      email: initialAdminEmail,
+      passwordHash: await hashPassword(initialAdminPassword!),
+      role: 'SUPER_ADMIN',
+      allowedProperties: ['all'],
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+  };
 
   if (!memoryState) {
-    const adminHash = await hashPassword(initialAdminPassword);
-    const users: any[] = [
-      {
-        id: 'usr-admin-default-01',
-        username: initialAdminUsername,
-        name: 'مدير النظام الرئيسي',
-        email: initialAdminEmail,
-        passwordHash: adminHash,
-        role: 'SUPER_ADMIN',
-        allowedProperties: ['all'],
-        isActive: true,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      }
-    ];
-
-    if (initialAdminUsername !== 'admin') {
-      const stdAdminHash = await hashPassword('Admin@2026!');
-      users.push({
-        id: 'usr-admin-std-01',
-        username: 'admin',
-        name: 'مدير النظام العام',
-        email: 'admin@luxuryhome.sa',
-        passwordHash: stdAdminHash,
-        role: 'SUPER_ADMIN',
-        allowedProperties: ['all'],
-        isActive: true,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      });
-    }
-
-    const managerHash = await hashPassword('Manager@2026!');
-    users.push({
-      id: 'usr-manager-default-02',
-      username: 'manager',
-      name: 'مدير العقارات والتشغيل',
-      email: 'manager@luxuryhome.sa',
-      passwordHash: managerHash,
-      role: 'PROPERTY_MANAGER',
-      allowedProperties: ['all'],
-      isActive: true,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    });
-
-    const accountantHash = await hashPassword('Account@2026!');
-    users.push({
-      id: 'usr-accountant-default-03',
-      username: 'accountant',
-      name: 'المحاسب المالي المعتمد',
-      email: 'accountant@luxuryhome.sa',
-      passwordHash: accountantHash,
-      role: 'ACCOUNTANT',
-      allowedProperties: ['all'],
-      isActive: true,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    });
-
-    const receptionHash = await hashPassword('Recept@2026!');
-    users.push({
-      id: 'usr-reception-default-04',
-      username: 'reception',
-      name: 'موظف الاستقبال والضيافة',
-      email: 'reception@luxuryhome.sa',
-      passwordHash: receptionHash,
-      role: 'RECEPTIONIST',
-      allowedProperties: ['all'],
-      isActive: true,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    });
+    const users: any[] = [];
+    const initialAdmin = await createInitialAdminUser();
+    if (initialAdmin) users.push(initialAdmin);
 
     memoryState = {
       users,
@@ -321,23 +275,22 @@ async function initializeFallbackState() {
         companyNameEn: 'Luxury Home'
       };
     }
-    // Verify super admin exists
-    const hasSuperAdmin = Array.isArray(memoryState.users) && memoryState.users.some((u: any) => u.role === 'SUPER_ADMIN' && u.isActive);
-    if (!hasSuperAdmin) {
-      const adminHash = await hashPassword(initialAdminPassword);
-      if (!Array.isArray(memoryState.users)) memoryState.users = [];
-      memoryState.users.push({
-        id: 'usr-admin-default-01',
-        username: initialAdminUsername,
-        name: 'مدير النظام الرئيسي',
-        email: initialAdminEmail,
-        passwordHash: adminHash,
-        role: 'SUPER_ADMIN',
-        allowedProperties: ['all'],
-        isActive: true,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      });
+    // Remove accounts created by the old public demo credential seed.
+    const legacySeedUserIds = new Set([
+      'usr-admin-default-01',
+      'usr-admin-std-01',
+      'usr-manager-default-02',
+      'usr-accountant-default-03',
+      'usr-reception-default-04'
+    ]);
+    if (!Array.isArray(memoryState.users)) memoryState.users = [];
+    memoryState.users = memoryState.users.filter((user: any) => !legacySeedUserIds.has(user.id));
+
+    // Seed an administrator only from explicitly configured environment credentials.
+    const hasSuperAdmin = memoryState.users.some((u: any) => u.role === 'SUPER_ADMIN' && u.isActive);
+    if (!hasSuperAdmin && hasInitialAdminCredentials) {
+      const initialAdmin = await createInitialAdminUser();
+      if (initialAdmin) memoryState.users.push(initialAdmin);
     }
     if (memoryState.properties.length === 0 && Array.isArray(initialProperties) && initialProperties.length > 0) {
       memoryState.properties = JSON.parse(JSON.stringify(initialProperties));
@@ -554,10 +507,17 @@ export async function startServer(customPort?: number) {
         });
       }
 
-      // Initial setup: Validate ADMIN_SETUP_SECRET if configured
+      // Initial setup must be protected by an explicitly configured secret.
       const expectedSecret = process.env.ADMIN_SETUP_SECRET;
       const providedSecret = req.headers['x-admin-setup-secret'] || setupSecret;
-      if (expectedSecret && providedSecret !== expectedSecret) {
+      if (!expectedSecret) {
+        return res.status(503).json({
+          success: false,
+          code: 'ADMIN_SETUP_DISABLED',
+          message: 'تهيئة المسؤول الأول متوقفة. اضبط ADMIN_SETUP_SECRET في إعدادات البيئة ثم أعد المحاولة.'
+        });
+      }
+      if (String(providedSecret || '') !== expectedSecret) {
         return res.status(403).json({
           success: false,
           code: 'INVALID_SETUP_SECRET',
@@ -1265,6 +1225,7 @@ export async function startServer(customPort?: number) {
         checkInTime: settings.checkInTime || '15:00',
         checkOutTime: settings.checkOutTime || '12:00',
         navigation: settings.navigation || null,
+        themeConfig: settings.themeConfig || null,
         theme: settings.theme || null,
         typography: settings.typography || null,
         footerPages: settings.footerPages || null,
