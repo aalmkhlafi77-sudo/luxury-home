@@ -848,6 +848,25 @@ export interface FaqItem {
   active: boolean;
 }
 
+export interface HeroCarouselSlide {
+  id: string;
+  badge: string;
+  location: string;
+  title: string;
+  description: string;
+  imageUrl: string;
+  primaryLabel: string;
+  secondaryLabel: string;
+  accentColor: string;
+  overlayOpacity: number;
+  visible: boolean;
+}
+
+export interface HeroCarouselConfig {
+  autoplayMs: number;
+  slides: HeroCarouselSlide[];
+}
+
 export interface CompanySettings {
   companyName: string;
   companyNameEn: string;
@@ -866,6 +885,7 @@ export interface CompanySettings {
   timezone: string;
   footerPages?: Record<string, FooterPageItem>;
   faqs?: FaqItem[];
+  themeConfig?: Record<string, unknown> & { heroCarousel?: HeroCarouselConfig };
   // إعدادات النصوص والتنسيق البصري المتقدم
   typography?: CustomizableTypographyConfig;
   // اعدادات التنقل الهيدر والشريط السفلي

@@ -38,7 +38,8 @@ import {
   ExpenseRecordStatus,
   City,
   FaqItem,
-  FooterPageItem
+  FooterPageItem,
+  HeroCarouselConfig
 } from '../types';
 import {
   initialCompanySettings,
@@ -1625,6 +1626,32 @@ export function useAppStore() {
     apiCall('/api/settings', 'PUT', newSettings).catch(err => {
       console.warn('[Sync Error] Could not update settings on server:', err.message);
     });
+  }, []);
+
+  const saveHeroCarousel = useCallback(async (heroCarousel: HeroCarouselConfig) => {
+    const currentThemeConfig = (globalState.settings.themeConfig || {}) as Record<string, unknown>;
+    const themeConfig = { ...currentThemeConfig, heroCarousel };
+    const response = await apiCall('/api/settings', 'PUT', { themeConfig });
+    const persistedThemeConfig = response?.settings?.themeConfig || themeConfig;
+    globalState = {
+      ...globalState,
+      settings: { ...globalState.settings, themeConfig: persistedThemeConfig },
+      auditLogs: [
+        {
+          id: `log-${Date.now()}`,
+          action: 'تحديث شرائح الهيرو المتحرك',
+          entity: 'CompanySettings',
+          entityId: 'heroCarousel',
+          performedBy: 'المسؤول الإداري',
+          role: 'SUPER_ADMIN',
+          details: 'تم حفظ إعدادات شرائح الهيرو المتحرك.',
+          timestamp: new Date().toISOString(),
+        },
+        ...globalState.auditLogs
+      ]
+    };
+    notify();
+    return persistedThemeConfig;
   }, []);
 
   const updateContentSections = useCallback((sections: ContentSection[]) => {
@@ -3396,6 +3423,7 @@ export function useAppStore() {
     blockUnitPeriod,
     logSmartLockPinView,
     updateCompanySettings,
+    saveHeroCarousel,
     updateContentSections,
     resetToFactoryDefaults,
     // City, Building & Floor Management
