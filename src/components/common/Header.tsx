@@ -218,7 +218,7 @@ export const Header: React.FC<HeaderProps> = ({
             className="hidden lg:flex relative items-center gap-4 xl:gap-6 text-[13px] font-medium text-[var(--header-nav-text-color)]"
             style={{
               '--header-nav-text-color': navConfig?.headerNavTextColor || '#68675F',
-              '--header-nav-hover-color': navConfig?.headerNavHoverColor || '#282824',
+              '--header-nav-hover-color': navConfig?.headerNavHoverColor || '#B69A68',
               '--header-nav-active-text-color': navConfig?.headerNavActiveTextColor || '#282824',
             } as React.CSSProperties}
           >
