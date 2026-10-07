@@ -71,13 +71,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onExploreClick, onBuil
               <img
                 src={slide.imageUrl}
                 alt=""
-                aria-hidden="true"
-                className="absolute inset-0 h-full w-full object-fill blur-xl brightness-75"
-              />
-              <img
-                src={slide.imageUrl}
-                alt=""
-                className="relative block h-full w-full object-contain object-center"
+                className="block h-full w-full object-fill object-center"
                 fetchPriority="high"
               />
             </motion.div>
