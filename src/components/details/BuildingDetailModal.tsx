@@ -83,12 +83,13 @@ export const BuildingDetailModal: React.FC<BuildingDetailModalProps> = ({
           {/* Gallery Row */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {property.media.map((media, idx) => (
-              <div key={idx} className={`relative rounded-2xl overflow-hidden h-52 ${idx === 0 ? 'md:col-span-2' : ''}`}>
+              <div key={idx} className={`relative rounded-2xl overflow-hidden h-52 bg-[#282824] ${idx === 0 ? 'md:col-span-2' : ''}`}>
                 <ImageWithFallback
                   src={media.url}
                   alt={media.title}
                   fallbackText={media.title}
-                  className="w-full h-full object-cover"
+                  fit="contain"
+                  className="w-full h-full"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
                 <span className="absolute bottom-3 right-3 text-xs font-semibold text-white">
@@ -175,12 +176,13 @@ export const BuildingDetailModal: React.FC<BuildingDetailModalProps> = ({
                     key={unit.id}
                     className="p-4 bg-white rounded-2xl border border-[#E3DCCD] hover:border-[#B69A68] transition-all flex gap-4 group"
                   >
-                    <div className="w-28 sm:w-36 h-28 rounded-xl overflow-hidden shrink-0">
+                    <div className="w-28 sm:w-36 h-28 rounded-xl overflow-hidden shrink-0 bg-[#282824]">
                       <ImageWithFallback
                          src={cover}
                          alt={unit.title}
                          fallbackText={unit.title}
-                         className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                         fit="contain"
+                         className="w-full h-full"
                       />
                     </div>
                     <div className="flex-1 flex flex-col justify-between">

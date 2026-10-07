@@ -71,7 +71,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onExploreClick, onBuil
               <img
                 src={slide.imageUrl}
                 alt=""
-                className="h-full w-full object-cover"
+                className="h-full w-full object-contain"
                 fetchPriority="high"
               />
             </motion.div>
@@ -166,7 +166,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onExploreClick, onBuil
                   animate={{ borderRadius: 16 }}
                   transition={{ layout: { duration: motionDuration, ease: heroEase }, borderRadius: { duration: motionDuration } }}
                 >
-                  <img src={item.imageUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
+                  <img src={item.imageUrl} alt="" className="h-full w-full object-contain" loading="lazy" />
                 </motion.div>
 
                 <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-transparent" />
