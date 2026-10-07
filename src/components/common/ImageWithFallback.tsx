@@ -4,6 +4,7 @@ import { Building2 } from 'lucide-react';
 interface ImageWithFallbackProps extends React.ImgHTMLAttributes<HTMLImageElement> {
   fallbackText?: string;
   className?: string;
+  fit?: 'cover' | 'contain';
 }
 
 export const ImageWithFallback: React.FC<ImageWithFallbackProps> = ({
@@ -11,10 +12,12 @@ export const ImageWithFallback: React.FC<ImageWithFallbackProps> = ({
   alt = 'صورة الشقة الفندقية',
   fallbackText,
   className = '',
+  fit = 'cover',
   ...props
 }) => {
   const [hasError, setHasError] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const imageFitClass = fit === 'contain' ? 'object-contain' : 'object-cover';
 
   if (hasError || !src) {
     return (
@@ -44,7 +47,7 @@ export const ImageWithFallback: React.FC<ImageWithFallbackProps> = ({
         loading="lazy"
         onLoad={() => setIsLoading(false)}
         onError={() => setHasError(true)}
-        className={`w-full h-full object-cover transition-opacity duration-300 ${isLoading ? 'opacity-0' : 'opacity-100'}`}
+        className={`w-full h-full ${imageFitClass} transition-opacity duration-300 ${isLoading ? 'opacity-0' : 'opacity-100'}`}
         {...props}
       />
     </div>
