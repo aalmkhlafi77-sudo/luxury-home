@@ -40,16 +40,16 @@ export const SpecialOffersBanner: React.FC<SpecialOffersBannerProps> = ({ onCont
   };
 
   return (
-    <section className="mx-auto w-full max-w-7xl px-4 py-14 sm:px-6 lg:px-8" aria-label="العروض الخاصة">
+    <section className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-5 sm:py-10" aria-label="العروض الخاصة">
       <div
-        className="relative overflow-hidden rounded-[2rem] bg-[#211F1B] px-2 py-10 shadow-xl sm:px-8 sm:py-14"
+        className="relative overflow-hidden rounded-[2rem] bg-[#211F1B] px-2 py-5 shadow-xl sm:px-4 sm:py-6"
         onMouseEnter={() => setPaused(true)}
         onMouseLeave={() => setPaused(false)}
         onFocusCapture={() => setPaused(true)}
         onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setPaused(false); }}
       >
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(182,154,104,0.18),transparent_65%)]" />
-        <div className="relative mx-auto h-[440px] max-w-6xl sm:h-[500px]" aria-live="polite">
+        <div className="relative mx-auto h-[340px] max-w-4xl sm:h-[390px]" aria-live="polite">
           {slides.map((slide, index) => {
             const position = getOfferCarouselPosition(activeIndex, index, slides.length);
             if (position === null) return null;
@@ -65,7 +65,7 @@ export const SpecialOffersBanner: React.FC<SpecialOffersBannerProps> = ({ onCont
               filter: active ? 'none' : 'saturate(.72) brightness(.72)',
               pointerEvents: active ? 'auto' : 'auto',
             };
-            const cardClass = `absolute left-1/2 top-1/2 block h-[360px] w-[88%] overflow-hidden rounded-3xl border border-white/15 text-right shadow-2xl transition-[transform,opacity,filter] duration-700 ease-[cubic-bezier(.2,.75,.25,1)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#C8A96B] sm:h-[420px] sm:w-[72%] ${active ? 'cursor-default' : 'cursor-pointer'}`;
+            const cardClass = `absolute left-1/2 top-1/2 block h-[300px] w-[90%] overflow-hidden rounded-3xl border border-white/15 text-right shadow-2xl transition-[transform,opacity,filter] duration-700 ease-[cubic-bezier(.2,.75,.25,1)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#C8A96B] sm:h-[360px] sm:w-[88%] ${active ? 'cursor-default' : 'cursor-pointer'}`;
             const cardContent = (
               <>
                 <ImageWithFallback src={slide.imageUrl} alt={slide.label} className="absolute inset-0 h-full w-full object-cover" />
@@ -113,8 +113,8 @@ export const SpecialOffersBanner: React.FC<SpecialOffersBannerProps> = ({ onCont
         </div>
 
         {slides.length > 1 && (
-          <div className="relative z-40 mt-2 flex items-center justify-center gap-4">
-            <button type="button" aria-label="العرض السابق" onClick={() => navigate(-1)} className="rounded-full border border-white/20 p-3 text-white transition hover:border-[#C8A96B] hover:text-[#C8A96B]"><ArrowRight className="h-5 w-5" /></button>
+          <div className="relative z-40 mt-1 flex items-center justify-center gap-3">
+            <button type="button" aria-label="العرض السابق" onClick={() => navigate(-1)} className="rounded-full border border-white/20 p-2 text-white transition hover:border-[#C8A96B] hover:text-[#C8A96B]"><ArrowRight className="h-4 w-4" /></button>
             <div className="flex items-center gap-2">
               {slides.map((slide, index) => <button key={slide.id} type="button" aria-label={`الانتقال إلى ${slide.label}`} aria-current={index === activeIndex ? 'true' : undefined} onClick={() => setActiveIndex(index)} className={`h-2.5 rounded-full transition-all ${index === activeIndex ? 'w-8 bg-[#C8A96B]' : 'w-2.5 bg-white/45 hover:bg-white'}`} />)}
             </div>
