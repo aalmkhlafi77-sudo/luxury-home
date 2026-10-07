@@ -118,12 +118,13 @@ export const UnitDetailModal: React.FC<UnitDetailModalProps> = ({
           
           {/* Main Visual Stage & Categories */}
           <div className="space-y-3">
-            <div className="relative h-64 sm:h-96 w-full rounded-2xl overflow-hidden shadow-md">
+            <div className="relative h-64 sm:h-96 w-full rounded-2xl overflow-hidden bg-[#282824] shadow-md">
               <ImageWithFallback
                 src={currentCover}
                 alt={unit.title}
                 fallbackText={unit.title}
-                className="w-full h-full object-cover"
+                fit="contain"
+                className="w-full h-full"
               />
               <div className="absolute top-4 right-4 flex items-center gap-2">
                 <span className="px-3 py-1 rounded-md bg-[#282824]/80 backdrop-blur-md text-xs font-semibold text-white">
@@ -182,11 +183,11 @@ export const UnitDetailModal: React.FC<UnitDetailModalProps> = ({
                 <button
                   key={m.id}
                   onClick={() => setSelectedImage(m.url)}
-                  className={`w-20 h-14 rounded-lg overflow-hidden shrink-0 border-2 transition-all cursor-pointer ${
+                  className={`w-20 h-14 rounded-lg overflow-hidden shrink-0 border-2 bg-[#282824] transition-all cursor-pointer ${
                     currentCover === m.url ? 'border-[#B69A68] scale-105 shadow-sm' : 'border-transparent opacity-75 hover:opacity-100'
                   }`}
                 >
-                  <ImageWithFallback src={m.url} alt={m.title} className="w-full h-full object-cover" />
+                  <ImageWithFallback src={m.url} alt={m.title} fit="contain" className="w-full h-full" />
                 </button>
               ))}
             </div>
@@ -310,7 +311,7 @@ export const UnitDetailModal: React.FC<UnitDetailModalProps> = ({
               {activeTab === 'plan' && unit.floorPlanUrl && (
                 <div className="space-y-3 animate-in fade-in duration-150">
                   <div className="h-80 rounded-2xl overflow-hidden border border-[#E3DCCD]">
-                    <ImageWithFallback src={unit.floorPlanUrl} alt="مخطط الشقة الفندقية" className="w-full h-full object-contain bg-[#FFFCF6]" />
+                    <ImageWithFallback src={unit.floorPlanUrl} alt="مخطط الشقة الفندقية" fit="contain" className="w-full h-full bg-[#FFFCF6]" />
                   </div>
                 </div>
               )}
