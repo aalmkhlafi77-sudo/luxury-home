@@ -110,7 +110,7 @@ export const Header: React.FC<HeaderProps> = ({
             : {})
         }}
       >
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-full flex items-center justify-between gap-4">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-full flex items-center justify-between gap-2 sm:gap-3">
           
           {/* ========================================================= */}
           {/* ZONE 1: BRAND LOGO (RTL Right) */}
@@ -121,7 +121,7 @@ export const Header: React.FC<HeaderProps> = ({
               e.preventDefault();
               onScrollToSection('hero');
             }}
-            className="flex items-center gap-3 text-right group shrink-0 select-none cursor-pointer"
+            className="flex items-center gap-2 text-right group shrink-0 select-none cursor-pointer"
           >
             {state.settings.logoUrl ? (
               <img 
@@ -132,7 +132,7 @@ export const Header: React.FC<HeaderProps> = ({
               />
             ) : (
               <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-xl bg-[#282824] text-[#B69A68] flex items-center justify-center font-bold text-base shadow-sm shrink-0 overflow-hidden">
+                <div className="w-9 h-9 rounded-lg bg-[#282824] text-[#B69A68] flex items-center justify-center font-bold text-base shadow-sm shrink-0 overflow-hidden">
                   {state.settings.iconUrl ? (
                     <img src={state.settings.iconUrl} alt="icon" className="w-full h-full object-cover" />
                   ) : (
@@ -154,14 +154,14 @@ export const Header: React.FC<HeaderProps> = ({
           {/* ========================================================= */}
           {/* ZONE 2: DESKTOP NAVIGATION LINKS (Middle) */}
           {/* ========================================================= */}
-          <nav className="hidden lg:flex items-center gap-6 xl:gap-8 text-sm font-medium text-[#68675F]">
+          <nav className="hidden lg:flex items-center gap-4 xl:gap-6 text-[13px] font-medium text-[#68675F]">
             {navLinks.map(link => {
               const isActive = activeSection === link.targetSectionId;
               return (
                 <button
                   key={link.id}
                   onClick={() => onScrollToSection(link.targetSectionId)}
-                  className={`relative py-1.5 transition-colors whitespace-nowrap cursor-pointer ${
+                  className={`relative py-1 transition-colors whitespace-nowrap cursor-pointer ${
                     isActive ? 'text-[#282824] font-bold' : 'hover:text-[#282824]'
                   }`}
                 >
@@ -185,7 +185,7 @@ export const Header: React.FC<HeaderProps> = ({
             <div className="relative hidden md:block">
               <button
                 onClick={() => setAccountDropdownOpen(!accountDropdownOpen)}
-                className="flex items-center gap-2 px-3 py-2 text-xs sm:text-sm font-medium text-[#282824] bg-white border border-[#E3DCCD] rounded-xl hover:border-[#B69A68] hover:bg-[#FFFCF6] transition-all shadow-xs cursor-pointer"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-[#282824] bg-white border border-[#E3DCCD] rounded-xl hover:border-[#B69A68] hover:bg-[#FFFCF6] transition-all shadow-xs cursor-pointer"
                 aria-expanded={accountDropdownOpen}
               >
                 <User className="w-4 h-4 text-[#B69A68]" />
@@ -244,7 +244,7 @@ export const Header: React.FC<HeaderProps> = ({
             {/* Primary CTA "احجز الآن" */}
             <button
               onClick={() => onScrollToSection('search_bar')}
-              className="px-3.5 sm:px-5 py-2 sm:py-2.5 text-xs sm:text-sm font-semibold text-white bg-[#282824] hover:bg-[#1a1a18] rounded-xl transition-all whitespace-nowrap shadow-xs flex items-center gap-2 cursor-pointer active:scale-95"
+              className="px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-[13px] font-semibold text-white bg-[#282824] hover:bg-[#1a1a18] rounded-xl transition-all whitespace-nowrap shadow-xs flex items-center gap-2 cursor-pointer active:scale-95"
             >
               <CalendarDays className="w-4 h-4 text-[#B69A68]" />
               <span>احجز الآن</span>
