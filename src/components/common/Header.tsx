@@ -201,7 +201,9 @@ export const Header: React.FC<HeaderProps> = ({
                 <button
                   key={link.id}
                   onClick={() => onScrollToSection(link.targetSectionId)}
-                  data-active={isActive ? "true" : undefined}\n                  aria-current={isActive ? "location" : undefined}\n                  className={`relative py-1 transition-colors whitespace-nowrap cursor-pointer ${
+                  data-active={isActive ? "true" : undefined}
+                  aria-current={isActive ? "location" : undefined}
+                  className={`relative py-1 transition-colors whitespace-nowrap cursor-pointer ${
                     isActive ? 'text-[#282824] font-bold' : 'hover:text-[#282824]'
                   }`}
                 >
