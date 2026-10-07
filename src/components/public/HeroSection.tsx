@@ -72,7 +72,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onExploreClick, onBuil
                 src={slide.imageUrl}
                 alt=""
                 aria-hidden="true"
-                className="absolute inset-0 h-full w-full scale-110 object-cover blur-xl brightness-75"
+                className="absolute inset-0 h-full w-full object-fill blur-xl brightness-75"
               />
               <img
                 src={slide.imageUrl}
@@ -176,7 +176,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onExploreClick, onBuil
                     src={item.imageUrl}
                     alt=""
                     aria-hidden="true"
-                    className="absolute inset-0 h-full w-full scale-110 object-cover blur-lg brightness-75"
+                    className="absolute inset-0 h-full w-full object-fill blur-lg brightness-75"
                     loading="lazy"
                   />
                   <img
