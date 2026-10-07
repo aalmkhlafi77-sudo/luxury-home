@@ -87,13 +87,12 @@ export const BuildingsCarousel: React.FC<BuildingsCarouselProps> = ({
               className="glass-ivory-card rounded-2xl overflow-hidden border border-[#E3DCCD] hover:border-[#B69A68]/80 transition-all duration-300 hover:shadow-xl group flex flex-col"
             >
               {/* Image Frame */}
-              <div className="relative h-64 sm:h-72 w-full overflow-hidden bg-[#282824]">
+              <div className="relative h-64 sm:h-72 w-full overflow-hidden">
                 <ImageWithFallback
                   src={coverImage}
                   alt={prop.name}
                   fallbackText={prop.name}
-                  fit="fill"
-                  className="w-full h-full"
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-[#282824]/80 via-transparent to-transparent" />
                 
