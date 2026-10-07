@@ -71,7 +71,13 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onExploreClick, onBuil
               <img
                 src={slide.imageUrl}
                 alt=""
-                className="h-full w-full object-contain"
+                aria-hidden="true"
+                className="absolute inset-0 h-full w-full object-fill blur-xl brightness-75"
+              />
+              <img
+                src={slide.imageUrl}
+                alt=""
+                className="relative block h-full w-full object-contain object-center"
                 fetchPriority="high"
               />
             </motion.div>
@@ -166,7 +172,19 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onExploreClick, onBuil
                   animate={{ borderRadius: 16 }}
                   transition={{ layout: { duration: motionDuration, ease: heroEase }, borderRadius: { duration: motionDuration } }}
                 >
-                  <img src={item.imageUrl} alt="" className="h-full w-full object-contain" loading="lazy" />
+                  <img
+                    src={item.imageUrl}
+                    alt=""
+                    aria-hidden="true"
+                    className="absolute inset-0 h-full w-full object-fill blur-lg brightness-75"
+                    loading="lazy"
+                  />
+                  <img
+                    src={item.imageUrl}
+                    alt=""
+                    className="relative block h-full w-full object-contain object-center"
+                    loading="lazy"
+                  />
                 </motion.div>
 
                 <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-transparent" />
