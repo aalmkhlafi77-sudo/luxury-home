@@ -1,5 +1,26 @@
 import type { HeroCarouselConfig } from '../types';
 
+export function getHeroCarouselFrame<T>(
+  slides: readonly T[],
+  requestedIndex: number,
+  previewCount = 4,
+): { activeIndex: number; active: T | null; previews: T[] } {
+  if (slides.length === 0) return { activeIndex: 0, active: null, previews: [] };
+
+  const rawIndex = Number.isFinite(requestedIndex) ? Math.trunc(requestedIndex) : 0;
+  const activeIndex = ((rawIndex % slides.length) + slides.length) % slides.length;
+  const count = Math.min(
+    slides.length - 1,
+    Math.max(0, Number.isFinite(previewCount) ? Math.trunc(previewCount) : 4),
+  );
+  const previews = Array.from(
+    { length: count },
+    (_, offset) => slides[(activeIndex + offset + 1) % slides.length],
+  );
+
+  return { activeIndex, active: slides[activeIndex], previews };
+}
+
 export const DEFAULT_HERO_CAROUSEL: HeroCarouselConfig = {
   autoplayMs: 7000,
   slides: [
