@@ -782,6 +782,11 @@ export interface NavigationSettings {
   logoMaxHeightPx: number;
   stickyHeader: boolean;
   navActiveColor: string;
+  headerNavTextColor?: string;
+  headerNavHoverColor?: string;
+  headerNavActiveTextColor?: string;
+  footerNavTextColor?: string;
+  footerNavHoverColor?: string;
 }
 
 export type UserRole =
