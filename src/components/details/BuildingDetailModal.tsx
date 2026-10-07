@@ -88,7 +88,7 @@ export const BuildingDetailModal: React.FC<BuildingDetailModalProps> = ({
                   src={media.url}
                   alt={media.title}
                   fallbackText={media.title}
-                  fit="contain"
+                  fit="cover"
                   className="w-full h-full"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
@@ -181,7 +181,7 @@ export const BuildingDetailModal: React.FC<BuildingDetailModalProps> = ({
                          src={cover}
                          alt={unit.title}
                          fallbackText={unit.title}
-                         fit="contain"
+                         fit="cover"
                          className="w-full h-full"
                       />
                     </div>
