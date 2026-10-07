@@ -47,7 +47,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onExploreClick, onBuil
   const changeSlide = (step: number) => {
     setActiveIndex(index => (index + step + slides.length) % slides.length);
   };
-  const titleParts = String(slide.title || '').split('\n');
+  const titleText = String(slide.title || '').replace(/\s+/g, ' ').trim();
   const motionDuration = reduceMotion ? 0 : 1.05;
 
   return (
@@ -89,11 +89,11 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onExploreClick, onBuil
           }}
         />
 
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-20 mx-auto h-full max-w-7xl px-5 sm:px-8 lg:px-12">
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-20 mx-auto h-full max-w-none px-5 sm:px-8 lg:px-[5vw]">
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
               key={slide.id}
-              className="pointer-events-auto absolute inset-x-5 top-28 max-w-xl text-right sm:inset-x-8 sm:top-32 lg:inset-x-12 lg:right-12 lg:left-auto lg:top-[18%] lg:w-[42%] lg:max-w-[36rem]"
+              className="pointer-events-auto absolute inset-x-5 top-28 max-w-xl text-right sm:inset-x-8 sm:top-32 lg:inset-x-auto lg:right-[5vw] lg:left-auto lg:top-[16%] lg:w-[46vw] lg:max-w-[52rem]"
               dir="rtl"
               initial={reduceMotion ? false : { opacity: 0, y: 22 }}
               animate={{ opacity: 1, y: 0 }}
@@ -113,18 +113,13 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onExploreClick, onBuil
               </div>
 
               <h1
-                className="mb-4 whitespace-pre-line text-4xl font-semibold leading-[1.2] tracking-tight sm:text-5xl lg:mb-5 lg:text-6xl xl:text-7xl"
+                className="mb-4 text-4xl font-semibold leading-[1.2] tracking-tight sm:text-5xl lg:mb-5 lg:text-6xl xl:text-7xl"
                 style={{ textWrap: 'balance' }}
               >
-                {titleParts.map((part: string, index: number) => (
-                  <React.Fragment key={index}>
-                    {part}
-                    {index < titleParts.length - 1 && <br />}
-                  </React.Fragment>
-                ))}
+                {titleText}
               </h1>
 
-              <p className="mb-6 max-w-xl text-sm leading-7 text-white/85 sm:text-base sm:leading-8 lg:mb-8 lg:text-lg">
+              <p className="mb-6 max-w-none text-sm leading-7 text-white/85 sm:text-base sm:leading-8 lg:mb-8 lg:max-w-[48rem] lg:text-lg">
                 {slide.description}
               </p>
 
