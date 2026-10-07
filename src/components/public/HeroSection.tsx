@@ -71,15 +71,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onExploreClick, onBuil
               <img
                 src={slide.imageUrl}
                 alt=""
-                aria-hidden="true"
-                className="absolute inset-0 block h-full w-full scale-110 object-cover object-center opacity-70 blur-2xl"
-                fetchPriority="high"
-              />
-              <div className="absolute inset-0 bg-[#24231f]/20" aria-hidden="true" />
-              <img
-                src={slide.imageUrl}
-                alt=""
-                className="relative block h-full w-full object-contain object-center"
+                className="h-full w-full object-cover"
                 fetchPriority="high"
               />
             </motion.div>
@@ -174,20 +166,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onExploreClick, onBuil
                   animate={{ borderRadius: 16 }}
                   transition={{ layout: { duration: motionDuration, ease: heroEase }, borderRadius: { duration: motionDuration } }}
                 >
-                  <img
-                    src={item.imageUrl}
-                    alt=""
-                    aria-hidden="true"
-                    className="absolute inset-0 block h-full w-full scale-110 object-cover object-center opacity-75 blur-xl"
-                    loading="lazy"
-                  />
-                  <div className="absolute inset-0 bg-[#24231f]/15" aria-hidden="true" />
-                  <img
-                    src={item.imageUrl}
-                    alt=""
-                    className="relative block h-full w-full object-contain object-center"
-                    loading="lazy"
-                  />
+                  <img src={item.imageUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
                 </motion.div>
 
                 <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-transparent" />
