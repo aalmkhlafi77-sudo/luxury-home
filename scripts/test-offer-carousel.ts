@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { createDefaultOfferCarousel, getOfferCarouselPosition } from '../src/data/offerCarousel';
-import type { Property } from '../src/types';
+import { createDefaultOfferCarousel, getOfferCarouselPosition } from '../src/data/offerCarousel.ts';
+import type { Property } from '../src/types/index.ts';
 
 const properties = [
   {
