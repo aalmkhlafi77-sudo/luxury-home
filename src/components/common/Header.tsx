@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import {
   Menu,
@@ -50,6 +50,8 @@ export const Header: React.FC<HeaderProps> = ({
   const { state } = useAppStore();
   const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
+  const desktopNavRef = useRef<HTMLElement | null>(null);
+  const [activeIndicator, setActiveIndicator] = useState({ left: 0, width: 0, visible: false });
 
   useEffect(() => {
     const handleScroll = () => {
@@ -72,6 +74,44 @@ export const Header: React.FC<HeaderProps> = ({
     { id: 'nav_faq', label: 'الأسئلة الشائعة', targetSectionId: 'faq', visible: true, order: 5 },
     { id: 'nav_contact', label: 'اتصل بنا', targetSectionId: 'contact', visible: true, order: 6 },
   ];
+
+  const navLayoutKey = navLinks.map(link => `${link.id}:${link.label}:${link.order}:${link.targetSectionId}`).join('|');
+
+  // Position the animated active marker under the current desktop navigation item.
+  useEffect(() => {
+    const nav = desktopNavRef.current;
+    if (!nav) return;
+
+    const measureActiveItem = () => {
+      const activeButton = nav.querySelector<HTMLButtonElement>('[data-active="true"]');
+      if (!activeButton) {
+        setActiveIndicator(current => current.visible ? { ...current, visible: false } : current);
+        return;
+      }
+
+      const navRect = nav.getBoundingClientRect();
+      const buttonRect = activeButton.getBoundingClientRect();
+      const left = buttonRect.left - navRect.left;
+      const width = buttonRect.width;
+      setActiveIndicator(current => (
+        current.visible && Math.abs(current.left - left) < 0.5 && Math.abs(current.width - width) < 0.5
+          ? current
+          : { left, width, visible: true }
+      ));
+    };
+
+    const frame = window.requestAnimationFrame(measureActiveItem);
+    const observer = new ResizeObserver(measureActiveItem);
+    observer.observe(nav);
+    window.addEventListener('resize', measureActiveItem);
+    document.fonts?.ready.then(measureActiveItem).catch(() => undefined);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+      window.removeEventListener('resize', measureActiveItem);
+    };
+  }, [activeSection, navLayoutKey]);
 
   // Lock body scroll when mobile drawer is open
   useEffect(() => {
@@ -154,26 +194,30 @@ export const Header: React.FC<HeaderProps> = ({
           {/* ========================================================= */}
           {/* ZONE 2: DESKTOP NAVIGATION LINKS (Middle) */}
           {/* ========================================================= */}
-          <nav className="hidden lg:flex items-center gap-4 xl:gap-6 text-[13px] font-medium text-[#68675F]">
+          <nav ref={desktopNavRef} className="hidden lg:flex relative items-center gap-4 xl:gap-6 text-[13px] font-medium text-[#68675F]">
             {navLinks.map(link => {
               const isActive = activeSection === link.targetSectionId;
               return (
                 <button
                   key={link.id}
                   onClick={() => onScrollToSection(link.targetSectionId)}
-                  className={`relative py-1 transition-colors whitespace-nowrap cursor-pointer ${
+                  data-active={isActive ? "true" : undefined}\n                  aria-current={isActive ? "location" : undefined}\n                  className={`relative py-1 transition-colors whitespace-nowrap cursor-pointer ${
                     isActive ? 'text-[#282824] font-bold' : 'hover:text-[#282824]'
                   }`}
                 >
                   <span>{link.label}</span>
-                  {isActive && (
-                    <span 
-                      className="absolute bottom-0 left-0 right-0 h-0.5 rounded-full bg-[#B69A68] transition-all"
-                    />
-                  )}
+
                 </button>
               );
             })}
+            {activeIndicator.visible && (
+              <span
+                key={activeSection}
+                aria-hidden="true"
+                className="header-nav-indicator"
+                style={{ left: activeIndicator.left, width: activeIndicator.width }}
+              />
+            )}
           </nav>
 
           {/* ========================================================= */}
