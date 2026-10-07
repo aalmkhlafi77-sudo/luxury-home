@@ -17,7 +17,8 @@ export const ImageWithFallback: React.FC<ImageWithFallbackProps> = ({
 }) => {
   const [hasError, setHasError] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const imageFitClass = fit === 'contain' ? 'object-contain' : fit === 'fill' ? 'object-fill' : 'object-cover';
+  // Fill-mode keeps the complete, undistorted image in front of a blurred cover layer.
+  const imageFitClass = fit === 'cover' ? 'object-cover' : 'object-contain';
 
   if (hasError || !src) {
     return (
@@ -35,6 +36,18 @@ export const ImageWithFallback: React.FC<ImageWithFallbackProps> = ({
 
   return (
     <div className={`relative overflow-hidden ${className}`}>
+      {fit === 'fill' && (
+        <>
+          <img
+            src={src}
+            alt=""
+            aria-hidden="true"
+            draggable={false}
+            className="pointer-events-none absolute inset-0 h-full w-full scale-110 object-cover opacity-70 blur-xl"
+          />
+          <div className="pointer-events-none absolute inset-0 bg-[#282824]/20" aria-hidden="true" />
+        </>
+      )}
       {isLoading && (
         <div className="absolute inset-0 bg-[#EFE9DF]/60 animate-pulse flex items-center justify-center">
           <Building2 className="w-6 h-6 opacity-30 text-[#B69A68]" />
