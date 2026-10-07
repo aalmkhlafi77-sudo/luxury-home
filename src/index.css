@@ -1,10 +1,16 @@
 @import "tailwindcss";
 
+@theme {
+  --font-heading: 'Scheherazade New', 'Tajawal', serif;
+  --font-serif: 'Scheherazade New', serif;
+  --font-display: 'Scheherazade New', 'Noto Kufi Arabic', serif;
+}
+
 @layer base {
   :root {
     --site-header-height: 80px;
-    --font-heading: 'Tajawal', -apple-system, BlinkMacSystemFont, sans-serif;
-    --font-display: 'Noto Kufi Arabic', 'Tajawal', sans-serif;
+    --font-heading: 'Scheherazade New', 'Tajawal', serif;
+    --font-display: 'Scheherazade New', 'Noto Kufi Arabic', serif;
     --font-body: 'Tajawal', 'Plus Jakarta Sans', -apple-system, sans-serif;
     --color-ivory-bg: #F7F3EB;
     --color-ivory-surface: #FFFCF6;
@@ -28,8 +34,16 @@
     color: var(--color-text-main);
   }
 
-  h1, h2, h3, h4, h5, h6 {
-    font-family: var(--font-heading);
+  /* العناوين الرئيسية والفرعية في جميع الأقسام */
+  h1, h2, h3, h4, h5, h6,
+  .font-heading,
+  .font-serif,
+  .font-display,
+  .heading-font,
+  .subheading,
+  .section-title,
+  .section-subtitle {
+    font-family: 'Scheherazade New', 'Tajawal', serif !important;
   }
 
   * {
