@@ -72,7 +72,7 @@ interface ContentCustomizerProps {
 
 export const ContentCustomizer: React.FC<ContentCustomizerProps> = ({ initialTab = 'theme' }) => {
   const { state, updateCompanySettings, updateContentSections, resetToFactoryDefaults } = useAppStore();
-  const [activeTab, setActiveTab] = useState<'branding' | 'typography' | 'navigation' | 'sections' | 'theme' | 'hero'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'branding' | 'typography' | 'navigation' | 'sections' | 'theme' | 'hero' | 'offers'>(initialTab);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   // Selected Section for Typography Customization

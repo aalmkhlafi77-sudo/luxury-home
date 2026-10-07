@@ -37,6 +37,19 @@ const iconMap: Record<string, React.FC<{ className?: string }>> = {
   Phone
 };
 
+function hexToRgba(hex?: string, alpha: number = 0.72): string {
+  if (!hex || !hex.startsWith('#')) return `rgba(255, 252, 246, ${alpha})`;
+  let c = hex.replace('#', '');
+  if (c.length === 3) c = c.split('').map(x => x + x).join('');
+  if (c.length === 6) {
+    const r = parseInt(c.substring(0, 2), 16);
+    const g = parseInt(c.substring(2, 4), 16);
+    const b = parseInt(c.substring(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+  return `rgba(255, 252, 246, ${alpha})`;
+}
+
 export const Header: React.FC<HeaderProps> = ({
   activeSection,
   onOpenClientPortal,
@@ -137,14 +150,20 @@ export const Header: React.FC<HeaderProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [setIsMobileDrawerOpen]);
 
+  const customHeaderBg = state.settings.theme?.headerBg
+    ? `linear-gradient(to bottom, ${hexToRgba(state.settings.theme.headerBg, isScrolled ? 0.92 : 0.4)}, ${hexToRgba(state.settings.theme.headerBg, isScrolled ? 0.82 : 0.2)})`
+    : undefined;
+
   return (
     <>
       <header 
-        className={`site-header transition-all duration-300 ${
-          isScrolled ? 'shadow-md' : 'shadow-xs'
+        className={`site-header transition-all duration-300 backdrop-blur-2xl backdrop-saturate-200 ${
+          isScrolled ? 'is-scrolled shadow-md border-b border-[#E3DCCD]/80' : 'shadow-xs border-b border-white/40'
         } ${className || ''}`}
         style={{
-          backgroundColor: state.settings.theme?.headerBg || '#FFFCF6',
+          ...(customHeaderBg ? { background: customHeaderBg } : {}),
+          backdropFilter: 'blur(24px) saturate(200%)',
+          WebkitBackdropFilter: 'blur(24px) saturate(200%)',
           ...(navConfig?.headerHeightPx && navConfig.headerHeightPx !== 80
             ? ({ '--site-header-height': `${navConfig.headerHeightPx}px` } as React.CSSProperties)
             : {})

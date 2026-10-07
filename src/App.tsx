@@ -218,7 +218,7 @@ export default function App() {
       
       {/* 1. Glass Header */}
       <Header
-        className="sticky top-0 z-50 bg-[#F7F3EB] shadow-sm"
+        className="sticky top-0 z-50 shadow-xs"
         activeSection={activeSection}
         onOpenClientPortal={() => setIsClientPortalOpen(true)}
         onOpenAdmin={() => setViewMode('admin')}
@@ -229,7 +229,7 @@ export default function App() {
       />
 
       {/* Main Public Website Sections */}
-      <main className="flex-1">
+      <main className="flex-1 -mt-[var(--site-header-height)]">
         
         {/* 2. Hero Section */}
         <HeroSection
