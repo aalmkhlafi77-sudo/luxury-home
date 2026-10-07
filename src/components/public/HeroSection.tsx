@@ -169,7 +169,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onExploreClick, onBuil
                   <img
                     src={item.imageUrl}
                     alt=""
-                    className="block h-full w-full object-cover object-center"
+                    className="block h-full w-full object-fill object-center"
                     loading="lazy"
                   />
                 </motion.div>
