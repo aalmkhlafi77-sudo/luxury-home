@@ -92,7 +92,7 @@ export const BuildingsCarousel: React.FC<BuildingsCarouselProps> = ({
                   src={coverImage}
                   alt={prop.name}
                   fallbackText={prop.name}
-                  fit="contain"
+                  fit="cover"
                   className="w-full h-full"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-[#282824]/80 via-transparent to-transparent" />
