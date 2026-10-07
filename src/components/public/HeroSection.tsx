@@ -71,7 +71,15 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onExploreClick, onBuil
               <img
                 src={slide.imageUrl}
                 alt=""
-                className="block h-full w-full object-fill object-center"
+                aria-hidden="true"
+                className="absolute inset-0 block h-full w-full scale-110 object-cover object-center opacity-70 blur-2xl"
+                fetchPriority="high"
+              />
+              <div className="absolute inset-0 bg-[#24231f]/20" aria-hidden="true" />
+              <img
+                src={slide.imageUrl}
+                alt=""
+                className="relative block h-full w-full object-contain object-center"
                 fetchPriority="high"
               />
             </motion.div>
@@ -169,7 +177,15 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onExploreClick, onBuil
                   <img
                     src={item.imageUrl}
                     alt=""
-                    className="block h-full w-full object-fill object-center"
+                    aria-hidden="true"
+                    className="absolute inset-0 block h-full w-full scale-110 object-cover object-center opacity-75 blur-xl"
+                    loading="lazy"
+                  />
+                  <div className="absolute inset-0 bg-[#24231f]/15" aria-hidden="true" />
+                  <img
+                    src={item.imageUrl}
+                    alt=""
+                    className="relative block h-full w-full object-contain object-center"
                     loading="lazy"
                   />
                 </motion.div>
