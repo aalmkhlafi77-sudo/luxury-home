@@ -68,7 +68,7 @@ export const SpecialOffersBanner: React.FC<SpecialOffersBannerProps> = ({ onCont
             const cardClass = `absolute left-1/2 top-1/2 block h-[300px] w-[90%] overflow-hidden rounded-3xl border border-white/15 bg-[#211F1B] text-right shadow-2xl transition-[transform,opacity,filter] duration-700 ease-[cubic-bezier(.2,.75,.25,1)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#C8A96B] sm:h-[360px] sm:w-[88%] ${active ? 'cursor-default' : 'cursor-pointer'}`;
             const cardContent = (
               <>
-                <ImageWithFallback src={slide.imageUrl} alt={slide.label} fit="contain" className="absolute inset-0 h-full w-full bg-[#211F1B]" />
+                <ImageWithFallback src={slide.imageUrl} alt={slide.label} fit="fill" className="absolute inset-0 h-full w-full bg-[#211F1B]" />
                 <div className={`absolute inset-0 ${active ? 'bg-gradient-to-t from-[#161512]/95 via-[#161512]/30 to-transparent' : 'bg-gradient-to-t from-[#161512]/80 via-transparent to-[#161512]/10'}`} />
                 <div className="absolute inset-x-0 bottom-0 p-5 text-white sm:p-9">
                   {active ? (
