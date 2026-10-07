@@ -65,15 +65,9 @@ export const SpecialOffersBanner: React.FC<SpecialOffersBannerProps> = ({ onCont
               filter: active ? 'none' : 'saturate(.72) brightness(.72)',
               pointerEvents: active ? 'auto' : 'auto',
             };
-            return (
-              <button
-                key={slide.id}
-                type="button"
-                aria-label={active ? `العرض الحالي: ${slide.label}` : `عرض ${slide.label}`}
-                onClick={() => active ? undefined : setActiveIndex(index)}
-                className={`absolute left-1/2 top-1/2 block h-[360px] w-[88%] overflow-hidden rounded-3xl border border-white/15 text-right shadow-2xl transition-[transform,opacity,filter] duration-700 ease-[cubic-bezier(.2,.75,.25,1)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#C8A96B] sm:h-[420px] sm:w-[72%] ${active ? 'cursor-default' : 'cursor-pointer'}`}
-                style={style}
-              >
+            const cardClass = `absolute left-1/2 top-1/2 block h-[360px] w-[88%] overflow-hidden rounded-3xl border border-white/15 text-right shadow-2xl transition-[transform,opacity,filter] duration-700 ease-[cubic-bezier(.2,.75,.25,1)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#C8A96B] sm:h-[420px] sm:w-[72%] ${active ? 'cursor-default' : 'cursor-pointer'}`;
+            const cardContent = (
+              <>
                 <ImageWithFallback src={slide.imageUrl} alt={slide.label} className="absolute inset-0 h-full w-full object-cover" />
                 <div className={`absolute inset-0 ${active ? 'bg-gradient-to-t from-[#161512]/95 via-[#161512]/30 to-transparent' : 'bg-gradient-to-t from-[#161512]/80 via-transparent to-[#161512]/10'}`} />
                 <div className="absolute inset-x-0 bottom-0 p-5 text-white sm:p-9">
@@ -85,19 +79,36 @@ export const SpecialOffersBanner: React.FC<SpecialOffersBannerProps> = ({ onCont
                       <p className="mb-2 text-xs text-white/80">{slide.label}</p>
                       <h2 className="mb-3 max-w-2xl text-2xl font-bold leading-tight sm:text-4xl">{field('title', defaults.title)}</h2>
                       <p className="mb-6 max-w-2xl text-sm leading-7 text-white/85 sm:text-base">{field('description', defaults.description)}</p>
-                      <span
-                        onClick={event => { event.stopPropagation(); onContactClick(); }}
+                      <button
+                        type="button"
+                        onClick={onContactClick}
                         className="inline-flex items-center gap-2 rounded-xl bg-[#B69A68] px-5 py-3 text-sm font-bold text-white shadow-lg transition hover:bg-[#a68a58]"
                       >
                         <CalendarRange className="h-4 w-4" />{field('buttonLabel', defaults.buttonLabel)}<ArrowLeft className="h-4 w-4" />
-                      </span>
+                      </button>
                     </>
                   ) : (
                     <span className="inline-flex items-center rounded-full border border-white/20 bg-black/35 px-3 py-1.5 text-sm font-semibold text-white backdrop-blur-sm">{slide.label}</span>
                   )}
                 </div>
-              </button>
+              </>
             );
+            return active ? (
+              <div key={slide.id} role="group" aria-label={`العرض الحالي: ${slide.label}`} className={cardClass} style={style}>
+                {cardContent}
+              </div>
+            ) : (
+              <button
+                key={slide.id}
+                type="button"
+                aria-label={`عرض ${slide.label}`}
+                onClick={() => setActiveIndex(index)}
+                className={cardClass}
+                style={style}
+              >
+                {cardContent}
+              </button>
+            )
           })}
         </div>
 
