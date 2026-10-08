@@ -57,7 +57,9 @@ export const FooterPagesFaqManager: React.FC = () => {
   const [pagesForm, setPagesForm] = useState(initialFooterPages);
 
   // FAQs State
-  const initialFaqsList: FaqItem[] = state.faqs && state.faqs.length > 0 ? state.faqs : [
+  const initialFaqsList: FaqItem[] = (state.settings.faqs && state.settings.faqs.length > 0)
+    ? state.settings.faqs
+    : (state.faqs && state.faqs.length > 0 ? state.faqs : [
     {
       id: 'faq_1',
       question: 'ما هي مواعيد تسجيل الدخول والمغادرة في وحدات منزل الفخامة؟',
@@ -86,9 +88,15 @@ export const FooterPagesFaqManager: React.FC = () => {
       displayOrder: 4,
       active: true
     }
-  ];
+  ]);
 
   const [faqsList, setFaqsList] = useState<FaqItem[]>(initialFaqsList);
+
+  useEffect(() => {
+    if (state.settings.faqs && state.settings.faqs.length > 0) {
+      setFaqsList(state.settings.faqs);
+    }
+  }, [state.settings.faqs]);
   const [editingFaq, setEditingFaq] = useState<FaqItem | null>(null);
   const [newFaqQuestion, setNewFaqQuestion] = useState('');
   const [newFaqAnswer, setNewFaqAnswer] = useState('');
