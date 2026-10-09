@@ -1,7 +1,15 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, MapPin, Pencil, Plus, Save, Trash2, X } from 'lucide-react';
 import { MapLocation, MapSectionSettings } from '../../types';
 import { useAppStore } from '../../store/useAppStore';
+import '../public/building-map.css';
+
+declare global {
+  interface Window {
+    L?: any;
+    __luxuryLeafletPromise?: Promise<any>;
+  }
+}
 
 const EMPTY_MAP_SETTINGS: MapSectionSettings = {
   enabled: true,
@@ -10,6 +18,37 @@ const EMPTY_MAP_SETTINGS: MapSectionSettings = {
   zoom: 5,
   locations: [],
 };
+
+function loadLeafletForPicker(): Promise<any> {
+  if (window.L) return Promise.resolve(window.L);
+  if (window.__luxuryLeafletPromise) return window.__luxuryLeafletPromise;
+
+  window.__luxuryLeafletPromise = new Promise((resolve, reject) => {
+    if (!document.getElementById('luxury-leaflet-css')) {
+      const link = document.createElement('link');
+      link.id = 'luxury-leaflet-css';
+      link.rel = 'stylesheet';
+      link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+      document.head.appendChild(link);
+    }
+
+    const existing = document.getElementById('luxury-leaflet-js') as HTMLScriptElement | null;
+    if (existing) {
+      existing.addEventListener('load', () => window.L ? resolve(window.L) : reject(new Error('تعذر تحميل مكتبة الخريطة.')), { once: true });
+      existing.addEventListener('error', () => reject(new Error('تعذر الاتصال بمكتبة الخريطة.')), { once: true });
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.id = 'luxury-leaflet-js';
+    script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+    script.async = true;
+    script.onload = () => window.L ? resolve(window.L) : reject(new Error('تعذر تحميل مكتبة الخريطة.'));
+    script.onerror = () => reject(new Error('تعذر الاتصال بمكتبة الخريطة.'));
+    document.head.appendChild(script);
+  });
+  return window.__luxuryLeafletPromise;
+}
 
 type LocationDraft = {
   title: string;
@@ -38,6 +77,65 @@ export const MapLocationsManager: React.FC = () => {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [pickerReady, setPickerReady] = useState(false);
+  const pickerElement = useRef<HTMLDivElement | null>(null);
+  const pickerMapRef = useRef<any>(null);
+  const pickerMarkerRef = useRef<any>(null);
+
+  useEffect(() => {
+    let active = true;
+    loadLeafletForPicker().then((L) => {
+      if (!active || !pickerElement.current) return;
+      const map = L.map(pickerElement.current, { zoomControl: true, scrollWheelZoom: true }).setView([24.7136, 46.6753], 5);
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors</a>',
+      }).addTo(map);
+      map.on('click', (event: any) => {
+        setDraft(current => ({
+          ...current,
+          latitude: event.latlng.lat.toFixed(6),
+          longitude: event.latlng.lng.toFixed(6),
+        }));
+      });
+      pickerMapRef.current = map;
+      setPickerReady(true);
+      window.setTimeout(() => map.invalidateSize(), 80);
+    }).catch((loadError) => {
+      if (active) setError(loadError?.message || 'تعذر تحميل خريطة تحديد الموقع.');
+    });
+
+    return () => {
+      active = false;
+      pickerMapRef.current?.remove();
+      pickerMapRef.current = null;
+      pickerMarkerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const map = pickerMapRef.current;
+    if (!map || !pickerReady) return;
+    const latitude = Number(draft.latitude);
+    const longitude = Number(draft.longitude);
+    if (!draft.latitude || !draft.longitude || !Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      pickerMarkerRef.current?.remove();
+      pickerMarkerRef.current = null;
+      return;
+    }
+
+    const L = window.L;
+    pickerMarkerRef.current?.remove();
+    const icon = L.divIcon({
+      className: 'luxury-map-pin-host',
+      html: '<span class="luxury-map-pin" aria-hidden="true"><span>⌖</span></span>',
+      iconSize: [38, 42],
+      iconAnchor: [19, 40],
+    });
+    pickerMarkerRef.current = L.marker([latitude, longitude], { icon }).addTo(map);
+    map.flyTo([latitude, longitude], Math.max(map.getZoom(), 13), { duration: 0.35 });
+  }, [draft.latitude, draft.longitude, pickerReady]);
+
 
   useEffect(() => {
     setSettings({
@@ -63,13 +161,13 @@ export const MapLocationsManager: React.FC = () => {
     setError('');
     setMessage('');
 
-    const latitude = Number(draft.latitude);
-    const longitude = Number(draft.longitude);
     if (!draft.title.trim()) {
       setError('أدخل عنوان الموقع.');
       return;
     }
-    if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
+    const latitude = Number(draft.latitude);
+    const longitude = Number(draft.longitude);
+    if (!draft.latitude || !draft.longitude || !Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
       setError('خط العرض يجب أن يكون رقماً بين -90 و90.');
       return;
     }
@@ -212,15 +310,18 @@ export const MapLocationsManager: React.FC = () => {
             <textarea rows={2} value={draft.description} onChange={event => setDraft(current => ({ ...current, description: event.target.value }))} className="w-full rounded-xl border border-[#E3DCCD] bg-[#FFFCF6] p-3 text-[#282824]" />
           </label>
 
-          <div className="grid grid-cols-2 gap-3">
-            <label className="space-y-1.5 text-sm font-semibold text-[#68675F]">
-              خط العرض Latitude *
-              <input required type="number" step="any" value={draft.latitude} onChange={event => setDraft(current => ({ ...current, latitude: event.target.value }))} placeholder="24.7136" className="w-full rounded-xl border border-[#E3DCCD] bg-[#FFFCF6] p-3 text-left text-[#282824]" />
-            </label>
-            <label className="space-y-1.5 text-sm font-semibold text-[#68675F]">
-              خط الطول Longitude *
-              <input required type="number" step="any" value={draft.longitude} onChange={event => setDraft(current => ({ ...current, longitude: event.target.value }))} placeholder="46.6753" className="w-full rounded-xl border border-[#E3DCCD] bg-[#FFFCF6] p-3 text-left text-[#282824]" />
-            </label>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm font-semibold text-[#68675F]">حدد الموقع بالنقر على الخريطة *</p>
+              <button type="button" onClick={() => setDraft(current => ({ ...current, latitude: '', longitude: '' }))} className="text-xs text-[#68675F] underline">مسح التحديد</button>
+            </div>
+            <div ref={pickerElement} className="luxury-map-canvas w-full overflow-hidden rounded-2xl border border-[#E3DCCD]" aria-label="انقر لتحديد موقع المبنى على الخريطة" role="application" />
+            <p className="text-xs leading-5 text-[#68675F]">كبّر الخريطة أو حرّكها إلى المدينة المطلوبة، ثم انقر على موقع المبنى. ستظهر العلامة على النقطة المختارة.</p>
+            {draft.latitude && draft.longitude ? (
+              <p dir="ltr" className="rounded-lg bg-[#F7F3EB] p-2 text-left text-xs text-[#282824]">الموقع المحدد: {draft.latitude}, {draft.longitude}</p>
+            ) : (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">لم يتم تحديد موقع بعد.</p>
+            )}
           </div>
 
           <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-[#282824]">
