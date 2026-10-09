@@ -8,6 +8,7 @@ import { FinancialsManager } from './FinancialsManager';
 import { ContentCustomizer } from './ContentCustomizer';
 import { UserManager } from './UserManager';
 import { FooterPagesFaqManager } from './FooterPagesFaqManager';
+import { MapLocationsManager } from './MapLocationsManager';
 import { UnitControlModal } from './UnitControlModal';
 import { Unit } from '../../types';
 import { formatDate } from '../../utils/formatters';
@@ -20,6 +21,7 @@ import {
 } from '../../services/api';
 import {
   Building2,
+  MapPin,
   CalendarRange,
   FileText,
   CreditCard,
@@ -81,7 +83,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToSite }) 
   const [forcedPasswordCurrent, setForcedPasswordCurrent] = useState('');
   const [forcedPasswordError, setForcedPasswordError] = useState<string | null>(null);
 
-  const [activeModule, setActiveModule] = useState<'grid' | 'buildings' | 'timeline' | 'bookings' | 'finance' | 'content' | 'theme' | 'users' | 'audit' | 'footer_faq'>('grid');
+  const [activeModule, setActiveModule] = useState<'grid' | 'buildings' | 'timeline' | 'bookings' | 'finance' | 'content' | 'theme' | 'users' | 'audit' | 'footer_faq' | 'map_locations'>('grid');
   const [selectedUnitForControl, setSelectedUnitForControl] = useState<Unit | null>(null);
 
   // Verify token on mount and check if system has an admin initialized
@@ -423,6 +425,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToSite }) 
             <span>هيكلة وأثاث المجمعات</span>
           </button>
           <button
+            onClick={() => setActiveModule('map_locations')}
+            className={`px-3 py-2 rounded-xl transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+              activeModule === 'map_locations' ? 'bg-[#FFFCF6] text-[#282824] font-bold shadow-xs' : 'text-[#EFE9DF]/80 hover:text-white'
+            }`}
+          >
+            <MapPin className="w-4 h-4 text-[#B69A68]" />
+            <span>إدارة خريطة المواقع</span>
+          </button>
+          <button
             onClick={() => setActiveModule('timeline')}
             className={`px-3 py-2 rounded-xl transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
               activeModule === 'timeline' ? 'bg-[#FFFCF6] text-[#282824] font-bold shadow-xs' : 'text-[#EFE9DF]/80 hover:text-white'
@@ -509,6 +520,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onBackToSite }) 
         )}
         {activeModule === 'buildings' && (
           <BuildingManager />
+        )}
+        {activeModule === 'map_locations' && (
+          <MapLocationsManager />
         )}
         {activeModule === 'timeline' && (
           <CalendarTimeline onSelectUnit={(unit) => setSelectedUnitForControl(unit)} />
