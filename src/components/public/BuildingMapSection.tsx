@@ -84,7 +84,7 @@ export const BuildingMapSection: React.FC = () => {
   });
 
   useEffect(() => {
-    if (!mapElement.current || rows.length === 0 || !mapSettings.enabled) return;
+    if (!mapElement.current || !mapSettings.enabled) return;
     let active = true;
 
     loadLeaflet().then((L) => {
@@ -138,9 +138,11 @@ export const BuildingMapSection: React.FC = () => {
 
       if (markers.length === 1) {
         map.setView(markers[0].getLatLng(), Math.max(10, Math.min(16, Number(mapSettings.zoom) || 13)));
-      } else {
+      } else if (markers.length > 1) {
         const bounds = L.featureGroup(markers).getBounds();
         map.fitBounds(bounds, { padding: [36, 36], maxZoom: 12 });
+      } else {
+        map.setView([24.7136, 46.6753], Math.max(4, Math.min(8, Number(mapSettings.zoom) || 5)));
       }
 
       window.setTimeout(() => map.invalidateSize(), 80);
@@ -157,7 +159,7 @@ export const BuildingMapSection: React.FC = () => {
     };
   }, [mapDataKey, mapSettings.enabled]);
 
-  if (!mapSettings.enabled || rows.length === 0) return null;
+  if (!mapSettings.enabled) return null;
 
   return (
     <section id="building-map" dir="rtl" className="mx-auto max-w-7xl px-4 py-14 sm:px-6 lg:px-8">
