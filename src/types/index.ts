@@ -888,6 +888,24 @@ export interface OfferCarouselConfig {
   slides: OfferCarouselSlide[];
 }
 
+export interface MapLocation {
+  id: string;
+  title: string;
+  description?: string;
+  latitude: number;
+  longitude: number;
+  propertyId?: string;
+  visible: boolean;
+}
+
+export interface MapSectionSettings {
+  enabled: boolean;
+  title: string;
+  subtitle: string;
+  zoom: number;
+  locations: MapLocation[];
+}
+
 export interface CompanySettings {
   companyName: string;
   companyNameEn: string;
@@ -906,7 +924,7 @@ export interface CompanySettings {
   timezone: string;
   footerPages?: Record<string, FooterPageItem>;
   faqs?: FaqItem[];
-  themeConfig?: Record<string, unknown> & { heroCarousel?: HeroCarouselConfig; offersCarousel?: OfferCarouselConfig };
+  themeConfig?: Record<string, unknown> & { heroCarousel?: HeroCarouselConfig; offersCarousel?: OfferCarouselConfig; mapSection?: MapSectionSettings };
   // إعدادات النصوص والتنسيق البصري المتقدم
   typography?: CustomizableTypographyConfig;
   // اعدادات التنقل الهيدر والشريط السفلي
