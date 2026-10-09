@@ -547,7 +547,7 @@ export const MapLocationsManager: React.FC = () => {
             <div className="space-y-2">
               <div className="flex gap-2 rounded-xl border border-[#E3DCCD] bg-[#FFFCF6] p-2">
                 <Search className="mt-2 h-4 w-4 shrink-0 text-[#9C7D46]" />
-                <input value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="ابحث عن مدينة أو حي..." aria-label="البحث عن مدينة أو حي على الخريطة" className="min-w-0 flex-1 bg-transparent p-1 text-sm text-[#282824] outline-none" />
+                <input value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="ابحث عن مدينة أو حي..." aria-label="البحث عن مدينة أو حي على الخريطة" onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void searchPlaces(); } }} className="min-w-0 flex-1 bg-transparent p-1 text-sm text-[#282824] outline-none" />
                 <button type="button" disabled={isSearching} onClick={() => void searchPlaces()} className="rounded-lg bg-[#282824] px-3 py-2 text-xs font-bold text-white disabled:opacity-60">{isSearching ? 'جارٍ البحث…' : 'بحث'}</button>
               </div>
               <p className="text-[11px] text-[#68675F]">البحث بواسطة Photon · بيانات OpenStreetMap</p>
