@@ -40,7 +40,8 @@ import {
   FaqItem,
   FooterPageItem,
   HeroCarouselConfig,
-  OfferCarouselConfig
+  OfferCarouselConfig,
+  MapSectionSettings
 } from '../types';
 import {
   initialCompanySettings,
@@ -1627,6 +1628,32 @@ export function useAppStore() {
     apiCall('/api/settings', 'PUT', newSettings).catch(err => {
       console.warn('[Sync Error] Could not update settings on server:', err.message);
     });
+  }, []);
+
+  const saveMapSection = useCallback(async (mapSection: MapSectionSettings) => {
+    const currentThemeConfig = (globalState.settings.themeConfig || {}) as Record<string, unknown>;
+    const themeConfig = { ...currentThemeConfig, mapSection };
+    const response = await apiCall('/api/settings', 'PUT', { themeConfig });
+    const persistedThemeConfig = response?.settings?.themeConfig || themeConfig;
+    globalState = {
+      ...globalState,
+      settings: { ...globalState.settings, themeConfig: persistedThemeConfig },
+      auditLogs: [
+        {
+          id: `log-${Date.now()}`,
+          action: 'تحديث خريطة مواقع المباني',
+          entity: 'CompanySettings',
+          entityId: 'mapSection',
+          performedBy: 'المسؤول الإداري',
+          role: 'SUPER_ADMIN',
+          details: 'تم حفظ إعدادات الخريطة ومواقع المباني الإضافية.',
+          timestamp: new Date().toISOString(),
+        },
+        ...globalState.auditLogs
+      ]
+    };
+    notify();
+    return persistedThemeConfig;
   }, []);
 
   const saveHeroCarousel = useCallback(async (heroCarousel: HeroCarouselConfig) => {
@@ -3453,6 +3480,7 @@ export function useAppStore() {
     updateCompanySettings,
     saveHeroCarousel,
     saveOfferCarousel,
+    saveMapSection,
     updateContentSections,
     resetToFactoryDefaults,
     // City, Building & Floor Management
