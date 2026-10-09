@@ -110,7 +110,7 @@ export const BuildingMapSection: React.FC = () => {
           : location.description || '';
 
         const icon = L.divIcon({
-          className: '',
+          className: 'luxury-map-pin-host',
           html: '<span class="luxury-map-pin" aria-hidden="true"><span>⌖</span></span>',
           iconSize: [38, 42],
           iconAnchor: [19, 40],
