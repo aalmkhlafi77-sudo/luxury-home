@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, MapPin, Pencil, Plus, Save, Trash2, X } from 'lucide-react';
+import { Check, Copy, MapPin, Pencil, Plus, Save, Search, Share2, Trash2, X } from 'lucide-react';
 import { MapLocation, MapSectionSettings } from '../../types';
 import { useAppStore } from '../../store/useAppStore';
 import '../public/building-map.css';
@@ -50,6 +50,48 @@ function loadLeafletForPicker(): Promise<any> {
   return window.__luxuryLeafletPromise;
 }
 
+
+type MapSearchResult = { name: string; label: string; latitude: number; longitude: number };
+
+async function searchMapPlaces(query: string, center?: { lat: number; lon: number }): Promise<MapSearchResult[]> {
+  const params = new URLSearchParams({ q: query, limit: '6', lang: 'ar' });
+  if (center) { params.set('lat', String(center.lat)); params.set('lon', String(center.lon)); }
+  const response = await fetch('https://photon.komoot.io/api/?' + params.toString(), { headers: { Accept: 'application/json' } });
+  if (!response.ok) throw new Error('تعذر البحث الآن. حاول مرة أخرى بعد قليل.');
+  const data = await response.json();
+  return (Array.isArray(data.features) ? data.features : []).flatMap((feature: any) => {
+    const coordinates = feature?.geometry?.coordinates;
+    const properties = feature?.properties || {};
+    if (!Array.isArray(coordinates) || coordinates.length < 2) return [];
+    const latitude = Number(coordinates[1]), longitude = Number(coordinates[0]);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return [];
+    const name = String(properties.name || properties.street || properties.city || properties.state || 'موقع على الخريطة');
+    const label = [properties.name, properties.street, properties.city, properties.state, properties.country]
+      .filter((part: unknown, index: number, values: unknown[]) => typeof part === 'string' && part.trim() && values.indexOf(part) === index)
+      .join('، ') || name;
+    return [{ name, label, latitude, longitude }];
+  });
+}
+function googleMapsLocationUrl(latitude: number, longitude: number): string {
+  return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(latitude + ',' + longitude);
+}
+async function copyTextToClipboard(value: string): Promise<void> {
+  if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(value); return; }
+  const input = document.createElement('textarea');
+  input.value = value; input.style.position = 'fixed'; input.style.opacity = '0';
+  document.body.appendChild(input); input.select();
+  const copied = document.execCommand('copy'); input.remove();
+  if (!copied) throw new Error('تعذر نسخ الرابط من هذا المتصفح.');
+}
+async function shareOrCopyMapLocation(title: string, latitude: number, longitude: number): Promise<'shared' | 'copied'> {
+  const url = googleMapsLocationUrl(latitude, longitude);
+  if (navigator.share) {
+    try { await navigator.share({ title, text: 'موقع ' + title, url }); return 'shared'; }
+    catch (error) { if ((error as DOMException)?.name === 'AbortError') return 'shared'; }
+  }
+  await copyTextToClipboard(url); return 'copied';
+}
+
 type LocationDraft = {
   title: string;
   description: string;
@@ -81,12 +123,20 @@ export const MapLocationsManager: React.FC = () => {
   const pickerElement = useRef<HTMLDivElement | null>(null);
   const pickerMapRef = useRef<any>(null);
   const pickerMarkerRef = useRef<any>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<MapSearchResult[]>([]);
+  const [searchError, setSearchError] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
+  const [locationActionMessage, setLocationActionMessage] = useState('');
 
   useEffect(() => {
     let active = true;
     loadLeafletForPicker().then((L) => {
       if (!active || !pickerElement.current) return;
-      const map = L.map(pickerElement.current, { zoomControl: true, scrollWheelZoom: true }).setView([24.7136, 46.6753], 5);
+      const map = L.map(pickerElement.current, {
+        zoomControl: true, scrollWheelZoom: true, doubleClickZoom: true,
+        touchZoom: true, boxZoom: true, keyboard: true, wheelPxPerZoomLevel: 80,
+      }).setView([24.7136, 46.6753], 5);
       L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19,
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors</a>',
@@ -237,6 +287,41 @@ export const MapLocationsManager: React.FC = () => {
     }
   };
 
+  const searchPlaces = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const query = searchQuery.trim();
+    if (query.length < 2) { setSearchError('اكتب اسم مدينة أو حي للبحث.'); return; }
+    setIsSearching(true); setSearchError('');
+    try {
+      const center = pickerMapRef.current?.getCenter?.();
+      const results = await searchMapPlaces(query, center ? { lat: center.lat, lon: center.lng } : undefined);
+      setSearchResults(results);
+      if (!results.length) setSearchError('لم نعثر على موقع مطابق. جرّب اسماً أوضح.');
+    } catch (error: any) { setSearchError(error?.message || 'تعذر البحث عن الموقع.'); }
+    finally { setIsSearching(false); }
+  };
+  const focusSearchResult = (result: MapSearchResult) => {
+    const map = pickerMapRef.current;
+    if (!map) return;
+    map.flyTo([result.latitude, result.longitude], Math.max(map.getZoom(), 14), { duration: 0.6 });
+    setDraft(current => ({ ...current, latitude: result.latitude.toFixed(6), longitude: result.longitude.toFixed(6) }));
+    setSearchResults([]); setSearchError('');
+  };
+  const shareLocation = async (location: MapLocation) => {
+    try {
+      const result = await shareOrCopyMapLocation(location.title, location.latitude, location.longitude);
+      setLocationActionMessage(result === 'shared' ? 'تم فتح خيارات المشاركة.' : 'تم نسخ رابط الموقع.');
+    } catch (error: any) { setLocationActionMessage(error?.message || 'تعذرت مشاركة الموقع.'); }
+    window.setTimeout(() => setLocationActionMessage(''), 3000);
+  };
+  const copyLocation = async (location: MapLocation) => {
+    try {
+      await copyTextToClipboard(googleMapsLocationUrl(location.latitude, location.longitude));
+      setLocationActionMessage('تم نسخ رابط الموقع إلى الحافظة.');
+    } catch (error: any) { setLocationActionMessage(error?.message || 'تعذر نسخ الرابط.'); }
+    window.setTimeout(() => setLocationActionMessage(''), 3000);
+  };
+
   return (
     <section dir="rtl" className="space-y-6 text-right">
       <div className="rounded-3xl border border-[#E3DCCD] bg-white p-5 shadow-xs sm:p-7">
@@ -315,6 +400,22 @@ export const MapLocationsManager: React.FC = () => {
               <p className="text-sm font-semibold text-[#68675F]">حدد الموقع بالنقر على الخريطة *</p>
               <button type="button" onClick={() => setDraft(current => ({ ...current, latitude: '', longitude: '' }))} className="text-xs text-[#68675F] underline">مسح التحديد</button>
             </div>
+            <form onSubmit={searchPlaces} className="space-y-2">
+              <div className="flex gap-2 rounded-xl border border-[#E3DCCD] bg-[#FFFCF6] p-2">
+                <Search className="mt-2 h-4 w-4 shrink-0 text-[#9C7D46]" />
+                <input value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="ابحث عن مدينة أو حي..." aria-label="البحث عن مدينة أو حي على الخريطة" className="min-w-0 flex-1 bg-transparent p-1 text-sm text-[#282824] outline-none" />
+                <button type="submit" disabled={isSearching} className="rounded-lg bg-[#282824] px-3 py-2 text-xs font-bold text-white disabled:opacity-60">{isSearching ? 'جارٍ البحث…' : 'بحث'}</button>
+              </div>
+              <p className="text-[11px] text-[#68675F]">البحث بواسطة Photon · بيانات OpenStreetMap</p>
+              {searchError && <p role="status" className="text-xs text-rose-700">{searchError}</p>}
+              {searchResults.length > 0 && <div className="max-h-48 overflow-y-auto rounded-xl border border-[#E3DCCD] bg-white">
+                {searchResults.map((result, index) => (
+                  <button key={index} type="button" onClick={() => focusSearchResult(result)} className="flex w-full items-start gap-2 border-b border-[#EEE8DD] p-3 text-right text-xs text-[#282824] last:border-0 hover:bg-[#F7F3EB]">
+                    <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-[#B69A68]" /><span>{result.label}</span>
+                  </button>
+                ))}
+              </div>}
+            </form>
             <div ref={pickerElement} className="luxury-map-canvas w-full overflow-hidden rounded-2xl border border-[#E3DCCD]" aria-label="انقر لتحديد موقع المبنى على الخريطة" role="application" />
             <p className="text-xs leading-5 text-[#68675F]">كبّر الخريطة أو حرّكها إلى المدينة المطلوبة، ثم انقر على موقع المبنى. ستظهر العلامة على النقطة المختارة.</p>
             {draft.latitude && draft.longitude ? (
@@ -343,6 +444,7 @@ export const MapLocationsManager: React.FC = () => {
             <h3 className="font-bold text-[#282824]">المواقع المسجلة</h3>
             <span className="rounded-full bg-[#F7F3EB] px-3 py-1 text-xs font-bold text-[#68675F]">{settings.locations.length} موقع</span>
           </div>
+          {locationActionMessage && <p role="status" className="rounded-lg bg-[#F7F3EB] p-2 text-xs text-[#282824]">{locationActionMessage}</p>}
           {settings.locations.length === 0 ? (
             <p className="rounded-xl bg-[#FFFCF6] p-4 text-sm leading-6 text-[#68675F]">لا توجد مواقع بعد. أضف موقع مبنى أو نقطة مستقلة بإحداثياتها، ثم احفظ الإعدادات.</p>
           ) : settings.locations.map(location => {
@@ -355,7 +457,9 @@ export const MapLocationsManager: React.FC = () => {
                   <p dir="ltr" className="mt-1 text-left text-xs text-[#68675F]">{location.latitude}, {location.longitude}</p>
                   {location.description && <p className="mt-2 line-clamp-2 text-xs leading-5 text-[#68675F]">{location.description}</p>}
                 </div>
-                <div className="flex shrink-0 items-center gap-1">
+                <div className="flex shrink-0 flex-wrap items-center gap-1">
+                  <button type="button" onClick={() => void copyLocation(location)} aria-label="نسخ رابط الموقع" title="نسخ رابط الموقع" className="rounded-lg p-2 text-[#68675F] hover:bg-[#EFE9DF] hover:text-[#282824]"><Copy className="h-4 w-4" /></button>
+                  <button type="button" onClick={() => void shareLocation(location)} aria-label="مشاركة الموقع" title="مشاركة الموقع" className="rounded-lg p-2 text-[#68675F] hover:bg-[#EFE9DF] hover:text-[#282824]"><Share2 className="h-4 w-4" /></button>
                   <button type="button" onClick={() => editLocation(location)} aria-label="تعديل الموقع" className="rounded-lg p-2 text-[#68675F] hover:bg-[#EFE9DF] hover:text-[#282824]"><Pencil className="h-4 w-4" /></button>
                   <button type="button" onClick={() => removeLocation(location.id)} aria-label="حذف الموقع" className="rounded-lg p-2 text-rose-600 hover:bg-rose-50"><Trash2 className="h-4 w-4" /></button>
                 </div>
