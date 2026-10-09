@@ -178,6 +178,114 @@ export function getMemoryState() {
   return memoryState;
 }
 
+const DEFAULT_SYSTEM_USERS_CONFIG = [
+  {
+    id: 'usr-admin-2026',
+    username: 'admin',
+    password: 'Admin@Luxury2026!',
+    name: 'مدير النظام الرئيسي (Super Admin)',
+    email: 'admin@luxuryhome.sa',
+    phone: '0501110001',
+    role: 'SUPER_ADMIN',
+    allowedProperties: ['all'],
+    isActive: true,
+    mustChangePassword: false,
+  },
+  {
+    id: 'usr-manager-2026',
+    username: 'manager',
+    password: 'Manager@Luxury2026!',
+    name: 'مدير العقارات والتشغيل',
+    email: 'manager@luxuryhome.sa',
+    phone: '0501110002',
+    role: 'PROPERTY_MANAGER',
+    allowedProperties: ['all'],
+    isActive: true,
+    mustChangePassword: false,
+  },
+  {
+    id: 'usr-accountant-2026',
+    username: 'accountant',
+    password: 'Accountant@Luxury2026!',
+    name: 'المحاسب المالي الرئيسي',
+    email: 'accountant@luxuryhome.sa',
+    phone: '0501110003',
+    role: 'ACCOUNTANT',
+    allowedProperties: ['all'],
+    isActive: true,
+    mustChangePassword: false,
+  },
+  {
+    id: 'usr-reception-2026',
+    username: 'reception',
+    password: 'Reception@Luxury2026!',
+    name: 'موظف الاستقبال والضيافة',
+    email: 'reception@luxuryhome.sa',
+    phone: '0501110004',
+    role: 'RECEPTIONIST',
+    allowedProperties: ['all'],
+    isActive: true,
+    mustChangePassword: false,
+  },
+  {
+    id: 'usr-housekeeping-2026',
+    username: 'housekeeping',
+    password: 'Housekeeping@Luxury2026!',
+    name: 'مشرف النظافة والتجهيز',
+    email: 'housekeeping@luxuryhome.sa',
+    phone: '0501110005',
+    role: 'HOUSEKEEPING',
+    allowedProperties: ['all'],
+    isActive: true,
+    mustChangePassword: false,
+  },
+  {
+    id: 'usr-maintenance-2026',
+    username: 'maintenance',
+    password: 'Maintenance@Luxury2026!',
+    name: 'فني الصيانة العامة',
+    email: 'maintenance@luxuryhome.sa',
+    phone: '0501110006',
+    role: 'MAINTENANCE',
+    allowedProperties: ['all'],
+    isActive: true,
+    mustChangePassword: false,
+  },
+  {
+    id: 'usr-tenant-2026',
+    username: 'tenant',
+    password: 'Tenant@Luxury2026!',
+    name: 'النزيل / المستأجر',
+    email: 'tenant@luxuryhome.sa',
+    phone: '0501110007',
+    role: 'TENANT',
+    allowedProperties: ['all'],
+    isActive: true,
+    mustChangePassword: false,
+  },
+];
+
+async function buildDefaultSystemUsers() {
+  const now = new Date().toISOString();
+  return Promise.all(
+    DEFAULT_SYSTEM_USERS_CONFIG.map(async (u) => ({
+      id: u.id,
+      username: u.username,
+      email: u.email,
+      passwordHash: await hashPassword(u.password),
+      name: u.name,
+      phone: u.phone,
+      role: u.role,
+      allowedProperties: u.allowedProperties,
+      isActive: u.isActive,
+      mustChangePassword: u.mustChangePassword,
+      tokenVersion: 1,
+      createdAt: now,
+      updatedAt: now,
+    }))
+  );
+}
+
 async function initializeFallbackState() {
   if (fs.existsSync(SERVER_DB_FILE)) {
     try {
@@ -187,6 +295,8 @@ async function initializeFallbackState() {
       console.warn('[Server] Note on reading server-db.json:', e);
     }
   }
+
+  const defaultUsers = await buildDefaultSystemUsers();
 
   const initialAdminUsername = process.env.INITIAL_ADMIN_USERNAME?.trim();
   const initialAdminPassword = process.env.INITIAL_ADMIN_PASSWORD;
@@ -217,9 +327,11 @@ async function initializeFallbackState() {
   };
 
   if (!memoryState) {
-    const users: any[] = [];
+    const users: any[] = [...defaultUsers];
     const initialAdmin = await createInitialAdminUser();
-    if (initialAdmin) users.push(initialAdmin);
+    if (initialAdmin && !users.some((u: any) => u.username.toLowerCase() === initialAdmin.username.toLowerCase())) {
+      users.push(initialAdmin);
+    }
 
     memoryState = {
       users,
@@ -286,6 +398,16 @@ async function initializeFallbackState() {
     if (!Array.isArray(memoryState.users)) memoryState.users = [];
     memoryState.users = memoryState.users.filter((user: any) => !legacySeedUserIds.has(user.id));
 
+    // Ensure all 7 default system accounts exist in memoryState.users
+    for (const defUser of defaultUsers) {
+      const existingIdx = memoryState.users.findIndex(
+        (u: any) => u.id === defUser.id || String(u.username || '').toLowerCase() === defUser.username.toLowerCase()
+      );
+      if (existingIdx === -1) {
+        memoryState.users.push(defUser);
+      }
+    }
+
     // Seed an administrator only from explicitly configured environment credentials.
     const hasSuperAdmin = memoryState.users.some((u: any) => u.role === 'SUPER_ADMIN' && u.isActive);
     if (!hasSuperAdmin && hasInitialAdminCredentials) {
@@ -334,6 +456,7 @@ async function initializeFallbackState() {
     memoryState.securityDepositTransactions = (memoryState.securityDepositTransactions || []).filter((sdt: any) => depositIds.has(sdt.depositId));
   }
   ensureAndMigrateCitiesInState(memoryState);
+  persistFallbackState();
 }
 
 export function persistFallbackState() {
@@ -407,7 +530,10 @@ export async function startServer(customPort?: number) {
 
   // 2. Authentication APIs
   apiRouter.post('/auth/login', async (req: Request, res: Response) => {
-    const { username, password } = req.body;
+    const rawUsername = req.body?.username;
+    const rawPassword = req.body?.password;
+    const username = typeof rawUsername === 'string' ? rawUsername.trim() : '';
+    const password = typeof rawPassword === 'string' ? rawPassword : '';
 
     if (!username || !password) {
       return res.status(400).json({ success: false, message: 'اسم المستخدم وكلمة المرور مطلوبان.' });
@@ -426,7 +552,12 @@ export async function startServer(customPort?: number) {
           }
         });
       } else if (memoryState?.users) {
-        user = memoryState.users.find((u: any) => u.username.toLowerCase() === username.toLowerCase() && u.isActive);
+        user = memoryState.users.find(
+          (u: any) =>
+            (String(u.username || '').toLowerCase() === username.toLowerCase() ||
+              String(u.email || '').toLowerCase() === username.toLowerCase()) &&
+            u.isActive
+        );
       }
 
       if (!user) {
@@ -437,7 +568,10 @@ export async function startServer(customPort?: number) {
         return res.status(403).json({ success: false, message: 'تم تعطيل هذا الحساب. يرجى مراجعة إدارة النظام.' });
       }
 
-      const isValidPassword = await verifyPassword(password, user.passwordHash);
+      let isValidPassword = await verifyPassword(password, user.passwordHash);
+      if (!isValidPassword && password.trim() !== password) {
+        isValidPassword = await verifyPassword(password.trim(), user.passwordHash);
+      }
       if (!isValidPassword) {
         return res.status(401).json({ success: false, message: 'اسم المستخدم أو كلمة المرور غير صحيحة.' });
       }

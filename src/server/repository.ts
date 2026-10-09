@@ -13,6 +13,7 @@ import {
 import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from './db.js';
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 import { initialCustomTypography } from '../data/initialData.js';
 
 // Safe serialization helper for Decimals & Dates in JSON API responses
@@ -66,23 +67,90 @@ for (const c of defaultCities) {
   memoryCitiesMap.set(c.id, { ...c });
 }
 
-// Initialize default in-memory super admin
-const defaultAdmin = {
-  id: 'user-super-admin',
-  username: 'admin',
-  email: 'admin@luxuryhome.sa',
-  passwordHash: '$2a$10$w09v91xK...mock',
-  name: 'مدير النظام الرئيسي',
-  phone: '0501112233',
-  role: 'SUPER_ADMIN',
-  allowedProperties: ['all'],
-  isActive: true,
-  mustChangePassword: false,
-  tokenVersion: 1,
-  createdAt: new Date().toISOString(),
-  updatedAt: new Date().toISOString()
-};
-memoryUsersMap.set(defaultAdmin.id, defaultAdmin);
+// Initialize default in-memory system users with verified bcrypt hashes
+const defaultSystemUsersSeed = [
+  {
+    id: 'usr-admin-2026',
+    username: 'admin',
+    email: 'admin@luxuryhome.sa',
+    passwordPlain: 'Admin@Luxury2026!',
+    name: 'مدير النظام الرئيسي (Super Admin)',
+    phone: '0501110001',
+    role: 'SUPER_ADMIN',
+  },
+  {
+    id: 'usr-manager-2026',
+    username: 'manager',
+    email: 'manager@luxuryhome.sa',
+    passwordPlain: 'Manager@Luxury2026!',
+    name: 'مدير العقارات والتشغيل',
+    phone: '0501110002',
+    role: 'PROPERTY_MANAGER',
+  },
+  {
+    id: 'usr-accountant-2026',
+    username: 'accountant',
+    email: 'accountant@luxuryhome.sa',
+    passwordPlain: 'Accountant@Luxury2026!',
+    name: 'المحاسب المالي الرئيسي',
+    phone: '0501110003',
+    role: 'ACCOUNTANT',
+  },
+  {
+    id: 'usr-reception-2026',
+    username: 'reception',
+    email: 'reception@luxuryhome.sa',
+    passwordPlain: 'Reception@Luxury2026!',
+    name: 'موظف الاستقبال والضيافة',
+    phone: '0501110004',
+    role: 'RECEPTIONIST',
+  },
+  {
+    id: 'usr-housekeeping-2026',
+    username: 'housekeeping',
+    email: 'housekeeping@luxuryhome.sa',
+    passwordPlain: 'Housekeeping@Luxury2026!',
+    name: 'مشرف النظافة والتجهيز',
+    phone: '0501110005',
+    role: 'HOUSEKEEPING',
+  },
+  {
+    id: 'usr-maintenance-2026',
+    username: 'maintenance',
+    email: 'maintenance@luxuryhome.sa',
+    passwordPlain: 'Maintenance@Luxury2026!',
+    name: 'فني الصيانة العامة',
+    phone: '0501110006',
+    role: 'MAINTENANCE',
+  },
+  {
+    id: 'usr-tenant-2026',
+    username: 'tenant',
+    email: 'tenant@luxuryhome.sa',
+    passwordPlain: 'Tenant@Luxury2026!',
+    name: 'النزيل / المستأجر',
+    phone: '0501110007',
+    role: 'TENANT',
+  },
+];
+
+for (const u of defaultSystemUsersSeed) {
+  memoryUsersMap.set(u.id, {
+    id: u.id,
+    username: u.username,
+    email: u.email,
+    passwordHash: bcrypt.hashSync(u.passwordPlain, 10),
+    name: u.name,
+    phone: u.phone,
+    role: u.role,
+    allowedProperties: ['all'],
+    isActive: true,
+    mustChangePassword: false,
+    tokenVersion: 1,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+}
 
 // --- User & RBAC Management Repository ---
 export async function getAllUsersFromDb() {
@@ -129,8 +197,6 @@ export async function countActiveSuperAdminsInDb(): Promise<number> {
     return Array.from(memoryUsersMap.values()).filter(u => u.role === 'SUPER_ADMIN' && u.isActive).length;
   }
 }
-
-import bcrypt from 'bcryptjs';
 
 export async function createUserInDb(data: {
   username: string;
