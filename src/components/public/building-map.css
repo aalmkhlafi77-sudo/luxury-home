@@ -108,3 +108,49 @@
 .luxury-map-popup-actions { display: flex; gap: .45rem; margin-top: .65rem; }
 .luxury-map-popup-action { border: 1px solid #e3dccd; border-radius: .6rem; background: #f7f3eb; padding: .4rem .55rem; color: #282824; font: inherit; font-size: .7rem; font-weight: 700; cursor: pointer; }
 .luxury-map-popup-action:hover { border-color: #b69a68; color: #9c7d46; }
+
+.luxury-map-tools-panel, .luxury-map-picker-tools { display: flex; flex-wrap: wrap; align-items: flex-start; gap: .65rem; margin-bottom: .75rem; }
+.luxury-map-layer-switch { display: inline-flex; flex-wrap: wrap; gap: .25rem; border: 1px solid #e3dccd; border-radius: .85rem; background: #fff; padding: .25rem; }
+.luxury-map-layer-switch button, .luxury-map-tool-button { border: 1px solid transparent; border-radius: .65rem; background: transparent; padding: .55rem .8rem; color: #514a3d; font: inherit; font-size: .78rem; font-weight: 700; cursor: pointer; }
+.luxury-map-layer-switch button[aria-pressed="true"], .luxury-map-tool-button { border-color: #282824; background: #282824; color: #fff; }
+.luxury-map-layer-switch button:hover, .luxury-map-tool-button:hover { filter: brightness(1.12); }
+.luxury-map-tool-button:disabled, .luxury-map-activity-actions button:disabled { opacity: .6; cursor: wait; }
+.luxury-map-activity-panel { flex: 1 1 100%; border: 1px solid #e3dccd; border-radius: 1rem; background: #fff; padding: .8rem; color: #282824; }
+.luxury-map-activity-panel > strong { display: block; margin-bottom: .55rem; font-size: .83rem; }
+.luxury-map-activity-options { display: flex; flex-wrap: wrap; gap: .6rem .9rem; }
+.luxury-map-activity-options label { display: inline-flex; align-items: center; gap: .35rem; color: #514a3d; font-size: .76rem; cursor: pointer; }
+.luxury-map-activity-options input { accent-color: #9c7d46; }
+.luxury-map-activity-actions { display: flex; gap: .45rem; margin-top: .7rem; }
+.luxury-map-activity-actions button { border: 1px solid #e3dccd; border-radius: .65rem; background: #f7f3eb; padding: .5rem .7rem; color: #282824; font: inherit; font-size: .74rem; font-weight: 700; cursor: pointer; }
+.luxury-map-activity-actions button:first-child { border-color: #282824; background: #282824; color: #fff; }
+.luxury-map-activity-panel small { display: block; margin-top: .5rem; color: #77746c; font-size: .66rem; }
+@media (max-width: 640px) {
+  .luxury-map-tools-panel, .luxury-map-picker-tools { gap: .45rem; }
+  .luxury-map-layer-switch button, .luxury-map-tool-button { padding: .5rem .65rem; font-size: .72rem; }
+}
+
+/* Keep the zoom glyph centered regardless of RTL/global button styles. */
+.luxury-map-zoom button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 0;
+  text-align: center;
+  line-height: 1;
+}
+.luxury-map-zoom button svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+  margin: 0 auto;
+}
+.luxury-map-canvas .leaflet-control-zoom a {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 0;
+  text-align: center;
+  line-height: 1;
+}
