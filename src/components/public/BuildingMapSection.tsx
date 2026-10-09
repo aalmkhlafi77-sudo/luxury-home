@@ -171,7 +171,7 @@ export const BuildingMapSection: React.FC = () => {
       if (!active || !mapElement.current) return;
 
       const map = L.map(mapElement.current, {
-        zoomControl: true,
+        zoomControl: false,
         scrollWheelZoom: true,
         doubleClickZoom: true,
         touchZoom: true,
