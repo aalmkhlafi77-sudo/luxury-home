@@ -410,8 +410,7 @@ export const MapLocationsManager: React.FC = () => {
     setActivityMessage('تم إخفاء الأنشطة.');
   };
 
-  const searchPlaces = async (event: React.FormEvent) => {
-    event.preventDefault();
+  const searchPlaces = async () => {
     const query = searchQuery.trim();
     if (query.length < 2) { setSearchError('اكتب اسم مدينة أو حي للبحث.'); return; }
     setIsSearching(true); setSearchError('');
@@ -425,7 +424,7 @@ export const MapLocationsManager: React.FC = () => {
   };
   const focusSearchResult = (result: MapSearchResult) => {
     const map = pickerMapRef.current;
-    if (!map) return;
+    if (!map) { setSearchError('الخريطة لا تزال قيد التحميل. حاول بعد ظهورها.'); return; }
     map.flyTo([result.latitude, result.longitude], Math.max(map.getZoom(), 14), { duration: 0.6 });
     setDraft(current => ({ ...current, latitude: result.latitude.toFixed(6), longitude: result.longitude.toFixed(6) }));
     setSearchResults([]); setSearchError('');
@@ -545,11 +544,11 @@ export const MapLocationsManager: React.FC = () => {
               <small>البحث ضمن نطاق محلي حول مركز الخريطة فقط.</small>
               {activityMessage && <p role="status" className="luxury-map-search-message">{activityMessage}</p>}
             </div>
-            <form onSubmit={searchPlaces} className="space-y-2">
+            <div className="space-y-2">
               <div className="flex gap-2 rounded-xl border border-[#E3DCCD] bg-[#FFFCF6] p-2">
                 <Search className="mt-2 h-4 w-4 shrink-0 text-[#9C7D46]" />
                 <input value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="ابحث عن مدينة أو حي..." aria-label="البحث عن مدينة أو حي على الخريطة" className="min-w-0 flex-1 bg-transparent p-1 text-sm text-[#282824] outline-none" />
-                <button type="submit" disabled={isSearching} className="rounded-lg bg-[#282824] px-3 py-2 text-xs font-bold text-white disabled:opacity-60">{isSearching ? 'جارٍ البحث…' : 'بحث'}</button>
+                <button type="button" disabled={isSearching} onClick={() => void searchPlaces()} className="rounded-lg bg-[#282824] px-3 py-2 text-xs font-bold text-white disabled:opacity-60">{isSearching ? 'جارٍ البحث…' : 'بحث'}</button>
               </div>
               <p className="text-[11px] text-[#68675F]">البحث بواسطة Photon · بيانات OpenStreetMap</p>
               {searchError && <p role="status" className="text-xs text-rose-700">{searchError}</p>}
@@ -560,7 +559,7 @@ export const MapLocationsManager: React.FC = () => {
                   </button>
                 ))}
               </div>}
-            </form>
+            </div>
             <div ref={pickerElement} className="luxury-map-canvas w-full overflow-hidden rounded-2xl border border-[#E3DCCD]" aria-label="انقر لتحديد موقع المبنى على الخريطة" role="application" />
             <p className="text-xs leading-5 text-[#68675F]">كبّر الخريطة أو حرّكها إلى المدينة المطلوبة، ثم انقر على موقع المبنى. ستظهر العلامة على النقطة المختارة.</p>
             {draft.latitude && draft.longitude ? (
