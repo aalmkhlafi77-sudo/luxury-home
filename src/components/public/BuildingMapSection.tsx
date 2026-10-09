@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { MapPin, Minus, Plus } from 'lucide-react';
+import { MapPin, Minus, Plus, Search } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { MapLocation, MapSectionSettings, Property } from '../../types';
 import './building-map.css';
@@ -53,6 +53,48 @@ function loadLeaflet(): Promise<any> {
   return window.__luxuryLeafletPromise;
 }
 
+
+type MapSearchResult = { name: string; label: string; latitude: number; longitude: number };
+
+async function searchMapPlaces(query: string, center?: { lat: number; lon: number }): Promise<MapSearchResult[]> {
+  const params = new URLSearchParams({ q: query, limit: '6', lang: 'ar' });
+  if (center) { params.set('lat', String(center.lat)); params.set('lon', String(center.lon)); }
+  const response = await fetch('https://photon.komoot.io/api/?' + params.toString(), { headers: { Accept: 'application/json' } });
+  if (!response.ok) throw new Error('تعذر البحث الآن. حاول مرة أخرى بعد قليل.');
+  const data = await response.json();
+  return (Array.isArray(data.features) ? data.features : []).flatMap((feature: any) => {
+    const coordinates = feature?.geometry?.coordinates;
+    const properties = feature?.properties || {};
+    if (!Array.isArray(coordinates) || coordinates.length < 2) return [];
+    const latitude = Number(coordinates[1]), longitude = Number(coordinates[0]);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return [];
+    const name = String(properties.name || properties.street || properties.city || properties.state || 'موقع على الخريطة');
+    const label = [properties.name, properties.street, properties.city, properties.state, properties.country]
+      .filter((part: unknown, index: number, values: unknown[]) => typeof part === 'string' && part.trim() && values.indexOf(part) === index)
+      .join('، ') || name;
+    return [{ name, label, latitude, longitude }];
+  });
+}
+function googleMapsLocationUrl(latitude: number, longitude: number): string {
+  return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(latitude + ',' + longitude);
+}
+async function copyTextToClipboard(value: string): Promise<void> {
+  if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(value); return; }
+  const input = document.createElement('textarea');
+  input.value = value; input.style.position = 'fixed'; input.style.opacity = '0';
+  document.body.appendChild(input); input.select();
+  const copied = document.execCommand('copy'); input.remove();
+  if (!copied) throw new Error('تعذر نسخ الرابط من هذا المتصفح.');
+}
+async function shareOrCopyMapLocation(title: string, latitude: number, longitude: number): Promise<'shared' | 'copied'> {
+  const url = googleMapsLocationUrl(latitude, longitude);
+  if (navigator.share) {
+    try { await navigator.share({ title, text: 'موقع ' + title, url }); return 'shared'; }
+    catch (error) { if ((error as DOMException)?.name === 'AbortError') return 'shared'; }
+  }
+  await copyTextToClipboard(url); return 'copied';
+}
+
 interface MapRow {
   location: MapLocation;
   property?: Property;
@@ -63,6 +105,12 @@ export const BuildingMapSection: React.FC = () => {
   const mapElement = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
   const [mapError, setMapError] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<MapSearchResult[]>([]);
+  const [searchError, setSearchError] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
+  const [shareMessage, setShareMessage] = useState('');
+  const searchMarkerRef = useRef<any>(null);
 
   const mapSettings = (state.settings.themeConfig?.mapSection as MapSectionSettings | undefined) || DEFAULT_MAP_SECTION;
 
@@ -78,6 +126,38 @@ export const BuildingMapSection: React.FC = () => {
       .filter(row => !row.location.propertyId || Boolean(row.property));
   }, [mapSettings.locations, state.properties]);
 
+
+  const searchPlaces = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const query = searchQuery.trim();
+    if (query.length < 2) { setSearchError('اكتب اسم مدينة أو حي للبحث.'); return; }
+    setIsSearching(true); setSearchError('');
+    try {
+      const center = mapRef.current?.getCenter?.();
+      const results = await searchMapPlaces(query, center ? { lat: center.lat, lon: center.lng } : undefined);
+      setSearchResults(results);
+      if (!results.length) setSearchError('لم نعثر على موقع مطابق. جرّب اسماً أوضح.');
+    } catch (error: any) { setSearchError(error?.message || 'تعذر البحث عن الموقع.'); }
+    finally { setIsSearching(false); }
+  };
+  const focusSearchResult = (result: MapSearchResult) => {
+    const map = mapRef.current, L = window.L;
+    if (!map || !L) return;
+    searchMarkerRef.current?.remove();
+    searchMarkerRef.current = L.circleMarker([result.latitude, result.longitude], {
+      radius: 8, color: '#fff', weight: 3, fillColor: '#282824', fillOpacity: 1,
+    }).addTo(map).bindPopup(result.label);
+    map.flyTo([result.latitude, result.longitude], Math.max(map.getZoom(), 14), { duration: 0.6 });
+    searchMarkerRef.current.openPopup(); setSearchResults([]); setSearchError('');
+  };
+  const shareSavedLocation = async (title: string, latitude: number, longitude: number) => {
+    try {
+      const result = await shareOrCopyMapLocation(title, latitude, longitude);
+      setShareMessage(result === 'shared' ? 'تم فتح خيارات المشاركة.' : 'تم نسخ رابط الموقع.');
+    } catch (error: any) { setShareMessage(error?.message || 'تعذر مشاركة الموقع.'); }
+    window.setTimeout(() => setShareMessage(''), 3000);
+  };
+
   const mapDataKey = JSON.stringify({
     rows: rows.map(row => ({ ...row.location, propertyName: row.property?.name })),
     zoom: mapSettings.zoom,
@@ -92,7 +172,12 @@ export const BuildingMapSection: React.FC = () => {
 
       const map = L.map(mapElement.current, {
         zoomControl: false,
-        scrollWheelZoom: false,
+        scrollWheelZoom: true,
+        doubleClickZoom: true,
+        touchZoom: true,
+        boxZoom: true,
+        keyboard: true,
+        wheelPxPerZoomLevel: 80,
         tap: true,
       });
       mapRef.current = map;
@@ -129,6 +214,25 @@ export const BuildingMapSection: React.FC = () => {
           popup.appendChild(details);
         }
         marker.bindPopup(popup);
+        const actionRow = document.createElement('div');
+        actionRow.className = 'luxury-map-popup-actions';
+        const shareButton = document.createElement('button');
+        shareButton.type = 'button'; shareButton.className = 'luxury-map-popup-action'; shareButton.textContent = 'مشاركة الموقع';
+        shareButton.addEventListener('click', (event) => {
+          event.stopPropagation();
+          void shareSavedLocation(title, location.latitude, location.longitude);
+        });
+        const copyButton = document.createElement('button');
+        copyButton.type = 'button'; copyButton.className = 'luxury-map-popup-action'; copyButton.textContent = 'نسخ الرابط';
+        copyButton.addEventListener('click', async (event) => {
+          event.stopPropagation();
+          try {
+            await copyTextToClipboard(googleMapsLocationUrl(location.latitude, location.longitude));
+            setShareMessage('تم نسخ رابط الموقع.');
+          } catch (error: any) { setShareMessage(error?.message || 'تعذر نسخ الرابط.'); }
+          window.setTimeout(() => setShareMessage(''), 3000);
+        });
+        actionRow.append(shareButton, copyButton); popup.appendChild(actionRow);
         marker.on('click', () => {
           if (!property) return;
           window.dispatchEvent(new CustomEvent('luxury:focus-building', { detail: { propertyId: property.id } }));
@@ -145,6 +249,12 @@ export const BuildingMapSection: React.FC = () => {
         map.setView([24.7136, 46.6753], Math.max(4, Math.min(8, Number(mapSettings.zoom) || 5)));
       }
 
+      const focusLocationId = new URLSearchParams(window.location.search).get('mapLocation');
+      const focusRowIndex = rows.findIndex(row => row.location.id === focusLocationId);
+      if (focusRowIndex >= 0) {
+        map.setView([rows[focusRowIndex].location.latitude, rows[focusRowIndex].location.longitude], 15);
+        markers[focusRowIndex]?.openPopup();
+      }
       window.setTimeout(() => map.invalidateSize(), 80);
     }).catch((error) => {
       if (active) setMapError(error?.message || 'تعذر تحميل الخريطة حالياً.');
@@ -175,6 +285,23 @@ export const BuildingMapSection: React.FC = () => {
         <p className="text-xs text-[#68675F]">انقر على علامة المبنى للانتقال إلى بطاقة تفاصيله.</p>
       </div>
 
+      <form onSubmit={searchPlaces} className="luxury-map-search-toolbar">
+        <div className="luxury-map-search-input-wrap">
+          <Search className="h-4 w-4 shrink-0 text-[#9C7D46]" />
+          <input value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="ابحث عن مدينة أو حي..." aria-label="ابحث عن موقع على الخريطة" />
+          <button type="submit" disabled={isSearching}>{isSearching ? 'جارٍ البحث…' : 'بحث'}</button>
+        </div>
+        <p className="luxury-map-search-credit">بحث الأماكن بواسطة Photon · بيانات OpenStreetMap</p>
+        {searchError && <p role="status" className="luxury-map-search-message">{searchError}</p>}
+        {searchResults.length > 0 && <div className="luxury-map-search-results">
+          {searchResults.map((result, index) => (
+            <button key={index} type="button" onClick={() => focusSearchResult(result)}>
+              <MapPin className="h-4 w-4 shrink-0 text-[#B69A68]" /><span>{result.label}</span>
+            </button>
+          ))}
+        </div>}
+      </form>
+      {shareMessage && <p role="status" className="luxury-map-share-message">{shareMessage}</p>}
       <div className="luxury-map-shell">
         <div ref={mapElement} className="luxury-map-canvas" aria-label="خريطة مواقع المباني" role="application" />
         {!mapError && (
