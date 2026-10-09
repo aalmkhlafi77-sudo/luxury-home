@@ -7,6 +7,7 @@ import { MobileBottomNav } from './components/common/MobileBottomNav';
 import { HeroSection } from './components/public/HeroSection';
 import { FloatingBookingBar } from './components/public/FloatingBookingBar';
 import { BuildingsCarousel } from './components/public/BuildingsCarousel';
+import { BuildingMapSection } from './components/public/BuildingMapSection';
 import { FeaturedUnitsCarousel } from './components/public/FeaturedUnitsCarousel';
 import { SpecialOffersBanner } from './components/public/SpecialOffersBanner';
 import { AmenitiesSection } from './components/public/AmenitiesSection';
@@ -96,7 +97,7 @@ export default function App() {
   useEffect(() => {
     if (viewMode !== 'public') return;
 
-    const sections = ['hero', 'search_bar', 'buildings', 'units', 'amenities', 'faq', 'contact'];
+    const sections = ['hero', 'search_bar', 'buildings', 'building-map', 'units', 'amenities', 'faq', 'contact'];
     const observerOptions = {
       root: null,
       rootMargin: '-20% 0px -60% 0px',
@@ -263,6 +264,9 @@ export default function App() {
         <BuildingsCarousel
           onSelectProperty={(prop) => setActivePropertyModal(prop)}
         />
+
+        {/* Map of properties and managed locations */}
+        <BuildingMapSection />
 
         {/* 5. Featured Units Grid / Carousel */}
         <FeaturedUnitsCarousel
