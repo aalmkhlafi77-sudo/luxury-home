@@ -1,7 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Copy, MapPin, Pencil, Plus, Save, Search, Share2, Trash2, X } from 'lucide-react';
+import { Building2, Check, ChevronDown, Compass, Copy, Eye, MapPin, Minus, Navigation, Pencil, Plus, Save, Search, Share2, Trash2, X } from 'lucide-react';
 import { MapLocation, MapSectionSettings } from '../../types';
 import { useAppStore } from '../../store/useAppStore';
+import {
+  ACTIVITY_CATEGORIES,
+  ActivityCategory,
+  MapSearchResult,
+  findNearbyActivities,
+  resolveBrowserOrIpLocation,
+  searchMapPlaces,
+} from '../public/BuildingMapSection';
 import '../public/building-map.css';
 
 declare global {
@@ -28,123 +36,91 @@ function loadLeafletForPicker(): Promise<any> {
       const link = document.createElement('link');
       link.id = 'luxury-leaflet-css';
       link.rel = 'stylesheet';
+      link.crossOrigin = 'anonymous';
       link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
       document.head.appendChild(link);
     }
 
     const existing = document.getElementById('luxury-leaflet-js') as HTMLScriptElement | null;
     if (existing) {
+      if (window.L) {
+        resolve(window.L);
+        return;
+      }
       existing.addEventListener('load', () => window.L ? resolve(window.L) : reject(new Error('تعذر تحميل مكتبة الخريطة.')), { once: true });
-      existing.addEventListener('error', () => reject(new Error('تعذر الاتصال بمكتبة الخريطة.')), { once: true });
+      existing.addEventListener('error', () => {
+        window.__luxuryLeafletPromise = undefined;
+        reject(new Error('تعذر الاتصال بمكتبة الخريطة.'));
+      }, { once: true });
       return;
     }
 
     const script = document.createElement('script');
     script.id = 'luxury-leaflet-js';
     script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+    script.crossOrigin = 'anonymous';
     script.async = true;
     script.onload = () => window.L ? resolve(window.L) : reject(new Error('تعذر تحميل مكتبة الخريطة.'));
-    script.onerror = () => reject(new Error('تعذر الاتصال بمكتبة الخريطة.'));
+    script.onerror = () => {
+      window.__luxuryLeafletPromise = undefined;
+      reject(new Error('تعذر الاتصال بمكتبة الخريطة.'));
+    };
     document.head.appendChild(script);
   });
   return window.__luxuryLeafletPromise;
 }
 
-
-type MapSearchResult = { name: string; label: string; latitude: number; longitude: number };
-
-async function searchMapPlaces(query: string, center?: { lat: number; lon: number }): Promise<MapSearchResult[]> {
-  const params = new URLSearchParams({ q: query, limit: '6', lang: 'ar' });
-  if (center) { params.set('lat', String(center.lat)); params.set('lon', String(center.lon)); }
-  const response = await fetch('https://photon.komoot.io/api/?' + params.toString(), { headers: { Accept: 'application/json' } });
-  if (!response.ok) throw new Error('تعذر البحث الآن. حاول مرة أخرى بعد قليل.');
-  const data = await response.json();
-  return (Array.isArray(data.features) ? data.features : []).flatMap((feature: any) => {
-    const coordinates = feature?.geometry?.coordinates;
-    const properties = feature?.properties || {};
-    if (!Array.isArray(coordinates) || coordinates.length < 2) return [];
-    const latitude = Number(coordinates[1]), longitude = Number(coordinates[0]);
-    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return [];
-    const name = String(properties.name || properties.street || properties.city || properties.state || 'موقع على الخريطة');
-    const label = [properties.name, properties.street, properties.city, properties.state, properties.country]
-      .filter((part: unknown, index: number, values: unknown[]) => typeof part === 'string' && part.trim() && values.indexOf(part) === index)
-      .join('، ') || name;
-    return [{ name, label, latitude, longitude }];
-  });
-}
 function googleMapsLocationUrl(latitude: number, longitude: number): string {
   return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(latitude + ',' + longitude);
 }
+
 async function copyTextToClipboard(value: string): Promise<void> {
-  if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(value); return; }
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
   const input = document.createElement('textarea');
-  input.value = value; input.style.position = 'fixed'; input.style.opacity = '0';
-  document.body.appendChild(input); input.select();
-  const copied = document.execCommand('copy'); input.remove();
+  input.value = value;
+  input.style.position = 'fixed';
+  input.style.opacity = '0';
+  document.body.appendChild(input);
+  input.select();
+  const copied = document.execCommand('copy');
+  input.remove();
   if (!copied) throw new Error('تعذر نسخ الرابط من هذا المتصفح.');
 }
+
 async function shareOrCopyMapLocation(title: string, latitude: number, longitude: number): Promise<'shared' | 'copied'> {
   const url = googleMapsLocationUrl(latitude, longitude);
   if (navigator.share) {
-    try { await navigator.share({ title, text: 'موقع ' + title, url }); return 'shared'; }
-    catch (error) { if ((error as DOMException)?.name === 'AbortError') return 'shared'; }
+    try {
+      await navigator.share({ title, text: 'موقع ' + title, url });
+      return 'shared';
+    } catch (error) {
+      if ((error as DOMException)?.name === 'AbortError') return 'shared';
+    }
   }
-  await copyTextToClipboard(url); return 'copied';
+  await copyTextToClipboard(url);
+  return 'copied';
 }
 
-
-type ActivityCategory = 'food' | 'health' | 'shopping' | 'entertainment';
-type NearbyActivity = { id: string; title: string; category: ActivityCategory; latitude: number; longitude: number };
-const ACTIVITY_CATEGORIES: { id: ActivityCategory; label: string; color: string; filters: string[] }[] = [
-  { id: 'food', label: 'مطاعم ومقاهٍ', color: '#C96B32', filters: ['["amenity"~"restaurant|cafe|fast_food|food_court|ice_cream"]'] },
-  { id: 'health', label: 'مستشفيات وصيدليات', color: '#C74455', filters: ['["amenity"~"hospital|clinic|doctors|pharmacy"]'] },
-  { id: 'shopping', label: 'مراكز تجارية', color: '#7A58A6', filters: ['["shop"~"mall|supermarket|department_store"]', '["landuse"="retail"]'] },
-  { id: 'entertainment', label: 'ترفيه', color: '#347B78', filters: ['["amenity"~"cinema|theatre|nightclub|arts_centre"]', '["leisure"~"amusement_arcade|water_park|amusement_park|sports_centre"]', '["tourism"="theme_park"]'] },
-];
 type MapBaseLayerId = 'street' | 'terrain' | 'satellite';
 const MAP_BASE_LAYERS: Record<MapBaseLayerId, { title: string; url: string; maxZoom: number; attribution: string; subdomains?: string }> = {
   street: { title: 'عادية', url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors</a>' },
   terrain: { title: 'تضاريس', url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', maxZoom: 17, subdomains: 'abc', attribution: 'Map data: &copy; OpenStreetMap contributors, SRTM | Map style: &copy; OpenTopoMap (CC-BY-SA)' },
   satellite: { title: 'قمر صناعي', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', maxZoom: 19, attribution: 'Tiles &copy; Esri — Sources: Esri, Maxar, Earthstar Geographics, and the GIS User Community' },
 };
+
 function createMapBaseLayer(L: any, id: MapBaseLayerId): any {
-  const source = MAP_BASE_LAYERS[id];
-  return L.tileLayer(source.url, { maxZoom: source.maxZoom, subdomains: source.subdomains, attribution: source.attribution });
-}
-function buildOverpassQuery(categories: ActivityCategory[], latitude: number, longitude: number, radius: number): string {
-  const statements = categories.flatMap(category => {
-    const config = ACTIVITY_CATEGORIES.find(item => item.id === category);
-    return (config?.filters || []).map(filter => 'nwr(around:' + radius + ',' + latitude + ',' + longitude + ')' + filter + ';');
-  });
-  return '[out:json][timeout:20];(' + statements.join('') + ');out center tags 100;';
-}
-async function findNearbyActivities(categories: ActivityCategory[], latitude: number, longitude: number, radius: number): Promise<NearbyActivity[]> {
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 25000);
-  try {
-    const response = await fetch('https://overpass-api.de/api/interpreter', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8', Accept: 'application/json' },
-      body: new URLSearchParams({ data: buildOverpassQuery(categories, latitude, longitude, radius) }),
-      signal: controller.signal,
-    });
-    if (!response.ok) throw new Error('خدمة الأنشطة القريبة مشغولة حالياً. حاول مرة أخرى لاحقاً.');
-    const data = await response.json();
-    const items = Array.isArray(data.elements) ? data.elements : [];
-    return items.flatMap((item: any) => {
-      const lat = Number(item.lat ?? item.center?.lat), lon = Number(item.lon ?? item.center?.lon);
-      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return [];
-      const tags = item.tags || {};
-      let category: ActivityCategory | undefined;
-      if (/restaurant|cafe|fast_food|food_court|ice_cream/.test(String(tags.amenity || ''))) category = 'food';
-      else if (/hospital|clinic|doctors|pharmacy/.test(String(tags.amenity || ''))) category = 'health';
-      else if (/mall|supermarket|department_store/.test(String(tags.shop || '')) || tags.landuse === 'retail') category = 'shopping';
-      else if (/cinema|theatre|nightclub|arts_centre/.test(String(tags.amenity || '')) || /amusement_arcade|water_park|amusement_park|sports_centre/.test(String(tags.leisure || '')) || tags.tourism === 'theme_park') category = 'entertainment';
-      if (!category || !categories.includes(category)) return [];
-      const title = String(tags.name || tags.brand || ACTIVITY_CATEGORIES.find(item => item.id === category)?.label || 'مكان قريب');
-      return [{ id: String(item.type) + '-' + String(item.id), title, category, latitude: lat, longitude: lon }];
-    }).slice(0, 100);
-  } finally { window.clearTimeout(timeout); }
+  const source = MAP_BASE_LAYERS[id] || MAP_BASE_LAYERS.street;
+  const options: Record<string, any> = {
+    maxZoom: source.maxZoom,
+    attribution: source.attribution,
+  };
+  if (source.subdomains) {
+    options.subdomains = source.subdomains;
+  }
+  return L.tileLayer(source.url, options);
 }
 
 type LocationDraft = {
@@ -178,10 +154,12 @@ export const MapLocationsManager: React.FC = () => {
   const pickerElement = useRef<HTMLDivElement | null>(null);
   const pickerMapRef = useRef<any>(null);
   const pickerMarkerRef = useRef<any>(null);
+  const savedMarkersRef = useRef<any[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<MapSearchResult[]>([]);
   const [searchError, setSearchError] = useState('');
   const [isSearching, setIsSearching] = useState(false);
+  const [isLocating, setIsLocating] = useState(false);
   const [locationActionMessage, setLocationActionMessage] = useState('');
   const [baseLayerId, setBaseLayerId] = useState<MapBaseLayerId>('street');
   const baseLayerIdRef = useRef<MapBaseLayerId>('street');
@@ -191,14 +169,69 @@ export const MapLocationsManager: React.FC = () => {
   const [selectedActivityCategories, setSelectedActivityCategories] = useState<ActivityCategory[]>(['food', 'health', 'shopping', 'entertainment']);
   const [activityMessage, setActivityMessage] = useState('');
   const [isLoadingActivities, setIsLoadingActivities] = useState(false);
+  const [isMobileActivitiesOpen, setIsMobileActivitiesOpen] = useState(false);
+
+  const properties = useMemo(
+    () => state.properties.filter(property => property.status !== 'unlisted'),
+    [state.properties],
+  );
+
+  const localSearchCandidates = useMemo<MapSearchResult[]>(() => {
+    const candidates: MapSearchResult[] = [];
+    settings.locations.forEach(loc => {
+      const lat = Number(loc.latitude);
+      const lng = Number(loc.longitude);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+      candidates.push({
+        name: loc.title,
+        label: [loc.title, loc.description].filter(Boolean).join('، '),
+        latitude: lat,
+        longitude: lng,
+        badge: 'موقع مسجل',
+        propertyId: loc.propertyId,
+      });
+    });
+
+    properties.forEach(property => {
+      const lat = Number(property.latitude);
+      const lng = Number(property.longitude);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+      if (candidates.some(c => c.propertyId === property.id)) return;
+      candidates.push({
+        name: property.name,
+        label: [property.name, property.city, property.district, property.address].filter(Boolean).join('، '),
+        latitude: lat,
+        longitude: lng,
+        badge: 'مبنى',
+        propertyId: property.id,
+      });
+    });
+
+    return candidates;
+  }, [settings.locations, properties]);
 
   useEffect(() => {
     let active = true;
+    let invalidateTimer: number | undefined;
     loadLeafletForPicker().then((L) => {
       if (!active || !pickerElement.current) return;
+      if (pickerMapRef.current) {
+        try {
+          pickerMapRef.current.stop?.();
+          pickerMapRef.current.remove();
+        } catch {
+          // ignore cleanup error
+        }
+        pickerMapRef.current = null;
+      }
       const map = L.map(pickerElement.current, {
-        zoomControl: true, scrollWheelZoom: true, doubleClickZoom: true,
-        touchZoom: true, boxZoom: true, keyboard: true, wheelPxPerZoomLevel: 80,
+        zoomControl: false,
+        scrollWheelZoom: true,
+        doubleClickZoom: true,
+        touchZoom: true,
+        boxZoom: true,
+        keyboard: true,
+        wheelPxPerZoomLevel: 80,
       }).setView([24.7136, 46.6753], 5);
       baseLayerRef.current = createMapBaseLayer(L, baseLayerIdRef.current).addTo(map);
       map.on('click', (event: any) => {
@@ -210,18 +243,85 @@ export const MapLocationsManager: React.FC = () => {
       });
       pickerMapRef.current = map;
       setPickerReady(true);
-      window.setTimeout(() => map.invalidateSize(), 80);
+      invalidateTimer = window.setTimeout(() => {
+        if (active && pickerMapRef.current === map) {
+          try {
+            map.invalidateSize();
+          } catch {
+            // ignore if map is unmounted
+          }
+        }
+      }, 80);
     }).catch((loadError) => {
       if (active) setError(loadError?.message || 'تعذر تحميل خريطة تحديد الموقع.');
     });
 
     return () => {
       active = false;
-      pickerMapRef.current?.remove();
-      pickerMapRef.current = null;
+      if (invalidateTimer !== undefined) {
+        window.clearTimeout(invalidateTimer);
+      }
+      if (pickerMapRef.current) {
+        try {
+          pickerMapRef.current.stop?.();
+          pickerMapRef.current.remove();
+        } catch {
+          // ignore cleanup error
+        }
+        pickerMapRef.current = null;
+      }
       pickerMarkerRef.current = null;
+      savedMarkersRef.current = [];
     };
   }, []);
+
+  useEffect(() => {
+    const map = pickerMapRef.current;
+    const L = window.L;
+    if (!map || !pickerReady || !L) return;
+
+    savedMarkersRef.current.forEach(marker => marker.remove());
+    savedMarkersRef.current = [];
+
+    settings.locations.forEach(location => {
+      const lat = Number(location.latitude);
+      const lng = Number(location.longitude);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+      const property = properties.find(p => p.id === location.propertyId);
+      const title = property?.name || location.title;
+      const icon = L.divIcon({
+        className: 'luxury-map-pin-host',
+        html: '<span class="luxury-map-pin luxury-map-pin--saved" aria-hidden="true"><span>⌖</span></span>',
+        iconSize: [34, 38],
+        iconAnchor: [17, 36],
+      });
+      const marker = L.marker([lat, lng], { icon }).addTo(map);
+      const popup = document.createElement('div');
+      popup.className = 'luxury-map-popup';
+      const heading = document.createElement('p');
+      heading.className = 'luxury-map-popup-title';
+      heading.textContent = title;
+      popup.appendChild(heading);
+
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'luxury-map-popup-action';
+      editBtn.textContent = 'تعديل هذا الموقع';
+      editBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        editLocation(location);
+        marker.closePopup();
+      });
+      const actionsWrap = document.createElement('div');
+      actionsWrap.className = 'luxury-map-popup-actions';
+      actionsWrap.appendChild(editBtn);
+      popup.appendChild(actionsWrap);
+
+      marker.bindPopup(popup);
+      savedMarkersRef.current.push(marker);
+    });
+  }, [settings.locations, properties, pickerReady]);
 
   useEffect(() => {
     const map = pickerMapRef.current;
@@ -242,10 +342,11 @@ export const MapLocationsManager: React.FC = () => {
       iconSize: [38, 42],
       iconAnchor: [19, 40],
     });
-    pickerMarkerRef.current = L.marker([latitude, longitude], { icon }).addTo(map);
+    pickerMarkerRef.current = L.marker([latitude, longitude], { icon })
+      .addTo(map)
+      .bindPopup(draft.title ? `الموقع المحدد: ${draft.title}` : `الإحداثيات: ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`);
     map.flyTo([latitude, longitude], Math.max(map.getZoom(), 13), { duration: 0.35 });
   }, [draft.latitude, draft.longitude, pickerReady]);
-
 
   useEffect(() => {
     setSettings({
@@ -255,15 +356,22 @@ export const MapLocationsManager: React.FC = () => {
     });
   }, [storedSettings]);
 
-  const properties = useMemo(
-    () => state.properties.filter(property => property.status !== 'unlisted'),
-    [state.properties],
-  );
-
   const resetDraft = () => {
     setDraft(EMPTY_DRAFT);
     setEditingId(null);
     setError('');
+  };
+
+  const persistSettingsQuietly = async (nextSettings: MapSectionSettings, successText: string) => {
+    setIsSaving(true);
+    try {
+      await saveMapSection(nextSettings);
+      setMessage(successText);
+    } catch {
+      setMessage(successText + ' (اضغط زر الحفظ بالأعلى لتأكيد المزامنة).');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const submitLocation = (event: React.FormEvent) => {
@@ -300,14 +408,17 @@ export const MapLocationsManager: React.FC = () => {
       visible: draft.visible,
     };
 
-    setSettings(current => ({
-      ...current,
+    const nextSettings: MapSectionSettings = {
+      ...settings,
       locations: editingId
-        ? current.locations.map(item => item.id === editingId ? location : item)
-        : [...current.locations, location],
-    }));
-    setMessage(editingId ? 'تم تحديث الموقع في قائمة التغييرات.' : 'أضيف الموقع إلى قائمة التغييرات.');
+        ? settings.locations.map(item => item.id === editingId ? location : item)
+        : [...settings.locations, location],
+    };
+
+    setSettings(nextSettings);
+    const actionMsg = editingId ? 'تم تحديث الموقع وحفظه على الخريطة.' : 'تمت إضافة الموقع وحفظه على الخريطة.';
     resetDraft();
+    void persistSettingsQuietly(nextSettings, actionMsg);
   };
 
   const editLocation = (location: MapLocation) => {
@@ -324,13 +435,59 @@ export const MapLocationsManager: React.FC = () => {
     setMessage('');
   };
 
+  const previewLocationOnMap = (location: MapLocation) => {
+    const map = pickerMapRef.current;
+    if (!map) return;
+    const lat = Number(location.latitude);
+    const lng = Number(location.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    map.flyTo([lat, lng], 15, { duration: 0.6 });
+    setLocationActionMessage(`تم الانتقال إلى موقع "${location.title}" على الخريطة.`);
+    window.setTimeout(() => setLocationActionMessage(''), 3000);
+  };
+
   const removeLocation = (locationId: string) => {
-    setSettings(current => ({
-      ...current,
-      locations: current.locations.filter(item => item.id !== locationId),
-    }));
+    const nextSettings: MapSectionSettings = {
+      ...settings,
+      locations: settings.locations.filter(item => item.id !== locationId),
+    };
+    setSettings(nextSettings);
     if (editingId === locationId) resetDraft();
-    setMessage('حذف الموقع من قائمة التغييرات. اضغط حفظ لاعتماد الحذف.');
+    void persistSettingsQuietly(nextSettings, 'تم حذف الموقع وتحديث الخريطة.');
+  };
+
+  const importBuildingsLocations = () => {
+    const propertiesWithCoords = properties.filter(
+      p => Number.isFinite(Number(p.latitude)) && Number.isFinite(Number(p.longitude))
+    );
+    if (propertiesWithCoords.length === 0) {
+      setError('لا توجد مبانٍ مسجلة بإحداثيات حالياً.');
+      return;
+    }
+    const existingPropIds = new Set(settings.locations.map(l => l.propertyId).filter(Boolean));
+    const imported: MapLocation[] = propertiesWithCoords
+      .filter(p => !existingPropIds.has(p.id))
+      .map(p => ({
+        id: `map-prop-${p.id}`,
+        title: p.name,
+        description: [p.city, p.district, p.address].filter(Boolean).join(' · '),
+        latitude: Number(p.latitude),
+        longitude: Number(p.longitude),
+        propertyId: p.id,
+        visible: true,
+      }));
+
+    if (imported.length === 0) {
+      setMessage('جميع المباني المسجلة مضافة بالفعل في قائمة المواقع.');
+      return;
+    }
+
+    const nextSettings: MapSectionSettings = {
+      ...settings,
+      locations: [...settings.locations, ...imported],
+    };
+    setSettings(nextSettings);
+    void persistSettingsQuietly(nextSettings, `تم استيراد ${imported.length} موقع مبنى وحفظها.`);
   };
 
   const handleSaveSettings = async () => {
@@ -348,45 +505,102 @@ export const MapLocationsManager: React.FC = () => {
   };
 
   const changeBaseLayer = (next: MapBaseLayerId) => {
-    const map = pickerMapRef.current, L = window.L;
+    const map = pickerMapRef.current;
+    const L = window.L;
     baseLayerIdRef.current = next;
     setBaseLayerId(next);
     if (!map || !L) return;
     baseLayerRef.current?.removeFrom(map);
     baseLayerRef.current = createMapBaseLayer(L, next).addTo(map);
   };
-  const locateCurrentPosition = () => {
-    const map = pickerMapRef.current, L = window.L;
-    if (!map) return;
-    if (!navigator.geolocation) { setLocationActionMessage('خدمة تحديد الموقع غير متاحة في هذا المتصفح.'); return; }
+
+  const locateCurrentPosition = async () => {
+    const map = pickerMapRef.current;
+    const L = window.L;
+    if (!map || !L || isLocating) return;
+    setIsLocating(true);
     setLocationActionMessage('جارٍ تحديد موقعك…');
-    map.once('locationfound', (event: any) => {
+    try {
+      const pos = await resolveBrowserOrIpLocation();
+      const lat = pos.latitude;
+      const lng = pos.longitude;
+      const latlng = L.latLng(lat, lng);
       currentLocationLayersRef.current.forEach((layer: any) => layer.remove());
+      const marker = L.circleMarker(latlng, {
+        radius: 8,
+        color: '#fff',
+        weight: 3,
+        fillColor: '#2878D0',
+        fillOpacity: 1,
+      })
+        .addTo(map)
+        .bindPopup(pos.source === 'gps' ? 'موقعك الحالي الدقيق' : 'موقعك التقريبي الحالي');
+
       currentLocationLayersRef.current = [
-        L.circle(event.latlng, { radius: event.accuracy, color: '#2878D0', weight: 1, fillColor: '#2878D0', fillOpacity: 0.12 }).addTo(map),
-        L.circleMarker(event.latlng, { radius: 7, color: '#fff', weight: 3, fillColor: '#2878D0', fillOpacity: 1 }).addTo(map).bindPopup('موقعك الحالي'),
+        L.circle(latlng, {
+          radius: Math.min(Math.max(pos.accuracy || 35, 25), 1200),
+          color: '#2878D0',
+          weight: 1,
+          fillColor: '#2878D0',
+          fillOpacity: 0.12,
+        }).addTo(map),
+        marker,
       ];
-      map.flyTo(event.latlng, Math.max(map.getZoom(), 15), { duration: 0.6 });
-      setLocationActionMessage('تم تحديد موقعك على هذه الشاشة فقط.');
-    });
-    map.once('locationerror', () => setLocationActionMessage('تعذر تحديد موقعك. تحقق من إذن الموقع واتصال HTTPS.'));
-    map.locate({ setView: false, enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 });
+      setDraft(current => ({
+        ...current,
+        latitude: lat.toFixed(6),
+        longitude: lng.toFixed(6),
+      }));
+      map.flyTo(latlng, pos.source === 'gps' ? Math.max(map.getZoom(), 15) : Math.max(map.getZoom(), 13), { duration: 0.6 });
+      marker.openPopup();
+      setLocationActionMessage(pos.source === 'gps' ? 'تم تحديد موقعك وتعيين إحداثياته في النموذج.' : 'تم تحديد موقعك التقريبي وتعيين إحداثياته في النموذج.');
+    } catch (err: any) {
+      setLocationActionMessage(err?.message || 'تعذر تحديد موقعك. تحقق من إذن الموقع.');
+    } finally {
+      setIsLocating(false);
+      window.setTimeout(() => setLocationActionMessage(''), 4000);
+    }
   };
-  const showNearbyActivities = async () => {
-    const map = pickerMapRef.current, L = window.L;
+
+  const runNearbyActivitiesSearch = async (categoriesToFetch: ActivityCategory[]) => {
+    const map = pickerMapRef.current;
+    const L = window.L;
     if (!map || !L) return;
-    if (!selectedActivityCategories.length) { setActivityMessage('حدد فئة واحدة على الأقل.'); return; }
-    setIsLoadingActivities(true); setActivityMessage('');
+    if (!categoriesToFetch.length) {
+      activityMarkersRef.current.forEach((marker: any) => marker.remove());
+      activityMarkersRef.current = [];
+      setActivityMessage('حدد فئة واحدة على الأقل لإظهار الأنشطة.');
+      window.setTimeout(() => setActivityMessage(''), 3500);
+      return;
+    }
+    setIsLoadingActivities(true);
+    setActivityMessage('جارٍ البحث عن الأنشطة القريبة…');
     activityMarkersRef.current.forEach((marker: any) => marker.remove());
     activityMarkersRef.current = [];
     try {
-      const center = map.getCenter();
-      const radius = map.getZoom() >= 15 ? 2500 : map.getZoom() >= 13 ? 5000 : 8000;
-      const places = await findNearbyActivities(selectedActivityCategories, center.lat, center.lng, radius);
+      let center = map.getCenter();
+      if (map.getZoom() < 10) {
+        const draftLat = Number(draft.latitude);
+        const draftLng = Number(draft.longitude);
+        if (draft.latitude && draft.longitude && Number.isFinite(draftLat) && Number.isFinite(draftLng)) {
+          center = L.latLng(draftLat, draftLng);
+        } else if (settings.locations.length > 0) {
+          center = L.latLng(Number(settings.locations[0].latitude), Number(settings.locations[0].longitude));
+        } else {
+          center = L.latLng(24.7136, 46.6753);
+        }
+        map.flyTo(center, 13, { duration: 0.5 });
+      }
+      const radius = map.getZoom() >= 15 ? 3500 : map.getZoom() >= 13 ? 5500 : 8000;
+      const places = await findNearbyActivities(categoriesToFetch, center.lat, center.lng, radius);
       places.forEach(place => {
         const style = ACTIVITY_CATEGORIES.find(item => item.id === place.category);
         const marker = L.circleMarker([place.latitude, place.longitude], {
-          radius: 7, color: '#fff', weight: 2, fillColor: style?.color || '#347B78', fillOpacity: 0.95,
+          radius: 8,
+          color: '#fff',
+          weight: 2,
+          fillColor: style?.color || '#347B78',
+          fillOpacity: 0.95,
         }).addTo(map);
         const popup = document.createElement('div');
         popup.className = 'luxury-map-popup';
@@ -400,47 +614,108 @@ export const MapLocationsManager: React.FC = () => {
         marker.bindPopup(popup);
         activityMarkersRef.current.push(marker);
       });
-      setActivityMessage(places.length ? 'تم عرض ' + places.length + ' موقعاً قريباً.' : 'لم نعثر على أنشطة ضمن النطاق الحالي.');
-    } catch (error: any) { setActivityMessage(error?.name === 'AbortError' ? 'انتهت مهلة البحث عن الأنشطة. حرّك الخريطة وجرّب مجدداً.' : (error?.message || 'تعذر تحميل الأنشطة القريبة.')); }
-    finally { setIsLoadingActivities(false); }
+      if (places.length > 0 && map.getZoom() < 12) {
+        const group = L.featureGroup(activityMarkersRef.current);
+        if (group.getBounds().isValid()) {
+          map.fitBounds(group.getBounds(), { padding: [50, 50], maxZoom: 14 });
+        }
+      }
+      setIsMobileActivitiesOpen(false);
+      setActivityMessage(places.length ? 'تم عرض ' + places.length + ' نشاطاً قريباً على الخريطة.' : 'لم نعثر على أنشطة ضمن النطاق الحالي.');
+      window.setTimeout(() => setActivityMessage(''), 4000);
+    } catch (error: any) {
+      setActivityMessage(error?.message || 'تعذر تحميل الأنشطة القريبة.');
+    } finally {
+      setIsLoadingActivities(false);
+    }
   };
+
+  const showNearbyActivities = async () => {
+    await runNearbyActivitiesSearch(selectedActivityCategories);
+  };
+
   const clearNearbyActivities = () => {
     activityMarkersRef.current.forEach((marker: any) => marker.remove());
     activityMarkersRef.current = [];
+    setIsMobileActivitiesOpen(false);
     setActivityMessage('تم إخفاء الأنشطة.');
+    window.setTimeout(() => setActivityMessage(''), 3000);
+  };
+
+  const applySearchResultToMap = (result: MapSearchResult, closeDropdown = true) => {
+    const map = pickerMapRef.current;
+    if (!map) {
+      setSearchError('الخريطة لا تزال قيد التحميل. حاول بعد ظهورها.');
+      return;
+    }
+    map.flyTo([result.latitude, result.longitude], Math.max(map.getZoom(), 14), { duration: 0.6 });
+    setDraft(current => ({
+      ...current,
+      title: current.title.trim() ? current.title : result.name,
+      latitude: result.latitude.toFixed(6),
+      longitude: result.longitude.toFixed(6),
+    }));
+    if (closeDropdown) {
+      setSearchResults([]);
+    }
+    setSearchError('');
   };
 
   const searchPlaces = async () => {
     const query = searchQuery.trim();
-    if (query.length < 2) { setSearchError('اكتب اسم مدينة أو حي للبحث.'); return; }
-    setIsSearching(true); setSearchError('');
+    if (query.length < 2) {
+      setSearchError('اكتب اسم مدينة أو حي للبحث.');
+      return;
+    }
+    setIsSearching(true);
+    setSearchError('');
     try {
       const center = pickerMapRef.current?.getCenter?.();
-      const results = await searchMapPlaces(query, center ? { lat: center.lat, lon: center.lng } : undefined);
+      const results = await searchMapPlaces(
+        query,
+        center ? { lat: center.lat, lon: center.lng } : undefined,
+        localSearchCandidates,
+      );
       setSearchResults(results);
-      if (!results.length) setSearchError('لم نعثر على موقع مطابق. جرّب اسماً أوضح.');
-    } catch (error: any) { setSearchError(error?.message || 'تعذر البحث عن الموقع.'); }
-    finally { setIsSearching(false); }
+      if (!results.length) {
+        setSearchError('لم نعثر على موقع مطابق. جرّب اسماً أوضح.');
+      } else {
+        applySearchResultToMap(results[0], results.length === 1);
+      }
+    } catch (error: any) {
+      setSearchError(error?.message || 'تعذر البحث عن الموقع.');
+    } finally {
+      setIsSearching(false);
+    }
   };
+
   const focusSearchResult = (result: MapSearchResult) => {
-    const map = pickerMapRef.current;
-    if (!map) { setSearchError('الخريطة لا تزال قيد التحميل. حاول بعد ظهورها.'); return; }
-    map.flyTo([result.latitude, result.longitude], Math.max(map.getZoom(), 14), { duration: 0.6 });
-    setDraft(current => ({ ...current, latitude: result.latitude.toFixed(6), longitude: result.longitude.toFixed(6) }));
-    setSearchResults([]); setSearchError('');
+    applySearchResultToMap(result, true);
   };
+
+  const clearSearch = () => {
+    setSearchQuery('');
+    setSearchResults([]);
+    setSearchError('');
+  };
+
   const shareLocation = async (location: MapLocation) => {
     try {
       const result = await shareOrCopyMapLocation(location.title, location.latitude, location.longitude);
       setLocationActionMessage(result === 'shared' ? 'تم فتح خيارات المشاركة.' : 'تم نسخ رابط الموقع.');
-    } catch (error: any) { setLocationActionMessage(error?.message || 'تعذرت مشاركة الموقع.'); }
+    } catch (error: any) {
+      setLocationActionMessage(error?.message || 'تعذرت مشاركة الموقع.');
+    }
     window.setTimeout(() => setLocationActionMessage(''), 3000);
   };
+
   const copyLocation = async (location: MapLocation) => {
     try {
       await copyTextToClipboard(googleMapsLocationUrl(location.latitude, location.longitude));
       setLocationActionMessage('تم نسخ رابط الموقع إلى الحافظة.');
-    } catch (error: any) { setLocationActionMessage(error?.message || 'تعذر نسخ الرابط.'); }
+    } catch (error: any) {
+      setLocationActionMessage(error?.message || 'تعذر نسخ الرابط.');
+    }
     window.setTimeout(() => setLocationActionMessage(''), 3000);
   };
 
@@ -454,18 +729,28 @@ export const MapLocationsManager: React.FC = () => {
               إدارة خريطة المواقع
             </h2>
             <p className="mt-1 text-sm leading-6 text-[#68675F]">
-              أضف مواقع المباني أو مواقع مستقلة. ابحث عن المدينة أو الحي، ثم انقر على الخريطة لتحديد النقطة؛ والموقع المرتبط بمبنى ينقل الزائر إلى بطاقته عند النقر على العلامة.
+              أضف مواقع المباني أو مواقع مستقلة. ابحث عن المدينة أو الحي من رأس الخريطة، أو انقر مباشرة لتحديد النقطة؛ والموقع المرتبط بمبنى ينقل الزائر إلى بطاقته عند النقر على العلامة.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={handleSaveSettings}
-            disabled={isSaving}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#282824] px-4 py-2.5 text-sm font-bold text-white disabled:opacity-60"
-          >
-            <Save className="h-4 w-4" />
-            {isSaving ? 'جارٍ الحفظ…' : 'حفظ إعدادات ومواقع الخريطة'}
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={importBuildingsLocations}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#E3DCCD] bg-[#F7F3EB] px-3.5 py-2.5 text-xs font-bold text-[#282824] hover:border-[#B69A68]"
+            >
+              <Building2 className="h-4 w-4 text-[#B69A68]" />
+              استيراد مواقع المباني
+            </button>
+            <button
+              type="button"
+              onClick={handleSaveSettings}
+              disabled={isSaving}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#282824] px-4 py-2.5 text-sm font-bold text-white disabled:opacity-60"
+            >
+              <Save className="h-4 w-4" />
+              {isSaving ? 'جارٍ الحفظ…' : 'حفظ إعدادات ومواقع الخريطة'}
+            </button>
+          </div>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
@@ -488,29 +773,37 @@ export const MapLocationsManager: React.FC = () => {
         </div>
       </div>
 
-      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.9fr)]">
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
         <form onSubmit={submitLocation} className="space-y-4 rounded-3xl border border-[#E3DCCD] bg-white p-5 shadow-xs sm:p-6">
           <div className="flex items-center justify-between gap-3 border-b border-[#E3DCCD] pb-4">
             <h3 className="font-bold text-[#282824]">{editingId ? 'تعديل موقع' : 'إضافة موقع جديد'}</h3>
             {editingId && <button type="button" onClick={resetDraft} className="inline-flex items-center gap-1 text-xs text-[#68675F]"><X className="h-4 w-4" /> إلغاء التعديل</button>}
           </div>
 
-          <label className="block space-y-1.5 text-sm font-semibold text-[#68675F]">
-            اسم الموقع *
-            <input required value={draft.title} onChange={event => setDraft(current => ({ ...current, title: event.target.value }))} placeholder="مثال: منزل الفخامة – حي الياسمين" className="w-full rounded-xl border border-[#E3DCCD] bg-[#FFFCF6] p-3 text-[#282824]" />
-          </label>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="block space-y-1.5 text-sm font-semibold text-[#68675F]">
+              اسم الموقع *
+              <input required value={draft.title} onChange={event => setDraft(current => ({ ...current, title: event.target.value }))} placeholder="مثال: منزل الفخامة – حي الياسمين" className="w-full rounded-xl border border-[#E3DCCD] bg-[#FFFCF6] p-3 text-[#282824]" />
+            </label>
 
-          <label className="block space-y-1.5 text-sm font-semibold text-[#68675F]">
-            ربط ببطاقة مبنى (اختياري)
-            <select value={draft.propertyId} onChange={event => {
-              const propertyId = event.target.value;
-              const property = properties.find(item => item.id === propertyId);
-              setDraft(current => ({ ...current, propertyId, title: property && !current.title ? property.name : current.title }));
-            }} className="w-full rounded-xl border border-[#E3DCCD] bg-[#FFFCF6] p-3 text-[#282824]">
-              <option value="">موقع مستقل</option>
-              {properties.map(property => <option key={property.id} value={property.id}>{property.name} — {property.city}</option>)}
-            </select>
-          </label>
+            <label className="block space-y-1.5 text-sm font-semibold text-[#68675F]">
+              ربط ببطاقة مبنى (اختياري)
+              <select value={draft.propertyId} onChange={event => {
+                const propertyId = event.target.value;
+                const property = properties.find(item => item.id === propertyId);
+                setDraft(current => ({
+                  ...current,
+                  propertyId,
+                  title: property && !current.title ? property.name : current.title,
+                  latitude: property && !current.latitude && Number.isFinite(Number(property.latitude)) ? String(property.latitude) : current.latitude,
+                  longitude: property && !current.longitude && Number.isFinite(Number(property.longitude)) ? String(property.longitude) : current.longitude,
+                }));
+              }} className="w-full rounded-xl border border-[#E3DCCD] bg-[#FFFCF6] p-3 text-[#282824]">
+                <option value="">موقع مستقل</option>
+                {properties.map(property => <option key={property.id} value={property.id}>{property.name} — {property.city}</option>)}
+              </select>
+            </label>
+          </div>
 
           <label className="block space-y-1.5 text-sm font-semibold text-[#68675F]">
             وصف مختصر
@@ -519,49 +812,175 @@ export const MapLocationsManager: React.FC = () => {
 
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-3">
-              <p className="text-sm font-semibold text-[#68675F]">حدد الموقع بالنقر على الخريطة *</p>
+              <p className="text-sm font-semibold text-[#68675F]">حدد الموقع من البحث في أعلى الخريطة أو بالنقر عليها *</p>
               <button type="button" onClick={() => setDraft(current => ({ ...current, latitude: '', longitude: '' }))} className="text-xs text-[#68675F] underline">مسح التحديد</button>
             </div>
-            <div className="luxury-map-picker-tools">
-              <div className="luxury-map-layer-switch" role="group" aria-label="اختيار نوع الخريطة">
-                {(Object.entries(MAP_BASE_LAYERS) as [MapBaseLayerId, typeof MAP_BASE_LAYERS[MapBaseLayerId]][]).map(([id, layer]) => (
-                  <button key={id} type="button" aria-pressed={baseLayerId === id} onClick={() => changeBaseLayer(id)}>{layer.title}</button>
-                ))}
+
+            {/* Map Shell with Floating Top Header */}
+            <div className="luxury-map-shell">
+              <div
+                className="luxury-map-floating-header"
+                onMouseDown={e => e.stopPropagation()}
+                onDoubleClick={e => e.stopPropagation()}
+                onWheel={e => e.stopPropagation()}
+              >
+                <div className="luxury-map-floating-top-row">
+                  <div className="luxury-map-search-toolbar">
+                    <div className="luxury-map-search-input-wrap">
+                      <Search className="h-4 w-4 shrink-0 text-[#9C7D46]" />
+                      <input
+                        value={searchQuery}
+                        onChange={event => {
+                          setSearchQuery(event.target.value);
+                          if (searchError) setSearchError('');
+                        }}
+                        placeholder="ابحث عن مدينة أو حي أو إحداثيات..."
+                        aria-label="البحث عن مدينة أو حي على الخريطة"
+                        onKeyDown={event => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault();
+                            void searchPlaces();
+                          }
+                        }}
+                      />
+                      {searchQuery && (
+                        <button
+                          type="button"
+                          onClick={clearSearch}
+                          className="luxury-map-search-clear"
+                          aria-label="مسح البحث"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        disabled={isSearching}
+                        onClick={() => void searchPlaces()}
+                        className="luxury-map-search-submit"
+                      >
+                        {isSearching ? 'جارٍ البحث…' : 'بحث'}
+                      </button>
+                    </div>
+                    {searchResults.length > 0 && (
+                      <div className="luxury-map-search-results" role="listbox" aria-label="نتائج البحث على الخريطة">
+                        {searchResults.map((result, index) => (
+                          <button key={index} type="button" onClick={() => focusSearchResult(result)}>
+                            <span className="flex items-start gap-2">
+                              <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-[#B69A68]" />
+                              <span>{result.label}</span>
+                            </span>
+                            {result.badge && <span className="luxury-map-search-badge">{result.badge}</span>}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="luxury-map-picker-tools">
+                    <div className="luxury-map-layer-switch" role="group" aria-label="اختيار نوع الخريطة">
+                      {(Object.entries(MAP_BASE_LAYERS) as [MapBaseLayerId, typeof MAP_BASE_LAYERS[MapBaseLayerId]][]).map(([id, layer]) => (
+                        <button key={id} type="button" aria-pressed={baseLayerId === id} onClick={() => changeBaseLayer(id)}>
+                          {layer.title}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      disabled={isLocating}
+                      className="luxury-map-tool-button inline-flex items-center gap-1.5 disabled:opacity-60"
+                      onClick={() => void locateCurrentPosition()}
+                    >
+                      <Navigation className="h-3.5 w-3.5 text-[#B69A68]" />
+                      <span>{isLocating ? 'جارٍ التحديد…' : 'موقعي'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="luxury-map-activity-dropdown-trigger"
+                      aria-expanded={isMobileActivitiesOpen}
+                      onClick={() => setIsMobileActivitiesOpen(open => !open)}
+                    >
+                      <Compass className="h-3.5 w-3.5 text-[#B69A68]" />
+                      <span>الأنشطة القريبة ({selectedActivityCategories.length})</span>
+                      <ChevronDown className={`h-3.5 w-3.5 transition-transform ${isMobileActivitiesOpen ? 'rotate-180' : ''}`} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="luxury-map-activity-floating-wrap">
+                  <div className={`luxury-map-activity-panel ${isMobileActivitiesOpen ? 'is-mobile-open' : ''}`}>
+                    <strong>
+                      <Compass className="h-4 w-4 text-[#B69A68]" />
+                      <span>الأنشطة القريبة من مركز الخريطة</span>
+                    </strong>
+                    <div className="luxury-map-activity-options">
+                      {ACTIVITY_CATEGORIES.map(category => (
+                        <label key={category.id}>
+                          <input
+                            type="checkbox"
+                            checked={selectedActivityCategories.includes(category.id)}
+                            onChange={event => {
+                              const nextCategories = event.target.checked
+                                ? [...selectedActivityCategories, category.id]
+                                : selectedActivityCategories.filter(item => item !== category.id);
+                              setSelectedActivityCategories(nextCategories);
+                              if (activityMarkersRef.current.length > 0) {
+                                void runNearbyActivitiesSearch(nextCategories);
+                              }
+                            }}
+                          />
+                          <span>{category.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <div className="luxury-map-activity-actions">
+                      <button type="button" disabled={isLoadingActivities} onClick={() => void showNearbyActivities()}>
+                        {isLoadingActivities ? 'جارٍ البحث…' : 'إظهار الأنشطة المحددة'}
+                      </button>
+                      <button type="button" onClick={clearNearbyActivities}>إخفاء</button>
+                    </div>
+                  </div>
+                </div>
+
+                {searchError && <p role="status" className="luxury-map-search-message">{searchError}</p>}
+                {locationActionMessage && <p role="status" className="luxury-map-search-message">{locationActionMessage}</p>}
+                {activityMessage && <p role="status" className="luxury-map-search-message">{activityMessage}</p>}
               </div>
-              <button type="button" className="luxury-map-tool-button" onClick={locateCurrentPosition}>موقعي</button>
+
+              <div ref={pickerElement} className="luxury-map-canvas w-full" aria-label="انقر لتحديد موقع المبنى على الخريطة" role="application" />
+              <div className="luxury-map-zoom" aria-label="أدوات تكبير الخريطة">
+                <button type="button" aria-label="تكبير الخريطة" onClick={() => pickerMapRef.current?.zoomIn()}><Plus /></button>
+                <button type="button" aria-label="تصغير الخريطة" onClick={() => pickerMapRef.current?.zoomOut()}><Minus /></button>
+              </div>
             </div>
-            <div className="luxury-map-activity-panel">
-              <strong>الأنشطة القريبة من مركز الخريطة</strong>
-              <div className="luxury-map-activity-options">
-                {ACTIVITY_CATEGORIES.map(category => (
-                  <label key={category.id}><input type="checkbox" checked={selectedActivityCategories.includes(category.id)} onChange={event => setSelectedActivityCategories(current => event.target.checked ? [...current, category.id] : current.filter(item => item !== category.id))} /><span>{category.label}</span></label>
-                ))}
-              </div>
-              <div className="luxury-map-activity-actions">
-                <button type="button" disabled={isLoadingActivities} onClick={() => void showNearbyActivities()}>{isLoadingActivities ? 'جارٍ البحث…' : 'إظهار الأنشطة المحددة'}</button>
-                <button type="button" onClick={clearNearbyActivities}>إخفاء</button>
-              </div>
-              <small>البحث ضمن نطاق محلي حول مركز الخريطة فقط.</small>
-              {activityMessage && <p role="status" className="luxury-map-search-message">{activityMessage}</p>}
+
+            <p className="text-xs leading-5 text-[#68675F]">
+              كبّر الخريطة أو ابحث من الشريط العلوي داخل الخريطة، ثم انقر على موقع المبنى لتعيين النقطة بدقة.
+            </p>
+
+            <div className="grid grid-cols-2 gap-3 pt-1">
+              <label className="block space-y-1 text-xs font-semibold text-[#68675F]">
+                خط العرض (Latitude)
+                <input
+                  dir="ltr"
+                  value={draft.latitude}
+                  onChange={event => setDraft(current => ({ ...current, latitude: event.target.value }))}
+                  placeholder="24.713600"
+                  className="w-full rounded-xl border border-[#E3DCCD] bg-[#FFFCF6] p-2.5 text-left text-xs text-[#282824]"
+                />
+              </label>
+              <label className="block space-y-1 text-xs font-semibold text-[#68675F]">
+                خط الطول (Longitude)
+                <input
+                  dir="ltr"
+                  value={draft.longitude}
+                  onChange={event => setDraft(current => ({ ...current, longitude: event.target.value }))}
+                  placeholder="46.675300"
+                  className="w-full rounded-xl border border-[#E3DCCD] bg-[#FFFCF6] p-2.5 text-left text-xs text-[#282824]"
+                />
+              </label>
             </div>
-            <div className="space-y-2">
-              <div className="flex gap-2 rounded-xl border border-[#E3DCCD] bg-[#FFFCF6] p-2">
-                <Search className="mt-2 h-4 w-4 shrink-0 text-[#9C7D46]" />
-                <input value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="ابحث عن مدينة أو حي..." aria-label="البحث عن مدينة أو حي على الخريطة" onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void searchPlaces(); } }} className="min-w-0 flex-1 bg-transparent p-1 text-sm text-[#282824] outline-none" />
-                <button type="button" disabled={isSearching} onClick={() => void searchPlaces()} className="rounded-lg bg-[#282824] px-3 py-2 text-xs font-bold text-white disabled:opacity-60">{isSearching ? 'جارٍ البحث…' : 'بحث'}</button>
-              </div>
-              <p className="text-[11px] text-[#68675F]">البحث بواسطة Photon · بيانات OpenStreetMap</p>
-              {searchError && <p role="status" className="text-xs text-rose-700">{searchError}</p>}
-              {searchResults.length > 0 && <div className="max-h-48 overflow-y-auto rounded-xl border border-[#E3DCCD] bg-white">
-                {searchResults.map((result, index) => (
-                  <button key={index} type="button" onClick={() => focusSearchResult(result)} className="flex w-full items-start gap-2 border-b border-[#EEE8DD] p-3 text-right text-xs text-[#282824] last:border-0 hover:bg-[#F7F3EB]">
-                    <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-[#B69A68]" /><span>{result.label}</span>
-                  </button>
-                ))}
-              </div>}
-            </div>
-            <div ref={pickerElement} className="luxury-map-canvas w-full overflow-hidden rounded-2xl border border-[#E3DCCD]" aria-label="انقر لتحديد موقع المبنى على الخريطة" role="application" />
-            <p className="text-xs leading-5 text-[#68675F]">كبّر الخريطة أو حرّكها إلى المدينة المطلوبة، ثم انقر على موقع المبنى. ستظهر العلامة على النقطة المختارة.</p>
+
             {draft.latitude && draft.longitude ? (
               <p dir="ltr" className="rounded-lg bg-[#F7F3EB] p-2 text-left text-xs text-[#282824]">الموقع المحدد: {draft.latitude}, {draft.longitude}</p>
             ) : (
@@ -590,7 +1009,7 @@ export const MapLocationsManager: React.FC = () => {
           </div>
           {locationActionMessage && <p role="status" className="rounded-lg bg-[#F7F3EB] p-2 text-xs text-[#282824]">{locationActionMessage}</p>}
           {settings.locations.length === 0 ? (
-            <p className="rounded-xl bg-[#FFFCF6] p-4 text-sm leading-6 text-[#68675F]">لا توجد مواقع بعد. أضف موقع مبنى أو نقطة مستقلة بإحداثياتها، ثم احفظ الإعدادات.</p>
+            <p className="rounded-xl bg-[#FFFCF6] p-4 text-sm leading-6 text-[#68675F]">لا توجد مواقع بعد. أضف موقع مبنى أو نقطة مستقلة بإحداثياتها، أو اضغط "استيراد مواقع المباني" بالأعلى.</p>
           ) : settings.locations.map(location => {
             const property = properties.find(item => item.id === location.propertyId);
             return (
@@ -602,15 +1021,16 @@ export const MapLocationsManager: React.FC = () => {
                   {location.description && <p className="mt-2 line-clamp-2 text-xs leading-5 text-[#68675F]">{location.description}</p>}
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center gap-1">
+                  <button type="button" onClick={() => previewLocationOnMap(location)} aria-label="عرض على الخريطة" title="عرض على الخريطة" className="rounded-lg p-2 text-[#68675F] hover:bg-[#EFE9DF] hover:text-[#282824]"><Eye className="h-4 w-4" /></button>
                   <button type="button" onClick={() => void copyLocation(location)} aria-label="نسخ رابط الموقع" title="نسخ رابط الموقع" className="rounded-lg p-2 text-[#68675F] hover:bg-[#EFE9DF] hover:text-[#282824]"><Copy className="h-4 w-4" /></button>
                   <button type="button" onClick={() => void shareLocation(location)} aria-label="مشاركة الموقع" title="مشاركة الموقع" className="rounded-lg p-2 text-[#68675F] hover:bg-[#EFE9DF] hover:text-[#282824]"><Share2 className="h-4 w-4" /></button>
-                  <button type="button" onClick={() => editLocation(location)} aria-label="تعديل الموقع" className="rounded-lg p-2 text-[#68675F] hover:bg-[#EFE9DF] hover:text-[#282824]"><Pencil className="h-4 w-4" /></button>
-                  <button type="button" onClick={() => removeLocation(location.id)} aria-label="حذف الموقع" className="rounded-lg p-2 text-rose-600 hover:bg-rose-50"><Trash2 className="h-4 w-4" /></button>
+                  <button type="button" onClick={() => editLocation(location)} aria-label="تعديل الموقع" title="تعديل الموقع" className="rounded-lg p-2 text-[#68675F] hover:bg-[#EFE9DF] hover:text-[#282824]"><Pencil className="h-4 w-4" /></button>
+                  <button type="button" onClick={() => removeLocation(location.id)} aria-label="حذف الموقع" title="حذف الموقع" className="rounded-lg p-2 text-rose-600 hover:bg-rose-50"><Trash2 className="h-4 w-4" /></button>
                 </div>
               </article>
             );
           })}
-          <p className="pt-2 text-xs leading-5 text-[#68675F]">تُحفظ تغييرات الإضافة والتعديل والحذف عند الضغط على زر الحفظ أعلى الصفحة.</p>
+          <p className="pt-2 text-xs leading-5 text-[#68675F]">تُحفظ تغييرات المواقع تلقائياً، كما يمكنك الضغط على زر الحفظ أعلى الصفحة لاعتماد إعدادات العنوان والوصف.</p>
         </div>
       </div>
     </section>

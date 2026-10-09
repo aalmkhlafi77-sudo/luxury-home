@@ -1,6 +1,6 @@
 {
   "name": "Luxury home منزل الفخامة - وحدات وأجنحة سكنية فاخرة",
   "description": "منصة إدارة وحجز الشقق والوحدات الفندقية الفاخرة لـ Luxury home منزل الفخامة، شاملة بوابات النزلاء، لوحة إدارة المشرفين والـ NOI المطور، وتطبيق طواقم العمل PWA.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["geolocation"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
