@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { Property } from '../../types';
 import { ImageWithFallback } from '../common/ImageWithFallback';
@@ -13,6 +13,21 @@ export const BuildingsCarousel: React.FC<BuildingsCarouselProps> = ({
 }) => {
   const { state } = useAppStore();
   const [selectedCityId, setSelectedCityId] = useState<string>('all');
+  useEffect(() => {
+    const focusBuilding = (event: Event) => {
+      const propertyId = (event as CustomEvent<{ propertyId?: string }>).detail?.propertyId;
+      if (!propertyId) return;
+      setSelectedCityId('all');
+      window.setTimeout(() => {
+        const card = document.getElementById(`building-card-${propertyId}`);
+        if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        else document.getElementById('buildings')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 100);
+    };
+    window.addEventListener('luxury:focus-building', focusBuilding);
+    return () => window.removeEventListener('luxury:focus-building', focusBuilding);
+  }, []);
+
   const sectionMeta = state.contentSections.find(s => s.sectionKey === 'buildings');
   const bldTypo = state.settings.typography?.buildings;
 
@@ -83,6 +98,7 @@ export const BuildingsCarousel: React.FC<BuildingsCarouselProps> = ({
           
           return (
             <div
+              id={`building-card-${prop.id}`}
               key={prop.id}
               className="glass-ivory-card rounded-2xl overflow-hidden border border-[#E3DCCD] hover:border-[#B69A68]/80 transition-all duration-300 hover:shadow-xl group flex flex-col"
             >
