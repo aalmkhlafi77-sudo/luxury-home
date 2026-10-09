@@ -19,6 +19,10 @@
 .luxury-map-canvas .leaflet-popup-content-wrapper {
   border-radius: 14px;
 }
+.luxury-map-canvas .leaflet-marker-icon.luxury-map-pin-host {
+  border: 0;
+  background: transparent;
+}
 .luxury-map-pin {
   display: flex;
   align-items: center;
